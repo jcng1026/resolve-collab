@@ -1,0 +1,1031 @@
+{
+  "collectedAt": "2026-11-02T13:26:38.281Z",
+  "roundTripMs": null,
+  "requestsSent": 0,
+  "echoesSeen": 0,
+  "stages": [
+    {
+      "stage": "started",
+      "at": 72386
+    },
+    {
+      "stage": "product",
+      "at": 72386
+    },
+    {
+      "stage": "gettimeUnitsPerSecond",
+      "at": 72386
+    },
+    {
+      "stage": "saveOriginal",
+      "at": 73392
+    },
+    {
+      "stage": "createScratchProject",
+      "at": 73392
+    },
+    {
+      "stage": "addSubFolder",
+      "at": 73896
+    },
+    {
+      "stage": "addNestedSubFolder",
+      "at": 74399
+    },
+    {
+      "stage": "folderIds",
+      "at": 74461
+    },
+    {
+      "stage": "duplicateFolderName",
+      "at": 74493
+    },
+    {
+      "stage": "importIntoChosenFolder",
+      "at": 74525
+    },
+    {
+      "stage": "reimportSameFile",
+      "at": 75092
+    },
+    {
+      "stage": "importMissingFile",
+      "at": 75154
+    },
+    {
+      "stage": "clipRecord",
+      "at": 75154
+    },
+    {
+      "stage": "clipPropertyKeys",
+      "at": 75154
+    },
+    {
+      "stage": "clipSetName",
+      "at": 75154
+    },
+    {
+      "stage": "clipColor",
+      "at": 75186
+    },
+    {
+      "stage": "clipMetadata",
+      "at": 75248
+    },
+    {
+      "stage": "thirdPartyMetadata",
+      "at": 75280
+    },
+    {
+      "stage": "flags",
+      "at": 75280
+    },
+    {
+      "stage": "moveClips",
+      "at": 75311
+    },
+    {
+      "stage": "moveFolders",
+      "at": 75343
+    },
+    {
+      "stage": "binRenameEmulated",
+      "at": 75343
+    },
+    {
+      "stage": "timelineUsingAlt",
+      "at": 75437
+    },
+    {
+      "stage": "deleteClipUsedInTimeline",
+      "at": 75721
+    },
+    {
+      "stage": "deleteFolderWithClip",
+      "at": 75846
+    },
+    {
+      "stage": "timelineClipsInPool",
+      "at": 76161
+    },
+    {
+      "stage": "walkCost",
+      "at": 76161
+    },
+    {
+      "stage": "saveScratch",
+      "at": 76446
+    },
+    {
+      "stage": "exportProject",
+      "at": 76446
+    },
+    {
+      "stage": "importProject",
+      "at": 76699
+    },
+    {
+      "stage": "reopenOriginal",
+      "at": 77829
+    },
+    {
+      "stage": "reopenScratch",
+      "at": 78741
+    },
+    {
+      "stage": "openImported",
+      "at": 79908
+    },
+    {
+      "stage": "reopenOriginal",
+      "at": 81300
+    },
+    {
+      "stage": "done",
+      "at": 82152
+    }
+  ],
+  "probe": {
+    "probes": {
+      "1": {
+        "dt": 0.0001500000071246177,
+        "extra": "21.1.2.10",
+        "id": "ENV",
+        "label": "product",
+        "value": "DaVinci Resolve",
+        "ok": true
+      },
+      "2": {
+        "dt": 1.0000890999799594,
+        "id": "ENV",
+        "label": "gettimeUnitsPerSecond",
+        "value": 1.0000870999938343,
+        "ok": true
+      },
+      "3": {
+        "dt": 0.006718199991155416,
+        "extra": true,
+        "id": "SAFE",
+        "label": "saveOriginal",
+        "value": "Test1",
+        "ok": true
+      },
+      "4": {
+        "dt": 0.38537790000555106,
+        "id": "SAFE",
+        "label": "createScratchProject",
+        "value": "<userdata>",
+        "ok": true
+      },
+      "5": {
+        "dt": 0.009736400010297075,
+        "id": "M3",
+        "label": "addSubFolder",
+        "value": "<userdata>",
+        "ok": true
+      },
+      "6": {
+        "dt": 0.0129255999927409,
+        "id": "M3",
+        "label": "addNestedSubFolder",
+        "value": "<userdata>",
+        "ok": true
+      },
+      "7": {
+        "dt": 0.013628699991386384,
+        "id": "M3",
+        "label": "folderIds",
+        "value": {
+          "root": "bb5a4ca6-b216-43ee-927f-f779a00faa24",
+          "sub": "4ca471ff-5b27-403d-b073-0c957c5abf60",
+          "A": "6173d80b-9867-4aab-b62b-e24953a870b9",
+          "subParent": "A"
+        },
+        "ok": true
+      },
+      "8": {
+        "dt": 0.04286600000341423,
+        "id": "M3",
+        "label": "duplicateFolderName",
+        "value": {
+          "deletedDup": true,
+          "after": {
+            "1": "A/",
+            "2": "A/Sub/"
+          },
+          "created": true,
+          "namesWithDup": {
+            "1": "A",
+            "2": "A"
+          }
+        },
+        "ok": true
+      },
+      "9": {
+        "dt": 0.5601510999840684,
+        "id": "M3",
+        "label": "importIntoChosenFolder",
+        "value": {
+          "tree": {
+            "1": "A/",
+            "2": "A/original.mp4",
+            "3": "A/alt.mp4",
+            "4": "A/spare.mp4",
+            "5": "A/Sub/"
+          },
+          "currentBefore": "Master",
+          "setCurrent": true,
+          "imported": 3,
+          "currentAfter": "Master",
+          "restored": true
+        },
+        "ok": true
+      },
+      "10": {
+        "dt": 0.06724010000471026,
+        "id": "M3",
+        "label": "reimportSameFile",
+        "value": {
+          "tree": {
+            "1": "A/",
+            "2": "A/original.mp4",
+            "3": "A/alt.mp4",
+            "4": "A/spare.mp4",
+            "5": "A/Sub/",
+            "6": "A/Sub/original.mp4"
+          },
+          "returned": 1
+        },
+        "ok": true
+      },
+      "11": {
+        "dt": 0.010813300003064796,
+        "id": "M3",
+        "label": "importMissingFile",
+        "value": {
+          "returned": 0
+        },
+        "ok": true
+      },
+      "12": {
+        "dt": 0.0013826999929733574,
+        "id": "M3",
+        "label": "clipRecord",
+        "value": {
+          "color": "",
+          "metadata": {},
+          "thirdParty": {},
+          "flags": {
+            "__flags": 4194304
+          },
+          "parent": "A",
+          "name": "original.mp4",
+          "type": "Video + Audio",
+          "filePath": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\original.mp4",
+          "mediaId": "9b10b2c6-56cd-44e1-b285-9703b562975e",
+          "uniqueId": "bf8ce0af-ad38-495a-bf53-eb590c727ea3"
+        },
+        "ok": true
+      },
+      "13": {
+        "dt": 0.0015934999973978847,
+        "id": "M3",
+        "label": "clipPropertyKeys",
+        "value": {
+          "1": "2nd Asst",
+          "2": "2nd Continuity",
+          "3": "2nd DIT",
+          "4": "2nd DOP",
+          "5": "2nd DOP Reviewed",
+          "6": "2nd Dir",
+          "7": "2nd Dir Asst",
+          "8": "2nd Dir Reviewed",
+          "9": "3D Rig ID #",
+          "10": "3D Rig Type",
+          "11": "Alpha mode",
+          "12": "Angle",
+          "13": "Aspect Ratio Notes",
+          "14": "Assistant Director",
+          "15": "Assistant Producer",
+          "16": "Audio Bit Depth",
+          "17": "Audio Ch",
+          "18": "Audio Codec",
+          "19": "Audio Duration TC",
+          "20": "Audio End TC",
+          "21": "Audio FPS",
+          "22": "Audio File Type",
+          "23": "Audio Media",
+          "24": "Audio Notes",
+          "25": "Audio Offset",
+          "26": "Audio Recorder",
+          "27": "Audio Start TC",
+          "28": "Audio TC Type",
+          "29": "Aux 1",
+          "30": "Aux 2",
+          "31": "BG (m)",
+          "32": "Bit Depth",
+          "33": "Bit Rate",
+          "34": "CDL SAT",
+          "35": "CDL SOP",
+          "36": "CV (m)",
+          "37": "Calibration Source",
+          "38": "Calibration Type",
+          "39": "Calibration UUID",
+          "40": "Camera #",
+          "41": "Camera Aperture",
+          "42": "Camera Aperture Type",
+          "43": "Camera Assistant",
+          "44": "Camera FPS",
+          "45": "Camera Firmware",
+          "46": "Camera Format",
+          "47": "Camera ID",
+          "48": "Camera Manufacturer",
+          "49": "Camera Notes",
+          "50": "Camera Operator",
+          "51": "Camera Pan Angle",
+          "52": "Camera Position",
+          "53": "Camera Roll Angle",
+          "54": "Camera Serial #",
+          "55": "Camera TC Type",
+          "56": "Camera Tilt Angle",
+          "57": "Camera Type",
+          "58": "Category",
+          "59": "Clip Color",
+          "60": "Clip Directory",
+          "61": "Clip Name",
+          "62": "Clip Number",
+          "63": "Cloud Sync",
+          "64": "Codec Bitrate",
+          "65": "Color Chart",
+          "66": "Color Space Notes",
+          "67": "Colorist",
+          "68": "Colorist Assistant",
+          "69": "Colorist Notes",
+          "70": "Colorist Reviewed",
+          "71": "Comments",
+          "72": "Compression Ratio",
+          "73": "Continuity",
+          "74": "Continuity Reviewed",
+          "75": "Convergence Adj",
+          "76": "Crew Comments",
+          "77": "DOP",
+          "78": "DOP Reviewed",
+          "79": "Dailies Colorist",
+          "80": "Data Level",
+          "81": "Data Wrangler",
+          "82": "Date Added",
+          "83": "Date Created",
+          "84": "Date Modified",
+          "85": "Date Recorded",
+          "86": "Day / Night",
+          "87": "Deck Firmware",
+          "88": "Deck Serial #",
+          "89": "Description",
+          "90": "Dialog Duration",
+          "91": "Dialog Notes",
+          "92": "Dialog Starts As",
+          "93": "Digital Technician",
+          "94": "Director",
+          "95": "Director Reviewed",
+          "96": "Distance",
+          "97": "Drop frame",
+          "98": "Duration",
+          "99": "EDL Clip Name",
+          "100": "Editing Assistant",
+          "101": "Editor",
+          "102": "Embedded Audio",
+          "103": "Enable Deinterlacing",
+          "104": "End",
+          "105": "End Dialog TC",
+          "106": "End TC",
+          "107": "Environment",
+          "108": "Episode #",
+          "109": "Episode Name",
+          "110": "FG (m)",
+          "111": "FPS",
+          "112": "FSD",
+          "113": "Field Dominance",
+          "114": "File Name",
+          "115": "File Path",
+          "116": "Filter",
+          "117": "Flags",
+          "118": "Focal Point (mm)",
+          "119": "Focus Puller",
+          "120": "Focus Reviewed",
+          "121": "Format",
+          "122": "Frames",
+          "123": "Framing Chart",
+          "124": "Gamma Notes",
+          "125": "Genre",
+          "126": "Grey Chart",
+          "127": "H-FLIP",
+          "128": "IA (mm)",
+          "129": "IDT",
+          "130": "ILPD",
+          "131": "ISO",
+          "132": "Immersive ID",
+          "133": "In",
+          "134": "Input Color Space",
+          "135": "Input Gamma",
+          "136": "Input LUT",
+          "137": "Input Sizing Preset",
+          "138": "Key Grip",
+          "139": "Keyword",
+          "140": "LUT 1",
+          "141": "LUT 2",
+          "142": "LUT 3",
+          "143": "LUT Used",
+          "144": "LUT Used On Set",
+          "145": "Lab Roll #",
+          "146": "Lens Chart",
+          "147": "Lens Notes",
+          "148": "Lens Number",
+          "149": "Lens Type",
+          "150": "Line Producer",
+          "151": "Location",
+          "152": "Media Type",
+          "153": "Mon Color Space",
+          "154": "Monitor LUT",
+          "155": "Move",
+          "156": "ND Filter",
+          "157": "Noise Reduction",
+          "158": "Offline Reference",
+          "159": "Online Status",
+          "160": "Out",
+          "161": "PAR",
+          "162": "PAR Notes",
+          "163": "People",
+          "164": "Post Producer",
+          "165": "Producer",
+          "166": "Production Asst",
+          "167": "Production Company",
+          "168": "Production Name",
+          "169": "Program Name",
+          "170": "Projection",
+          "171": "Proxy",
+          "172": "Proxy Media Path",
+          "173": "RAW",
+          "174": "Rating",
+          "175": "Reel Name",
+          "176": "Reel Number",
+          "177": "Resolution",
+          "178": "Reviewers Notes",
+          "179": "Rig Inverted",
+          "180": "Roll/Card",
+          "181": "S3D Eye",
+          "182": "S3D Notes",
+          "183": "S3D Shot",
+          "184": "S3D Sync",
+          "185": "Safe Area",
+          "186": "Sample Rate",
+          "187": "Sample Rate (KHz)",
+          "188": "Scene",
+          "189": "Script Supervisor",
+          "190": "Send to",
+          "191": "Send to Studio",
+          "192": "Sensor",
+          "193": "Sensor Area Captured",
+          "194": "Series #",
+          "195": "Setup",
+          "196": "Sharpness",
+          "197": "Shoot Day",
+          "198": "Shot",
+          "199": "Shot During Ep",
+          "200": "Shot Frame Rate",
+          "201": "Shot Type",
+          "202": "Shutter Angle",
+          "203": "Shutter Speed",
+          "204": "Shutter Type",
+          "205": "Slate TC",
+          "206": "Sound Mixer",
+          "207": "Sound Reviewed",
+          "208": "Sound Roll #",
+          "209": "Start",
+          "210": "Start Dialog TC",
+          "211": "Start KeyKode",
+          "212": "Start TC",
+          "213": "Subcategory",
+          "214": "Super Scale",
+          "215": "SuperScale Noise Reduction",
+          "216": "SuperScale Sharpness",
+          "217": "Synced Audio",
+          "218": "Tag",
+          "219": "Take",
+          "220": "Time-lapse Interval",
+          "221": "Tone",
+          "222": "Track 1",
+          "223": "Track 10",
+          "224": "Track 11",
+          "225": "Track 12",
+          "226": "Track 13",
+          "227": "Track 14",
+          "228": "Track 15",
+          "229": "Track 16",
+          "230": "Track 17",
+          "231": "Track 18",
+          "232": "Track 19",
+          "233": "Track 2",
+          "234": "Track 20",
+          "235": "Track 21",
+          "236": "Track 22",
+          "237": "Track 23",
+          "238": "Track 24",
+          "239": "Track 3",
+          "240": "Track 4",
+          "241": "Track 5",
+          "242": "Track 6",
+          "243": "Track 7",
+          "244": "Track 8",
+          "245": "Track 9",
+          "246": "Transcription",
+          "247": "Transcription Status",
+          "248": "Type",
+          "249": "Unit Manager",
+          "250": "Unit Name",
+          "251": "Uploaded From",
+          "252": "Usage",
+          "253": "V-FLIP",
+          "254": "VFX Grey Ball",
+          "255": "VFX Markers",
+          "256": "VFX Mirror Ball",
+          "257": "VFX Notes",
+          "258": "VFX Shot #",
+          "259": "VFX Svsr Reviewed",
+          "260": "Video Codec",
+          "261": "Wardrobe Reviewed",
+          "262": "White Balance Tint",
+          "263": "White Point (Kelvin)"
+        },
+        "ok": true
+      },
+      "14": {
+        "dt": 0.013631799985887483,
+        "id": "M3",
+        "label": "clipSetName",
+        "value": {
+          "ret": true,
+          "fileName": "spare.mp4",
+          "name": "spare renamed",
+          "clipName": "spare renamed"
+        },
+        "ok": true
+      },
+      "15": {
+        "dt": 0.0486308999825269,
+        "id": "M3",
+        "label": "clipColor",
+        "value": {
+          "afterSet": "Orange",
+          "set": true,
+          "afterClear": "",
+          "cleared": true
+        },
+        "ok": true
+      },
+      "16": {
+        "dt": 0.04171349998796359,
+        "id": "M3",
+        "label": "clipMetadata",
+        "value": {
+          "ret": true,
+          "after": {
+            "Description": "probe ü \"quoted\"",
+            "Scene": ""
+          },
+          "cleared": true
+        },
+        "ok": true
+      },
+      "17": {
+        "dt": 0.0008784999954514205,
+        "id": "M3",
+        "label": "thirdPartyMetadata",
+        "value": {
+          "ret": true,
+          "ret2": true,
+          "original": "c-0002",
+          "spare": {
+            "rcId": "c-0001"
+          }
+        },
+        "ok": true
+      },
+      "18": {
+        "dt": 0.019684099999722093,
+        "id": "M3",
+        "label": "flags",
+        "value": {
+          "ret": true,
+          "flags": {
+            "1": "Blue",
+            "__flags": 4194304
+          }
+        },
+        "ok": true
+      },
+      "19": {
+        "dt": 0.02248309997958131,
+        "id": "M3",
+        "label": "moveClips",
+        "value": {
+          "ret": true,
+          "tree": {
+            "1": "A/",
+            "2": "A/original.mp4",
+            "3": "A/alt.mp4",
+            "4": "A/Sub/",
+            "5": "A/Sub/original.mp4",
+            "6": "A/Sub/spare renamed"
+          },
+          "spareParent": "Sub"
+        },
+        "ok": true
+      },
+      "20": {
+        "dt": 0.015856799989705905,
+        "id": "M3",
+        "label": "moveFolders",
+        "value": {
+          "ret": true,
+          "subParent": "Master",
+          "sameId": "4ca471ff-5b27-403d-b073-0c957c5abf60",
+          "tree": {
+            "1": "A/",
+            "2": "A/original.mp4",
+            "3": "A/alt.mp4",
+            "4": "Sub/",
+            "5": "Sub/original.mp4",
+            "6": "Sub/spare renamed"
+          }
+        },
+        "ok": true
+      },
+      "21": {
+        "dt": 0.07816880001337267,
+        "id": "M3",
+        "label": "binRenameEmulated",
+        "value": {
+          "movedFolders": true,
+          "tree": {
+            "1": "Sub/",
+            "2": "Sub/original.mp4",
+            "3": "Sub/spare renamed",
+            "4": "A renamed/",
+            "5": "A renamed/original.mp4",
+            "6": "A renamed/alt.mp4"
+          },
+          "oldId": "6173d80b-9867-4aab-b62b-e24953a870b9",
+          "newId": "9c2385b2-6bf0-4821-8c02-62cf9bd56179",
+          "originalStillValid": "original.mp4",
+          "originalParent": "A renamed",
+          "deleted": true,
+          "moved": true
+        },
+        "ok": true
+      },
+      "22": {
+        "dt": 0.289652900013607,
+        "id": "M3",
+        "label": "timelineUsingAlt",
+        "value": "<userdata>",
+        "ok": true
+      },
+      "23": {
+        "dt": 0.11956760002067313,
+        "id": "M3",
+        "label": "deleteClipUsedInTimeline",
+        "value": {
+          "ret": true,
+          "tree": {
+            "1": "RC M3",
+            "2": "Sub/",
+            "3": "Sub/original.mp4",
+            "4": "Sub/spare renamed",
+            "5": "A renamed/",
+            "6": "A renamed/original.mp4"
+          },
+          "itemsBefore": 2,
+          "itemsAfter": 2
+        },
+        "ok": true
+      },
+      "24": {
+        "dt": 0.3373221000074409,
+        "id": "M3",
+        "label": "deleteFolderWithClip",
+        "value": {
+          "inside": {
+            "1": "proxy.mp4"
+          },
+          "ret": true,
+          "tree": {
+            "1": "RC M3",
+            "2": "Sub/",
+            "3": "Sub/original.mp4",
+            "4": "Sub/spare renamed",
+            "5": "A renamed/",
+            "6": "A renamed/original.mp4"
+          }
+        },
+        "ok": true
+      },
+      "25": {
+        "dt": 0.00035429999115876853,
+        "id": "M3",
+        "label": "timelineClipsInPool",
+        "value": {
+          "1": {
+            "type": "Timeline",
+            "name": "RC M3",
+            "isTimeline": true
+          }
+        },
+        "ok": true
+      },
+      "26": {
+        "dt": 0.2645514000032563,
+        "id": "M3",
+        "label": "walkCost",
+        "value": {
+          "clips": 4,
+          "walkMs": 0.3745193792127158,
+          "perClipFullMs": 0.9160792095504865,
+          "perClipLightMs": 0.31292124448417546
+        },
+        "ok": true
+      },
+      "27": {
+        "dt": 0.004883499990683049,
+        "id": "M3",
+        "label": "saveScratch",
+        "value": true,
+        "ok": true
+      },
+      "28": {
+        "dt": 0.24659819999942556,
+        "id": "M3",
+        "label": "exportProject",
+        "value": true,
+        "ok": true
+      },
+      "29": {
+        "dt": 1.1216051999945194,
+        "id": "M3",
+        "label": "importProject",
+        "value": true,
+        "ok": true
+      },
+      "30": {
+        "dt": 0.8783261999778915,
+        "id": "SAFE",
+        "label": "reopenOriginal",
+        "value": true,
+        "ok": true
+      },
+      "31": {
+        "dt": 1.1550450999930035,
+        "id": "M3",
+        "label": "reopenScratch",
+        "value": "<userdata>",
+        "ok": true
+      },
+      "32": {
+        "dt": 1.3391219999757595,
+        "id": "M3",
+        "label": "openImported",
+        "value": "<userdata>",
+        "ok": true
+      },
+      "33": {
+        "dt": 0.7968422999838367,
+        "id": "SAFE",
+        "label": "reopenOriginal",
+        "value": true,
+        "ok": true
+      }
+    },
+    "persist": {
+      "reopened": {
+        "clips": {
+          "/Sub/spare renamed": {
+            "color": "Orange",
+            "metadata": {
+              "Description": "probe ü \"quoted\"",
+              "Scene": ""
+            },
+            "thirdParty": {
+              "rcId": "c-0001"
+            },
+            "flags": {
+              "1": "Blue",
+              "__flags": 4194304
+            },
+            "parent": "Sub",
+            "name": "spare renamed",
+            "uniqueId": "8aa741ce-50d1-4e50-bbda-6f1520d3d404",
+            "type": "Video + Audio",
+            "mediaId": "94efe27f-1fb1-4265-937f-8ff887bca62a",
+            "filePath": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\spare.mp4"
+          },
+          "/Sub/original.mp4": {
+            "color": "",
+            "metadata": {},
+            "thirdParty": {},
+            "flags": {
+              "__flags": 4194304
+            },
+            "parent": "Sub",
+            "name": "original.mp4",
+            "uniqueId": "148735db-3706-4021-8091-4a9bde323031",
+            "type": "Video + Audio",
+            "mediaId": "7c63e725-3413-45a4-a552-4bf8cc74da98",
+            "filePath": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\original.mp4"
+          },
+          "/A renamed/original.mp4": {
+            "color": "",
+            "metadata": {},
+            "thirdParty": {
+              "rcId": "c-0002"
+            },
+            "flags": {
+              "__flags": 4194304
+            },
+            "parent": "A renamed",
+            "name": "original.mp4",
+            "uniqueId": "bf8ce0af-ad38-495a-bf53-eb590c727ea3",
+            "type": "Video + Audio",
+            "mediaId": "9b10b2c6-56cd-44e1-b285-9703b562975e",
+            "filePath": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\original.mp4"
+          },
+          "/RC M3": {
+            "color": "",
+            "metadata": {},
+            "thirdParty": {},
+            "flags": {
+              "__flags": 4194304
+            },
+            "parent": "Master",
+            "name": "RC M3",
+            "uniqueId": "d9e505eb-c449-4cf5-afb4-46b057b16ec1",
+            "type": "Timeline",
+            "mediaId": "d777562b-5a72-488c-9c24-aa5abc55427f",
+            "filePath": ""
+          }
+        },
+        "folders": {
+          "/Sub/": "4ca471ff-5b27-403d-b073-0c957c5abf60",
+          "/": "bb5a4ca6-b216-43ee-927f-f779a00faa24",
+          "/A renamed/": "9c2385b2-6bf0-4821-8c02-62cf9bd56179"
+        }
+      },
+      "imported": {
+        "clips": {
+          "/Sub/spare renamed": {
+            "color": "Orange",
+            "metadata": {
+              "Description": "probe ü \"quoted\"",
+              "Scene": ""
+            },
+            "thirdParty": {
+              "rcId": "c-0001"
+            },
+            "flags": {
+              "1": "Blue",
+              "__flags": 4194304
+            },
+            "parent": "Sub",
+            "name": "spare renamed",
+            "uniqueId": "c89b686c-58b6-40ee-b442-68ca53fdd2d7",
+            "type": "Video + Audio",
+            "mediaId": "94efe27f-1fb1-4265-937f-8ff887bca62a",
+            "filePath": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\spare.mp4"
+          },
+          "/Sub/original.mp4": {
+            "color": "",
+            "metadata": {},
+            "thirdParty": {},
+            "flags": {
+              "__flags": 4194304
+            },
+            "parent": "Sub",
+            "name": "original.mp4",
+            "uniqueId": "528af36d-42fd-4b9c-8bc6-bf78cb561774",
+            "type": "Video + Audio",
+            "mediaId": "7c63e725-3413-45a4-a552-4bf8cc74da98",
+            "filePath": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\original.mp4"
+          },
+          "/A renamed/original.mp4": {
+            "color": "",
+            "metadata": {},
+            "thirdParty": {
+              "rcId": "c-0002"
+            },
+            "flags": {
+              "__flags": 4194304
+            },
+            "parent": "A renamed",
+            "name": "original.mp4",
+            "uniqueId": "13abf755-a983-4c52-80a8-7a54c22a0efd",
+            "type": "Video + Audio",
+            "mediaId": "9b10b2c6-56cd-44e1-b285-9703b562975e",
+            "filePath": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\original.mp4"
+          },
+          "/RC M3": {
+            "color": "",
+            "metadata": {},
+            "thirdParty": {},
+            "flags": {
+              "__flags": 4194304
+            },
+            "parent": "Master",
+            "name": "RC M3",
+            "uniqueId": "f2a583ab-cf6b-477a-9ff5-be606e5a59e9",
+            "type": "Timeline",
+            "mediaId": "d777562b-5a72-488c-9c24-aa5abc55427f",
+            "filePath": ""
+          }
+        },
+        "folders": {
+          "/Sub/": "39744bf8-a973-4a3c-bfb0-2ccb9557f10d",
+          "/": "84f55efb-2493-4424-89ad-889bc74f1acd",
+          "/A renamed/": "89ceac8b-a5ed-4e20-ba3e-9c15ea749745"
+        }
+      },
+      "before": {
+        "clips": {
+          "/Sub/spare renamed": {
+            "color": "Orange",
+            "metadata": {
+              "Description": "probe ü \"quoted\"",
+              "Scene": ""
+            },
+            "thirdParty": {
+              "rcId": "c-0001"
+            },
+            "flags": {
+              "1": "Blue",
+              "__flags": 4194304
+            },
+            "parent": "Sub",
+            "name": "spare renamed",
+            "uniqueId": "8aa741ce-50d1-4e50-bbda-6f1520d3d404",
+            "type": "Video + Audio",
+            "mediaId": "94efe27f-1fb1-4265-937f-8ff887bca62a",
+            "filePath": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\spare.mp4"
+          },
+          "/Sub/original.mp4": {
+            "color": "",
+            "metadata": {},
+            "thirdParty": {},
+            "flags": {
+              "__flags": 4194304
+            },
+            "parent": "Sub",
+            "name": "original.mp4",
+            "uniqueId": "148735db-3706-4021-8091-4a9bde323031",
+            "type": "Video + Audio",
+            "mediaId": "7c63e725-3413-45a4-a552-4bf8cc74da98",
+            "filePath": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\original.mp4"
+          },
+          "/A renamed/original.mp4": {
+            "color": "",
+            "metadata": {},
+            "thirdParty": {
+              "rcId": "c-0002"
+            },
+            "flags": {
+              "__flags": 4194304
+            },
+            "parent": "A renamed",
+            "name": "original.mp4",
+            "uniqueId": "bf8ce0af-ad38-495a-bf53-eb590c727ea3",
+            "type": "Video + Audio",
+            "mediaId": "9b10b2c6-56cd-44e1-b285-9703b562975e",
+            "filePath": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\original.mp4"
+          },
+          "/RC M3": {
+            "color": "",
+            "metadata": {},
+            "thirdParty": {},
+            "flags": {
+              "__flags": 4194304
+            },
+            "parent": "Master",
+            "name": "RC M3",
+            "uniqueId": "d9e505eb-c449-4cf5-afb4-46b057b16ec1",
+            "type": "Timeline",
+            "mediaId": "d777562b-5a72-488c-9c24-aa5abc55427f",
+            "filePath": ""
+          }
+        },
+        "folders": {
+          "/Sub/": "4ca471ff-5b27-403d-b073-0c957c5abf60",
+          "/": "bb5a4ca6-b216-43ee-927f-f779a00faa24",
+          "/A renamed/": "9c2385b2-6bf0-4821-8c02-62cf9bd56179"
+        }
+      }
+    },
+    "note": "Completed.",
+    "scratchName": "ResolveCollab M3 Probe 014efd7b"
+  }
+}

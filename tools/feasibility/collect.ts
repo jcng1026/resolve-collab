@@ -1,6 +1,7 @@
 // Follows Resolve's debug log while the Lua probe runs, measures the
 // request → echo round trip on Node's clock (F1/F2), and saves the probe's
 // results to docs/feasibility/. Run with: node tools/feasibility/collect.ts
+// Add `--name <tag>` to save as results-<date>-<tag>.json (other probes).
 
 import { closeSync, mkdirSync, openSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -14,6 +15,9 @@ const REQUEST_EVERY_MS = 500;
 const TIMEOUT_MS = 15 * 60 * 1000;
 
 const REQUEST = join(STATE_DIR, "request.lua");
+const nameAt = process.argv.indexOf("--name");
+const TAG = nameAt > 0 ? process.argv[nameAt + 1] : undefined;
+if (TAG !== undefined && !/^[a-z0-9-]+$/.test(TAG)) throw new Error(`--name must be lowercase letters, digits or dashes: ${TAG}`);
 
 // Reads only what was appended since the last poll. The log is replaced when
 // Resolve restarts, so a shrinking file starts over from the beginning.
@@ -52,7 +56,7 @@ const rtts: number[] = [];
 const stages: { stage: string; at: number }[] = [];
 const started = Date.now();
 
-console.log("Waiting for the probe. In Resolve: Workspace > Scripts > ResolveCollab_Feasibility");
+console.log(`Waiting for the probe. In Resolve: Workspace > Scripts > ${TAG ? "the probe to run" : "ResolveCollab_Feasibility"}`);
 
 const timer = setInterval(() => {
   const now = Date.now();
@@ -107,7 +111,7 @@ function save(probe: unknown): void {
     probe,
   };
   mkdirSync(OUT_DIR, { recursive: true });
-  const file = join(OUT_DIR, `results-${report.collectedAt.slice(0, 10)}.json`);
+  const file = join(OUT_DIR, `results-${report.collectedAt.slice(0, 10)}${TAG ? `-${TAG}` : ""}.json`);
   writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
   console.log(`\nSaved ${file}`);
   console.log(`Round trip (ms): ${JSON.stringify(report.roundTripMs)}`);

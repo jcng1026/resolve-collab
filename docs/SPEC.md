@@ -46,7 +46,7 @@ ResolveCollab lets up to 5 people edit the same DaVinci Resolve project together
 │         ▲ request files (data only)   │ responses (Fusion prefs)│
 │         │                             ▼                        │
 │ ResolveCollab companion app (TypeScript / Electron)            │
-│   • Sync engine (Yjs document + operation log)                 │
+│   • Sync engine (host-ordered operation log + reconciler)      │
 │   • Session / host logic, locks, undo, merge                   │
 │   • Companion window (people, chat, media, status)             │
 │   • Overlay window (ghost cursors, playhead tags)              │
@@ -61,7 +61,7 @@ ResolveCollab lets up to 5 people edit the same DaVinci Resolve project together
 - **Bridge (Lua):** runs inside Resolve. It reads the project through the API, takes snapshots, and applies commands. It contains a fixed set of command handlers. It **never executes code received from the network**.
 - **Companion app (TypeScript + Electron):** everything else. One per PC.
 - **Network:** Hyperswarm. Peers find each other through the public DHT using a topic derived from the session secret. All traffic is end-to-end encrypted (Noise). No server to run or pay for.
-- **Shared state:** Yjs document holding the session's model of the project, plus an ordered operation log kept by the host.
+- **Shared state:** the host's model of the project plus the ordered operation log that produced it (§19.2). Yjs was dropped on 2026-11-02: it merges conflicting edits by itself, which contradicts first-to-host-wins (§5) and the merge dialogs (§9.3).
 - **ffmpeg:** bundled, used only for proxies and media inspection.
 
 ### 3.2 Bridge ↔ companion channel
@@ -81,8 +81,9 @@ Resolve Free 21.1 Lua has no sockets or general file I/O. Measured on Free 21.1.
 - Each detected local change becomes an **operation**, for example `clip.trim`, `clip.move`, `marker.add` or `bin.rename`, sent to the host.
 
 ### 3.4 Object identity
-The same clip has different internal IDs on each PC. The companion keeps a mapping from a **collab ID** (assigned by the host) to each PC's local object:
-- Media pool items: match by file fingerprint (§10.1). Store the collab ID in the item's third-party metadata if the API allows it on Free (to be verified).
+The same clip has different internal IDs on each PC. The companion keeps a mapping from a **collab ID** (a random ID chosen by whoever creates the item) to each PC's local object:
+- Media pool clips: the collab ID is stored in the clip's third-party metadata (`rcId`). Verified on Free: it survives save + reopen and `.drp` export + import (§19.1).
+- Bins: no metadata, so mapped by the bin's local unique ID, saved by the companion. After a `.drp` import, mapped by bin path.
 - Timeline items: map the local unique ID to the collab ID. Rebuild the mapping by matching (track, record position, source media, source in/out) after a timeline swap or rebuild.
 
 ### 3.5 Applying remote changes: three tiers
@@ -278,7 +279,7 @@ The feasibility test runs in a throwaway project in genuine Resolve Free 21.1.2 
 | F1 | Bridge loop runs with Resolve responsive; bridge can read request files | Loop **yes** (52 ms worst gap). Reading files **no**; listing subfolder names works instead (§3.2) |
 | F2 | Outbound channel | `Fusion.prefs` **no**; error log via `fusion:Execute` **yes** (§3.2) |
 | F3 | Script install path | `%APPDATA%\…\Support\Fusion\Scripts\Utility\` **yes**; `.py` not listed on Free. Don't put shared files under `%LOCALAPPDATA%` when started from a packaged app |
-| F4 | Timeline / media pool edits on Free | **All needed edits work**, including trims, moves, track changes. Exception: bins can't be renamed (no `Folder.SetName`). `ImportMedia` only accepts plain paths |
+| F4 | Timeline / media pool edits on Free | **All needed edits work**, including trims, moves, track changes. Bins have no `Folder.SetName`, but a rename can be emulated (§19.1). `ImportMedia` only accepts plain paths |
 | F5 | Item state readable | **Yes** |
 | F6 | `.drt` export/import | **Yes** |
 | F7 | `.drp` export/import | **Yes** |
@@ -340,6 +341,10 @@ Every feature follows: spec section → automated tests (using a **fake bridge**
 | Name | ResolveCollab |
 | Bridge → companion | Errors raised in `fusion:Execute`, read from `ResolveDebug.txt` (§3.2) |
 | Companion → bridge | Subfolder names in an inbox, read with `MediaStorage:GetSubFolderList` (§3.2) |
+| Shared state | Host-ordered operation log, not Yjs (2026-11-02) |
+| Merge questions before the companion window exists | Asked in the companion's terminal |
+| Media pool deletes | Sync live; the host keeps deleted items so undo (M7) can restore them |
+| Joining before `.drp` transfer (M6) | Match and combine: matching bins and clips are linked, the rest is added on both sides |
 
 ---
 
@@ -389,3 +394,93 @@ Goal: on two PCs, a clip appended to the current timeline on one appears on the 
   - The two PCs' clocks differ by ~85 s, so one-way time can't be read off directly. Adding the two directions gives ~0.94 s for a round trip, i.e. **~0.5 s from detection to applied**, comfortably under the 2 s target.
   - There were no echoes.
 - Deviations from §18.1: payloads over ~750 bytes are reported as `ERR payload-too-large` instead of split (none occur in M2). A second bridge run takes over from the first through an in-memory `SetPrefs` key.
+
+---
+
+## 19. M3 design: media pool
+
+Goal (§16): bins and clips sync both ways, live and after offline or bridge-off time, on Free. Applies decisions from 2026-11-02 (§17).
+
+### 19.1 What Resolve Free allows (probe, `docs/feasibility/findings-2026-11-02.md`)
+- Create, move and delete bins; import into a chosen bin (set the current bin, import, set it back); move, rename, recolour, flag and delete clips; set metadata and third-party metadata. All read back correctly.
+- **Bin rename** has no API. It is emulated on the receiving PC: make a bin with the new name next to the old one, move its clips and sub-bins into it, delete the old one. The receiving bin gets a new local ID; the clips keep theirs.
+- **Missing files** can't be imported (no offline placeholder), so a clip whose file this PC lacks is listed as missing (§19.6) and added once the file is found.
+- Deleting a pool clip leaves its timeline uses in place.
+- Snapshot cost is ~0.9 ms per clip, so the pool is scanned incrementally (§19.4).
+
+### 19.2 Model and operations
+The session model holds **bins** `{id, name, parent}` (the root bin has the fixed ID `root`) and **clips** `{id, name, bin, color, flags, meta, file}`:
+- `meta` is the clip's set metadata, one field per key. `flags` is a sorted list of flag colours.
+- `file` is the fingerprint `{name, size, hash}` (§10.1): SHA-256 over the size plus the first, middle and last 1 MB.
+- Timelines in the pool are not part of M3 (M4).
+
+Operations set values, so applying the same one twice changes nothing:
+- `bin.create {id, name, parent}`, `bin.set {id, name?, parent?}`, `bin.delete {id}` (also deletes what's inside, as Resolve does)
+- `clip.create {id, name, bin, color, flags, meta, file}`, `clip.set {id, name?, bin?, color?, flags?, meta?}`, `clip.delete {id}`
+
+Collab IDs are random 128-bit hex, chosen by whoever creates the item.
+
+### 19.3 Host-ordered log
+- A member **proposes** an operation to the host. The host checks it (known IDs, valid values, a bin can't move into itself), gives it the next sequence number, applies it to the model and **commits** it to everyone, including the proposer. The host's own changes are committed directly.
+- Everyone applies commits in sequence order. A gap, or a reconnect, makes the member ask for the host's full state `{seq, model}`.
+- A member accepts commits and state only from the host's peer ID, which the host announces when a peer connects.
+- M3 doesn't reject stale proposals yet: when two edits of the same field race, the later commit wins on every PC. First-to-host-wins with undo and notice is M7.
+
+### 19.4 Bridge side
+- **Scan** every 0.6 s:
+  - Walk all bins, and list every clip's unique ID to spot added and removed clips.
+  - Fully re-read new clips, plus up to 60 existing clips in rotation. At 300 clips, a metadata change shows within ~3 s; name, bin and colour changes show within one rotation.
+  - Changes are emitted as events:
+    - `mp.bin {id, name, parent}` and `mp.clip {id, rcId, name, bin, color, flags, meta, path}` for added or changed items;
+    - `mp.gone {kind, id}` for removed items.
+  - `mp.snapshot` re-emits everything, then `mp.synced {bins, clips}`. The bridge does this on its own when it starts.
+- **Commands**, each reading the result back and replying with the item's new record:
+  - `mp.bin.create {parent, name}`, `mp.bin.rename {id, name}` (emulated, §19.1), `mp.bin.move {id, parent}`, `mp.bin.delete {id}`
+  - `mp.clip.import {bin, path, rcId, name, color, flags, meta}`, `mp.clip.link {id, rcId}`, `mp.clip.set {id, …}`, `mp.clip.delete {id}`
+  - `project.backup {path}` (exports the open project as `.drp`)
+- Items a command touched are refreshed in the bridge's last-seen state, so they aren't reported back as local edits. Events over ~750 bytes are split into `PART` log lines and reassembled by the companion.
+
+### 19.5 Companion side: one reconciler
+For every bin, clip and field, the reconciler compares three values:
+- **base**: the last value this PC and the session agreed on, saved to disk;
+- **local**: Resolve now, translated to collab IDs;
+- **session**: the host's model.
+
+| local vs base | session vs base | Live | Catch-up (connect, reconnect, bridge start) |
+|---|---|---|---|
+| same | same | nothing | nothing |
+| changed | same | propose it | propose it |
+| same | changed | command the bridge | command the bridge |
+| changed | changed, equal | update base | update base |
+| changed | changed, different | if this PC has a proposal for that field in flight, wait for it; otherwise treat as catch-up | **ask** Keep mine / Keep theirs (§9.3) |
+
+Further rules:
+- A deleted item on one side with an edit on the other always asks, in both modes (§9.3: a deletion never wins silently).
+- **Catch-up order** (§9.3):
+  1. backup `.drp` if anything local will change;
+  2. answer every question in the terminal, with "apply to all";
+  3. send all proposals together and apply all commands.
+- No two commands for the same item are in flight at once.
+- A new local clip without an `rcId` gets a fresh collab ID, written into Resolve with `mp.clip.link`, then is proposed as `clip.create`.
+- **First join** (no base yet; until M6):
+  - Bins match by path. Clips match by fingerprint plus bin path, then fingerprint alone, without reusing a match.
+  - Matched items take the session's values. Unmatched local items are proposed, and unmatched session items are created locally.
+- **Saved state** in `%USERPROFILE%\ResolveCollab\sessions\<topic>.json`: the session's last applied sequence number, base, bin ID map, and the missing list.
+
+### 19.6 Media for incoming clips
+For `clip.create` from someone else, the companion looks for a local file with the same fingerprint, in this order:
+1. a local clip not yet linked to anything, which is linked and moved into place instead of re-imported;
+2. the same path as on the creator's PC;
+3. a file of the same name in any folder that holds this PC's other clips;
+4. the per-project media folder (§10.4).
+
+If none matches, the clip goes on the **missing list**, printed with a `locate <clip> <path>` command. Download from peers is M9.
+
+### 19.7 Verification
+- **Unit tests:** model and operations, host log ordering and gaps, every reconciler row including first join and delete-vs-edit, fingerprints, `PART` reassembly, and the Lua bridge's pure parts under `fuscript`.
+- **Pipeline test:** two companions with fake media pool bridges over a local testnet:
+  - live edits both ways;
+  - an offline edit merged with a dialog answer;
+  - a missing file located later.
+- **Real Resolve on one PC:** the bridge against a scratch project, every command and event.
+- **Two PCs:** the user's checklist in `docs/m3-two-pc-test.md`.

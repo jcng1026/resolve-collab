@@ -1,6 +1,7 @@
 // Prepares a feasibility run: generates test media with ffmpeg, writes the
 // request files the Lua probe reads, and installs the probe scripts into
 // Resolve's Scripts > Utility folder. Run with: node tools/feasibility/prepare.ts
+// `--install-only` skips the media and request files and just (re)installs the probes.
 
 import { execFileSync } from "node:child_process";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -43,23 +44,28 @@ function testClip(out: string, video: string, toneHz: number): void {
   ]);
 }
 
-for (const dir of [MEDIA, join(MEDIA, "moved"), join(STATE_DIR, "out")]) mkdirSync(dir, { recursive: true });
+const installOnly = process.argv.includes("--install-only");
+if (!installOnly) {
+  for (const dir of [MEDIA, join(MEDIA, "moved"), join(STATE_DIR, "out")]) mkdirSync(dir, { recursive: true });
 
-console.log(`Generating test media in ${MEDIA} ...`);
-testClip(join(MEDIA, "original.mp4"), "testsrc2", 440);
-testClip(join(MEDIA, "spare.mp4"), "smptehdbars", 660);
-testClip(join(MEDIA, "alt.mp4"), "rgbtestsrc", 880);
-ffmpeg(["-i", join(MEDIA, "original.mp4"), "-vf", "scale=960:540", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", join(MEDIA, "proxy.mp4")]);
-copyFileSync(join(MEDIA, "spare.mp4"), join(MEDIA, "moved", "spare.mp4"));
+  console.log(`Generating test media in ${MEDIA} ...`);
+  testClip(join(MEDIA, "original.mp4"), "testsrc2", 440);
+  testClip(join(MEDIA, "spare.mp4"), "smptehdbars", 660);
+  testClip(join(MEDIA, "alt.mp4"), "rgbtestsrc", 880);
+  ffmpeg(["-i", join(MEDIA, "original.mp4"), "-vf", "scale=960:540", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", join(MEDIA, "proxy.mp4")]);
+  copyFileSync(join(MEDIA, "spare.mp4"), join(MEDIA, "moved", "spare.mp4"));
 
-// The loop echoes request n back; collect.ts keeps rewriting this file.
-writeFileSync(join(STATE_DIR, "request.lua"), `return ${toLuaLiteral({ n: 0 })}\n`);
-// Harmless code: in an empty environment `tostring` is nil, so this must fail.
-writeFileSync(join(STATE_DIR, "attack.lua"), 'return {["leak"]=tostring(_G)}\n');
+  // The loop echoes request n back; collect.ts keeps rewriting this file.
+  writeFileSync(join(STATE_DIR, "request.lua"), `return ${toLuaLiteral({ n: 0 })}\n`);
+  // Harmless code: in an empty environment `tostring` is nil, so this must fail.
+  writeFileSync(join(STATE_DIR, "attack.lua"), 'return {["leak"]=tostring(_G)}\n');
+}
 
 mkdirSync(SCRIPTS_UTILITY, { recursive: true });
-const lua = readFileSync(join(HERE, "ResolveCollab_Feasibility.lua"), "utf8");
-writeFileSync(join(SCRIPTS_UTILITY, "ResolveCollab_Feasibility.lua"), stampStateDir(lua, STATE_DIR));
+for (const probe of ["ResolveCollab_Feasibility.lua", "ResolveCollab_MediaPoolProbe.lua"]) {
+  const lua = readFileSync(join(HERE, probe), "utf8");
+  writeFileSync(join(SCRIPTS_UTILITY, probe), stampStateDir(lua, STATE_DIR));
+}
 copyFileSync(join(HERE, "ResolveCollab_PythonProbe.py"), join(SCRIPTS_UTILITY, "ResolveCollab_PythonProbe.py"));
 
 console.log(`Installed probe scripts into ${SCRIPTS_UTILITY}`);
