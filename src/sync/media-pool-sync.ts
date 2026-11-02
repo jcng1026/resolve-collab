@@ -130,8 +130,9 @@ export class MediaPoolSync {
     const clip = [...this.missing.values()].find((c) => c.id.startsWith(idPrefix));
     if (!clip) return `no missing clip starts with ${idPrefix}`;
     const file = await this.options.fingerprint(path);
-    if (!file || !clip.file || file.size !== clip.file.size || file.hash !== clip.file.hash) {
-      return `${path} is not the same file as ${clip.name}`;
+    if (!file) return `can't read ${path}: check the path`;
+    if (!clip.file || file.size !== clip.file.size || file.hash !== clip.file.hash) {
+      return `${path} is not the same file as ${clip.name} (same name, different content)`;
     }
     const target = this.session?.clips[clip.id];
     if (!target) return `${clip.name} is no longer in the session`;

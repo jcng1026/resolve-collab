@@ -134,7 +134,11 @@ describe("media pool sync between two companions", () => {
     const elsewhere = join(member.dir, "found-b.mp4");
     writeFileSync(elsewhere, "BBBB".repeat(1000));
     const [missing] = member.session!.sync.missing.values();
-    expect(await member.session!.sync.locate(missing!.id.slice(0, 8), elsewhere)).toMatch(/imported/);
+    const id = missing!.id.slice(0, 8);
+    expect(await member.session!.sync.locate(id, join(member.dir, "nowhere.mp4"))).toMatch(/can't read/);
+    writeFileSync(join(member.dir, "other.mp4"), "CCCC".repeat(1000)); // same size, other content
+    expect(await member.session!.sync.locate(id, join(member.dir, "other.mp4"))).toMatch(/not the same file/);
+    expect(await member.session!.sync.locate(id, elsewhere)).toMatch(/imported/);
     await waitFor("b.mp4 on member", () => !!member.fake.clipByName("found-b.mp4") || !!member.fake.clipByName("b.mp4"));
     expect(member.fake.clipByName("b.mp4")?.rcId ?? member.fake.clipByName("found-b.mp4")?.rcId).toBe(host.fake.clipByName("b.mp4")!.rcId);
   }, 30_000);
