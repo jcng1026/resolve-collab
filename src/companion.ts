@@ -86,7 +86,7 @@ function describe(c: Conflict): string {
 // Keep mine / Keep theirs for each conflict, with "for all" (SPEC §9.3).
 async function ask(conflicts: Conflict[]): Promise<Map<string, Answer>> {
   const answers = new Map<string, Answer>();
-  log(`${conflicts.length} change(s) here conflict with the session. A backup of this project was saved first.`);
+  log(`${conflicts.length} change(s) here conflict with the session. A backup of this project is saved before anything changes.`);
   let all: Answer | undefined;
   for (const [i, c] of conflicts.entries()) {
     if (!all) {
