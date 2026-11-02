@@ -492,3 +492,13 @@ If none matches, the clip goes on the **missing list**, printed with a `locate <
   - The final snapshot after re-attaching matched the member's pool.
   - **Re-run after the inbox doorbell (§3.2), same day: all checks passed again, this time on the Media page.** A Scene number typed into the Metadata panel stayed while the bridge ran, and was reported about 1 s later.
 - **Two PCs:** the user's checklist in `docs/m3-two-pc-test.md`.
+  - **Result, 2026-11-03, Free 21.1.2 on both PCs: passed.**
+  - **Live, both ways:** bins, imports, colour, flags, Scene/Take metadata, clip and bin renames, moves, sub-bins and deletes all synced within ~2 s. The file was found on the other PC by fingerprint from Downloads.
+  - **Missing media:** two same-name, same-size downloads had different content, so the clip was correctly listed as missing. It was imported with `locate` once the other PC's copy was in place.
+  - **Offline merge:** only the name (changed on both) was asked about, only on the returning PC. Colour and Take merged automatically, and a backup `.drp` was saved first.
+  - **Host restart with `host --code`:** the member rejoined, and the host continued its log.
+  - **Found and fixed during the test:**
+    - listing the inbox emptied the Metadata panel and stalled the bridge on the Media page (inbox doorbell, §3.2);
+    - `locate` wrongly said "not the same file" for a path it couldn't read;
+    - the merge prompt claimed the backup had already been saved.
+  - **Not yet built:** the notice to the overwritten person (§9.3, point 7) comes in M7.
