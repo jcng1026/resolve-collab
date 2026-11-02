@@ -1,0 +1,166 @@
+// Companion side of the bridge channel (SPEC §3.2, §18.1): follows Resolve's
+// debug log for bridge output and writes commands as inbox folders.
+
+import { EventEmitter } from "node:events";
+import { closeSync, mkdirSync, openSync, readdirSync, readSync, rmSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { type JsonValue, type OutboundLine, encodeInboxFolders, parseInboxFolder, parseLogLine } from "../bridge-protocol/wire.ts";
+
+export interface BridgeClientOptions {
+  logPath: string; // Support/logs/ResolveDebug.txt
+  inboxDir: string;
+  pollMs?: number;
+  commandTimeoutMs?: number;
+}
+
+export interface CommandResult {
+  ok: boolean;
+  error?: string;
+  [key: string]: JsonValue | undefined;
+}
+
+interface Pending {
+  resolve: (result: CommandResult) => void;
+  timer: NodeJS.Timeout;
+}
+
+// Events: "hello" (payload), "event" (payload), "error" (payload), "alive" (boolean).
+export class BridgeClient extends EventEmitter {
+  private readonly logPath: string;
+  private readonly inboxDir: string;
+  private readonly pollMs: number;
+  private readonly commandTimeoutMs: number;
+  private offset = 0;
+  private partial = "";
+  private timer: NodeJS.Timeout | undefined;
+  private bridgeId: string | undefined;
+  private lastBeat = 0;
+  private alive = false;
+  private nextSeq = 1;
+  private readonly pending = new Map<number, Pending>();
+
+  constructor(options: BridgeClientOptions) {
+    super();
+    this.logPath = options.logPath;
+    this.inboxDir = options.inboxDir;
+    this.pollMs = options.pollMs ?? 50;
+    this.commandTimeoutMs = options.commandTimeoutMs ?? 5000;
+  }
+
+  // Starts reading from the current end of the log, so output from earlier
+  // bridge runs is ignored, and clears messages a previous run left behind.
+  start(): void {
+    mkdirSync(this.inboxDir, { recursive: true });
+    for (const name of readdirSync(this.inboxDir)) {
+      if (parseInboxFolder(name)) rmSync(join(this.inboxDir, name), { recursive: true, force: true });
+    }
+    this.offset = this.logSize();
+    this.timer = setInterval(() => this.poll(), this.pollMs);
+  }
+
+  stop(): void {
+    clearInterval(this.timer);
+    for (const [, pending] of this.pending) {
+      clearTimeout(pending.timer);
+      pending.resolve({ ok: false, error: "stopped" });
+    }
+    this.pending.clear();
+  }
+
+  get connected(): boolean {
+    return this.alive;
+  }
+
+  send(command: { type: string } & Record<string, JsonValue>): Promise<CommandResult> {
+    const seq = this.nextSeq++;
+    for (const name of encodeInboxFolders(seq, command)) mkdirSync(join(this.inboxDir, name));
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(seq);
+        resolve({ ok: false, error: "timeout" });
+      }, this.commandTimeoutMs);
+      this.pending.set(seq, { resolve, timer });
+    });
+  }
+
+  private logSize(): number {
+    try {
+      return statSync(this.logPath).size;
+    } catch {
+      return 0;
+    }
+  }
+
+  private poll(): void {
+    for (const line of this.readNewLines()) {
+      const message = parseLogLine(line);
+      if (message) this.handle(message);
+    }
+    const alive = this.bridgeId !== undefined && Date.now() - this.lastBeat < 3000;
+    if (alive !== this.alive) {
+      this.alive = alive;
+      this.emit("alive", alive);
+    }
+  }
+
+  // Resolve replaces the log when it restarts; a shrinking file starts over.
+  private readNewLines(): string[] {
+    const size = this.logSize();
+    if (size < this.offset) this.offset = 0;
+    if (size === this.offset) return [];
+    const buffer = Buffer.alloc(size - this.offset);
+    const fd = openSync(this.logPath, "r");
+    try {
+      readSync(fd, buffer, 0, buffer.length, this.offset);
+    } finally {
+      closeSync(fd);
+    }
+    this.offset = size;
+    const lines = (this.partial + buffer.toString("utf8")).split(/\r?\n/);
+    this.partial = lines.pop() ?? "";
+    return lines;
+  }
+
+  private handle({ bridgeId, kind, payload }: OutboundLine): void {
+    if (kind === "HELLO") {
+      this.bridgeId = bridgeId;
+      this.lastBeat = Date.now();
+      this.emit("hello", payload);
+      return;
+    }
+    if (bridgeId !== this.bridgeId) return; // output of an older bridge run
+    this.lastBeat = Date.now();
+    const data = payload as Record<string, JsonValue>;
+    switch (kind) {
+      case "ACK":
+        this.removeAcknowledged(Number(data.seq));
+        break;
+      case "RES":
+        this.settle(Number(data.seq), data as unknown as CommandResult);
+        break;
+      case "EVT":
+        this.emit("event", payload);
+        break;
+      case "ERR":
+        this.emit("error", payload);
+        break;
+      case "HB":
+        break;
+    }
+  }
+
+  private removeAcknowledged(upTo: number): void {
+    for (const name of readdirSync(this.inboxDir)) {
+      const folder = parseInboxFolder(name);
+      if (folder && folder.seq <= upTo) rmSync(join(this.inboxDir, name), { recursive: true, force: true });
+    }
+  }
+
+  private settle(seq: number, result: CommandResult): void {
+    const pending = this.pending.get(seq);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pending.delete(seq);
+    pending.resolve(result);
+  }
+}

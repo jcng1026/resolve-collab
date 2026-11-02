@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { LuaSerializeError, toLuaLiteral } from "./lua-literal.js";
+import { LuaSerializeError, toLuaLiteral } from "./lua-literal.ts";
 
 describe("toLuaLiteral", () => {
   it("serialises scalars", () => {

@@ -15,5 +15,5 @@
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true
   },
-  "include": ["src", "tools"]
+  "include": ["src", "tools", "bridge"]
 }

@@ -67,7 +67,7 @@ ResolveCollab lets up to 5 people edit the same DaVinci Resolve project together
 ### 3.2 Bridge ↔ companion channel
 Resolve Free 21.1 Lua has no sockets or general file I/O. Measured on Free 21.1.2 for Windows (`docs/feasibility/findings-2026-11-02.md`):
 - **Bridge → companion (works):** the bridge runs `fusion:Execute('error("RCFEAS|<key>|<hex>")')`. Resolve writes each error to `Support/logs/ResolveDebug.txt` immediately and the bridge keeps running. The companion follows the log. Payloads are hex and split into ≤1500-character chunks, because log lines are cut at ~2000 characters. Throughput: 200 messages in 17 ms, in order.
-- **Companion → bridge (revised proposal, awaiting approval):** `loadfile`, `dofile`, `io`, `bmd.readfile` and `fusion:LoadPrefs` are all nil, so the bridge can't read request files. Instead, the companion creates **subfolders in an inbox folder whose names are the messages** (`<seq>_<hex payload>`). The bridge reads them with `resolve:GetMediaStorage():GetSubFolderList(inbox)` each tick: 100 messages in ~33 ms, with nothing in Resolve touched. The bridge acknowledges the highest sequence it has handled through the error log, and the companion then deletes those folders. Large payloads are split across several folders.
+- **Companion → bridge (approved 2026-11-02):** `loadfile`, `dofile`, `io`, `bmd.readfile` and `fusion:LoadPrefs` are all nil, so the bridge can't read request files. Instead, the companion creates **subfolders in an inbox folder whose names are the messages** (`<seq>_<hex payload>`). The bridge reads them with `resolve:GetMediaStorage():GetSubFolderList(inbox)` each tick: 100 messages in ~33 ms, with nothing in Resolve touched. The bridge acknowledges the highest sequence it has handled through the error log, and the companion then deletes those folders. Large payloads are split across several folders.
   - Inbound messages stay **data only**: decoded by the bridge's own parser, never executed.
   - *Superseded:* the keyboard-preset trick (the bridge can't know the file name it would have to import) and the OTIO timeline trick (switches the editor's current timeline).
 - *Rejected:* `Fusion.prefs` via `SetPrefs`/`SavePrefs`. `SavePrefs` doesn't exist on Free, and the file is only written when Resolve restarts.
@@ -339,4 +339,46 @@ Every feature follows: spec section → automated tests (using a **fake bridge**
 | Diagnostics | Local logs (14 days) + Export diagnostics; no telemetry |
 | Name | ResolveCollab |
 | Bridge → companion | Errors raised in `fusion:Execute`, read from `ResolveDebug.txt` (§3.2) |
-| Companion → bridge | Subfolder names in an inbox, read with `MediaStorage:GetSubFolderList` (§3.2; revised proposal) |
+| Companion → bridge | Subfolder names in an inbox, read with `MediaStorage:GetSubFolderList` (§3.2) |
+
+---
+
+## 18. M2 design: thin end-to-end
+
+Goal: on two PCs, a clip appended to the current timeline on one appears on the other within 2 s. Everything else waits for later milestones.
+
+### 18.1 Bridge wire format
+- **Outbound log line:** `RC|<bridgeId>|<kind>|<hex(JSON)>`, raised through `fusion:Execute('error("…")')`. `bridgeId` is random per bridge start, so lines from older runs are ignored. Kinds:
+  - `HELLO` (product, version, Studio flag, inbox)
+  - `HB` (heartbeat, every 1 s)
+  - `ACK` (highest inbox sequence handled)
+  - `EVT` (detected local change)
+  - `RES` (result of a command)
+  - `ERR` (error)
+  - Long payloads are split into `<kind>` parts carrying `{part, parts, msg}`.
+- **Inbox folder:** `<seq:8 digits>.<part:3>.<parts:3>.<hex(JSON chunk)>`, ≤ 100 payload bytes per folder. The companion deletes folders up to the acknowledged sequence.
+- **JSON only, both ways.** The bridge has its own small JSON decoder. Inbound text is never passed to `loadstring` or `Execute`.
+
+### 18.2 Commands and events (M2 subset)
+- **Event** `clip.added`: `{timeline, track, start, end, srcStart, srcEnd, media:{name, path, frames}}`. Detected by snapshotting video track items of the current timeline every 300 ms and comparing unique IDs. Items the bridge added itself are excluded.
+- **Command** `clip.append`: same fields. The bridge finds the media pool item by file name (fingerprints come in M9), then calls `AppendToTimeline` with `recordFrame` and `trackIndex`. It replies with `RES {seq, ok, error?}`.
+- If the media isn't in the receiver's media pool, the reply is `RES {ok:false, error:"media-missing"}`. Media transfer is M9.
+
+### 18.3 Peers
+- **Transport:** Hyperswarm, topic = SHA-256 of the invite secret. Connections are Noise-encrypted by Hyperswarm.
+- **Messages:** newline-delimited JSON.
+- **M2 scope:** two peers, no host approval, no ordering or locks. Those come in M6/M7.
+
+### 18.4 Verification
+- Unit tests: protocol encoding (TS), the Lua bridge's codec run under `fuscript`, and a companion pipeline against a fake bridge.
+- On one PC: real bridge ⇄ companion A ⇄ Hyperswarm ⇄ companion B ⇄ second bridge simulated by a fake.
+- Final check: the user's two PCs (`docs/m2-two-pc-test.md`).
+
+### 18.5 Status (2026-11-02)
+- One-PC check passed with genuine Resolve Free 21.1.2:
+  - Peer → Resolve: a clip from companion B was applied in Resolve **~125 ms** after B detected it.
+  - Resolve → peer: a clip appended in Resolve was received and applied by B **62 ms** after the bridge detected it (detection polls every 300 ms).
+  - Clips the bridge added were not echoed back.
+  - The bridge stopped cleanly on a `stop` command.
+- Outstanding: the two-PC check.
+- Deviations from §18.1: payloads over ~750 bytes are reported as `ERR payload-too-large` instead of split (none occur in M2). A second bridge run takes over from the first through an in-memory `SetPrefs` key.
