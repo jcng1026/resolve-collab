@@ -67,7 +67,7 @@ ResolveCollab lets up to 5 people edit the same DaVinci Resolve project together
 ### 3.2 Bridge ↔ companion channel
 Resolve Free 21.1 Lua has no sockets or general file I/O. Measured on Free 21.1.2 for Windows (`docs/feasibility/findings-2026-11-02.md`):
 - **Bridge → companion (works):** the bridge runs `fusion:Execute('error("RCFEAS|<key>|<hex>")')`. Resolve writes each error to `Support/logs/ResolveDebug.txt` immediately and the bridge keeps running. The companion follows the log. Payloads are hex and split into ≤1500-character chunks, because log lines are cut at ~2000 characters. Throughput: 200 messages in 17 ms, in order.
-- **Companion → bridge (workaround, tested; proposal awaiting approval):** `loadfile`, `dofile`, `io`, `bmd.readfile` and `fusion:LoadPrefs` are all nil, so the bridge can't read request files.
+- **Companion → bridge (workaround, tested; approved 2026-11-02):** `loadfile`, `dofile`, `io`, `bmd.readfile` and `fusion:LoadPrefs` are all nil, so the bridge can't read request files.
   - *Small messages (normal edits):* the companion writes a copy of a real keyboard preset whose **file name** is the encoded message. The bridge runs `ImportKeyboardPreset`, reads the name from `GetKeyboardPresetList`, then `DeleteKeyboardPreset`. About 100–125 bytes and ~250–300 ms per message, and nothing in the project is touched.
   - *Large messages (catch-up):* an OTIO timeline whose marker notes carry the data, imported with `ImportTimelineFromFile` and deleted afterwards. ≥10 KB per message, ~370 ms. It switches the current timeline (the bridge must switch back), so it's only used while the editor is idle.
   - Inbound messages stay **data only**: decoded by the bridge's own parser, never executed.
@@ -339,3 +339,5 @@ Every feature follows: spec section → automated tests (using a **fake bridge**
 | Install | Unsigned installer that also installs the bridge; no auto-update |
 | Diagnostics | Local logs (14 days) + Export diagnostics; no telemetry |
 | Name | ResolveCollab |
+| Bridge → companion | Errors raised in `fusion:Execute`, read from `ResolveDebug.txt` (§3.2) |
+| Companion → bridge | Keyboard-preset file names for edits; OTIO marker notes only for large idle-time transfers (§3.2) |
