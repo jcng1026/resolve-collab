@@ -53,5 +53,6 @@ Send me both companions' output if anything fails.
 - Media isn't transferred between PCs yet (M9): each PC needs its own copy of the files.
 - Deletes sync immediately and can't be undone through ResolveCollab yet (M7). The backup `.drp` is your safety net.
 - Merge questions are asked in the companion window; the real dialog comes with the companion app.
+- When the returning person picks "keep mine", the person whose change was replaced isn't told yet. The "… replaced your … — Show / Restore mine" notice (SPEC §9.3, point 7) comes with M7.
 - Anyone with the invite code can join (host approval is M6).
 - Switching to another project in Resolve pauses sync until you switch back.
