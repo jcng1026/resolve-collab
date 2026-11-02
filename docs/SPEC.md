@@ -67,7 +67,10 @@ ResolveCollab lets up to 5 people edit the same DaVinci Resolve project together
 ### 3.2 Bridge ↔ companion channel
 Resolve Free 21.1 Lua has no sockets or general file I/O. Measured on Free 21.1.2 for Windows (`docs/feasibility/findings-2026-11-02.md`):
 - **Bridge → companion (works):** the bridge runs `fusion:Execute('error("RCFEAS|<key>|<hex>")')`. Resolve writes each error to `Support/logs/ResolveDebug.txt` immediately and the bridge keeps running. The companion follows the log. Payloads are hex and split into ≤1500-character chunks, because log lines are cut at ~2000 characters. Throughput: 200 messages in 17 ms, in order.
-- **Companion → bridge (OPEN, blocks live sync on Free):** the planned `loadfile` of request files is impossible. `loadfile`, `dofile`, `io`, `bmd.readfile` and `fusion:LoadPrefs` are all nil. Candidate replacements are listed in the findings. Whatever is chosen, inbound messages stay **data only**, never code.
+- **Companion → bridge (workaround, tested; proposal awaiting approval):** `loadfile`, `dofile`, `io`, `bmd.readfile` and `fusion:LoadPrefs` are all nil, so the bridge can't read request files.
+  - *Small messages (normal edits):* the companion writes a copy of a real keyboard preset whose **file name** is the encoded message. The bridge runs `ImportKeyboardPreset`, reads the name from `GetKeyboardPresetList`, then `DeleteKeyboardPreset`. About 100–125 bytes and ~250–300 ms per message, and nothing in the project is touched.
+  - *Large messages (catch-up):* an OTIO timeline whose marker notes carry the data, imported with `ImportTimelineFromFile` and deleted afterwards. ≥10 KB per message, ~370 ms. It switches the current timeline (the bridge must switch back), so it's only used while the editor is idle.
+  - Inbound messages stay **data only**: decoded by the bridge's own parser, never executed.
 - *Rejected:* `Fusion.prefs` via `SetPrefs`/`SavePrefs`. `SavePrefs` doesn't exist on Free, and the file is only written when Resolve restarts.
 - **Protocol:** every request has a sequence number, a command, arguments and a timeout. Every response echoes the sequence number, plus a status (`ok` / `error` / `unsupported`) and its data. Requests older than 120 s are refused.
 - **Liveness:** the bridge writes a heartbeat key every second. No heartbeat for 3 s means the bridge is not running (§9.4).
@@ -273,7 +276,7 @@ The feasibility test runs in a throwaway project in genuine Resolve Free 21.1.2 
 
 | # | Question | Result |
 |---|---|---|
-| F1 | Bridge loop runs with Resolve responsive; bridge can read request files | Loop **yes** (52 ms worst gap). Reading files **no**: inbound channel open (§3.2) |
+| F1 | Bridge loop runs with Resolve responsive; bridge can read request files | Loop **yes** (52 ms worst gap). Reading files **no**; preset and timeline import tricks work instead (§3.2) |
 | F2 | Outbound channel | `Fusion.prefs` **no**; error log via `fusion:Execute` **yes** (§3.2) |
 | F3 | Script install path | `%APPDATA%\…\Support\Fusion\Scripts\Utility\` **yes**; `.py` not listed on Free. Don't put shared files under `%LOCALAPPDATA%` when started from a packaged app |
 | F4 | Timeline / media pool edits on Free | **All needed edits work**, including trims, moves, track changes. Exception: bins can't be renamed (no `Folder.SetName`). `ImportMedia` only accepts plain paths |
