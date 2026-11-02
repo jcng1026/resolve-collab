@@ -1,4 +1,12 @@
-// Minimal typings for the parts of hyperswarm 4.x that ResolveCollab uses.
+// Minimal typings for the parts of hyperswarm 4.x and hyperdht that ResolveCollab uses.
+declare module "hyperdht/testnet.js" {
+  interface Testnet {
+    bootstrap: { host: string; port: number }[];
+    destroy(): Promise<void>;
+  }
+  export default function createTestnet(size?: number): Promise<Testnet>;
+}
+
 declare module "hyperswarm" {
   import type { EventEmitter } from "node:events";
   import type { Duplex } from "node:stream";
@@ -13,6 +21,7 @@ declare module "hyperswarm" {
 
   export interface Discovery {
     flushed(): Promise<void>;
+    refresh(options?: { server?: boolean; client?: boolean }): Promise<void>;
   }
 
   export default class Hyperswarm extends EventEmitter {

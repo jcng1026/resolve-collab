@@ -367,6 +367,7 @@ Goal: on two PCs, a clip appended to the current timeline on one appears on the 
 ### 18.3 Peers
 - **Transport:** Hyperswarm, topic = SHA-256 of the invite secret. Connections are Noise-encrypted by Hyperswarm.
 - **Messages:** newline-delimited JSON.
+- **Delivery:** every message is numbered, acknowledged, resent every 0.5 s until acknowledged (dropped after 10 s), and de-duplicated by the receiver. This is needed because Hyperswarm often opens a duplicate connection and closes one of the pair a moment later, and anything written to the closed one is lost. While a peer has no connection, it re-runs the topic lookup every 3 s, since peers joining at the same moment otherwise wait minutes for Hyperswarm's own refresh.
 - **M2 scope:** two peers, no host approval, no ordering or locks. Those come in M6/M7.
 
 ### 18.4 Verification
@@ -380,5 +381,6 @@ Goal: on two PCs, a clip appended to the current timeline on one appears on the 
   - Resolve → peer: a clip appended in Resolve was received and applied by B **62 ms** after the bridge detected it (detection polls every 300 ms).
   - Clips the bridge added were not echoed back.
   - The bridge stopped cleanly on a `stop` command.
+- Re-checked after adding acknowledged delivery, over the public network: ~127 ms peer → Resolve, 65 ms Resolve → peer. Hosting took ~13 s to announce, and joining connected in ~4 s.
 - Outstanding: the two-PC check.
 - Deviations from §18.1: payloads over ~750 bytes are reported as `ERR payload-too-large` instead of split (none occur in M2). A second bridge run takes over from the first through an in-memory `SetPrefs` key.
