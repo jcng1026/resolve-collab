@@ -355,7 +355,7 @@ Goal: on two PCs, a clip appended to the current timeline on one appears on the 
 ### 18.1 Bridge wire format
 - **Outbound log line:** `RC|<bridgeId>|<kind>|<hex(JSON)>`, raised through `fusion:Execute('error("…")')`. `bridgeId` is random per bridge start, so lines from older runs are ignored. Kinds:
   - `HELLO` (product, version, Studio flag, inbox)
-  - `HB` (heartbeat, every 1 s)
+  - `HB` (heartbeat, every 1 s; carries `handled`, see §19.4)
   - `ACK` (highest inbox sequence handled)
   - `EVT` (detected local change)
   - `RES` (result of a command)
@@ -423,7 +423,7 @@ Collab IDs are random 128-bit hex, chosen by whoever creates the item.
 ### 19.3 Host-ordered log
 - A member **proposes** an operation to the host. The host checks it (known IDs, valid values, a bin can't move into itself), gives it the next sequence number, applies it to the model and **commits** it to everyone, including the proposer. The host's own changes are committed directly.
 - Everyone applies commits in sequence order. A gap, or a reconnect, makes the member ask for the host's full state `{seq, model}`.
-- A member accepts commits and state only from the host's peer ID, which the host announces when a peer connects.
+- A member accepts commits and state only from the host's peer ID, which the host announces when a peer connects. When the host leaves, the member forgets that ID, so a restarted host (new peer ID, same invite code) is accepted. Until M6 anyone with the invite code is trusted.
 - M3 doesn't reject stale proposals yet: when two edits of the same field race, the later commit wins on every PC. First-to-host-wins with undo and notice is M7.
 
 ### 19.4 Bridge side
@@ -434,6 +434,7 @@ Collab IDs are random 128-bit hex, chosen by whoever creates the item.
     - `mp.bin {id, name, parent}` and `mp.clip {id, rcId, name, bin, color, flags, meta, path}` for added or changed items;
     - `mp.gone {kind, id}` for removed items.
   - `mp.snapshot` re-emits everything, then `mp.synced {bins, clips}`. The bridge does this on its own when it starts.
+- **Companion restart while the bridge runs:** the heartbeat carries `handled`, the last inbox sequence number the bridge has handled. A companion that didn't see `HELLO` attaches to the bridge on its first heartbeat, numbers its commands from `handled + 1` (commands sent earlier wait until then), and asks for `mp.snapshot`.
 - **Commands**, each reading the result back and replying with the item's new record:
   - `mp.bin.create {parent, name}`, `mp.bin.rename {id, name}` (emulated, §19.1), `mp.bin.move {id, parent}`, `mp.bin.delete {id}`
   - `mp.clip.import {bin, path, rcId, name, color, flags, meta}`, `mp.clip.link {id, rcId}`, `mp.clip.set {id, …}`, `mp.clip.delete {id}`
@@ -452,7 +453,7 @@ For every bin, clip and field, the reconciler compares three values:
 | changed | same | propose it | propose it |
 | same | changed | command the bridge | command the bridge |
 | changed | changed, equal | update base | update base |
-| changed | changed, different | if this PC has a proposal for that field in flight, wait for it; otherwise treat as catch-up | **ask** Keep mine / Keep theirs (§9.3) |
+| changed | changed, different | if this PC has a proposal for that field in flight, wait for it; otherwise the session wins and the terminal says whose value replaced yours | **ask** Keep mine / Keep theirs (§9.3) |
 
 Further rules:
 - A deleted item on one side with an edit on the other always asks, in both modes (§9.3: a deletion never wins silently).
@@ -465,14 +466,15 @@ Further rules:
 - **First join** (no base yet; until M6):
   - Bins match by path. Clips match by fingerprint plus bin path, then fingerprint alone, without reusing a match.
   - Matched items take the session's values. Unmatched local items are proposed, and unmatched session items are created locally.
-- **Saved state** in `%USERPROFILE%\ResolveCollab\sessions\<topic>.json`: the session's last applied sequence number, base, bin ID map, and the missing list.
+- **Saved state** in `%USERPROFILE%\ResolveCollab\sessions\<topic>\`: the base, bin ID map and missing list (`host.json` or `member.json`), and on the host its log state (`host-log.json`). Backups go to `%USERPROFILE%\ResolveCollab\backups\`.
 
 ### 19.6 Media for incoming clips
 For `clip.create` from someone else, the companion looks for a local file with the same fingerprint, in this order:
 1. a local clip not yet linked to anything, which is linked and moved into place instead of re-imported;
-2. the same path as on the creator's PC;
-3. a file of the same name in any folder that holds this PC's other clips;
-4. the per-project media folder (§10.4).
+2. a file of the same name in any folder that holds this PC's other clips;
+3. a file of the same name in the user's Downloads, Videos, Desktop or Documents folder.
+
+The creator's path is not tried: it names a folder on another PC, and the same path here may hold a different file (the fingerprint would catch that, but the search above already covers the useful cases). The per-project media folder (§10.4) is added to the search with M9.
 
 If none matches, the clip goes on the **missing list**, printed with a `locate <clip> <path>` command. Download from peers is M9.
 
@@ -481,6 +483,11 @@ If none matches, the clip goes on the **missing list**, printed with a `locate <
 - **Pipeline test:** two companions with fake media pool bridges over a local testnet:
   - live edits both ways;
   - an offline edit merged with a dialog answer;
-  - a missing file located later.
-- **Real Resolve on one PC:** the bridge against a scratch project, every command and event.
+  - a missing file located later;
+  - a companion restarting while its bridge keeps running (member, then host).
+- **Real Resolve on one PC:** `tools/m3-resolve-check.ts` runs Resolve as host with a fake member, against an empty scratch project. It covers every command, Resolve-side edits made by hand, a backup, and a companion re-attaching to the running bridge.
+  - **Result, 2026-11-03, Free 21.1.2: all checks passed.**
+  - Member → Resolve: each change read back in 0.2–0.4 s.
+  - Resolve → member: within one 0.6 s scan.
+  - The final snapshot after re-attaching matched the member's pool.
 - **Two PCs:** the user's checklist in `docs/m3-two-pc-test.md`.

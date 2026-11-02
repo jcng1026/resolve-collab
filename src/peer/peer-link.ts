@@ -7,8 +7,8 @@
 // is numbered, acknowledged by the receiver, and resent until acknowledged;
 // the receiver drops duplicates.
 //
-// M2 scope: anyone who knows the secret can connect and nothing is ordered or
-// locked. Host approval and ordering arrive in M6/M7.
+// Anyone who knows the secret can connect; ordering is done above this link
+// by the host (SPEC §19.3). Host approval arrives in M6, locks in M7.
 
 import { createHash, randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -108,6 +108,18 @@ export class PeerLink extends EventEmitter {
       queued = true;
     }
     if (!queued) this.held.push({ id, ...outgoing });
+  }
+
+  // To one peer only; dropped if it isn't connected (the session resyncs
+  // whoever reconnects).
+  sendTo(peerId: string, message: JsonValue): boolean {
+    const peer = this.peers.get(peerId);
+    if (!peer || peer.sockets.length === 0) return false;
+    const id = this.nextId++;
+    const outgoing = { line: `${JSON.stringify({ m: id, d: message })}\n`, at: Date.now() };
+    peer.outstanding.set(id, outgoing);
+    this.write(peer, outgoing.line);
+    return true;
   }
 
   private write(peer: Peer, line: string): void {

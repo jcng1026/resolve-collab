@@ -85,4 +85,14 @@ describe.skipIf(!existsSync(FUSCRIPT))("Lua bridge codec (fuscript)", () => {
     const [result] = runLua([{ body: "return M.unhex(M.hex(input))", input: "héllo|RC|\"x\"" }]);
     expect(result!.value).toBe('héllo|RC|"x"');
   });
+
+  it("encodes object keys sorted, so a record's encoding only changes when it does", () => {
+    const [result] = runLua([{ body: "return M.jencode({ zeta = 1, alpha = { b = 2, a = 1 }, mid = 'x' })", input: "" }]);
+    expect(result!.value).toBe('{"alpha":{"a":1,"b":2},"mid":"x","zeta":1}');
+  });
+
+  it("compiles as a whole, runtime included", () => {
+    const [result] = runLua([{ body: `local f, err = loadfile([[${BRIDGE}]]); return f and "ok" or tostring(err)`, input: "" }]);
+    expect(result!.value).toBe("ok");
+  });
 });

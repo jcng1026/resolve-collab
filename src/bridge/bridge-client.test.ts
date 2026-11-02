@@ -75,6 +75,25 @@ describe("BridgeClient with a fake bridge", () => {
     expect(await event).toMatchObject({ type: "clip.added", start: 86400 });
   });
 
+  it("attaches to a bridge that was already running, continuing its sequence numbers", async () => {
+    const first = setup();
+    first.fake.media.add("interview.mp4");
+    first.fake.start(10);
+    await until(first.client, "hello");
+    expect(await first.client.send({ type: "clip.append", ...clip } as never)).toMatchObject({ ok: true });
+    first.client.stop();
+
+    // A restarted companion: it never sees HELLO and starts counting at 1.
+    const client = new BridgeClient({ logPath: join(first.inboxDir, "..", "ResolveDebug.txt"), inboxDir: first.inboxDir, pollMs: 10, commandTimeoutMs: 1000 });
+    client.start();
+    stops.push(() => client.stop());
+    const attached = until(client, "attached");
+    const result = client.send({ type: "clip.append", ...clip, start: 90000 } as never); // waits for the bridge
+    await attached;
+    expect(await result).toMatchObject({ ok: true });
+    expect(first.fake.clips).toHaveLength(2);
+  });
+
   it("times out when no bridge answers", async () => {
     const { client } = setup();
     expect(await client.send({ type: "clip.append" })).toEqual({ ok: false, error: "timeout" });

@@ -1,7 +1,8 @@
--- ResolveCollab bridge (SPEC §3, §18). Runs inside DaVinci Resolve from
+-- ResolveCollab bridge (SPEC §3, §18, §19). Runs inside DaVinci Resolve from
 -- Workspace > Scripts > ResolveCollab and talks to the companion app:
 --   out: errors raised through fusion:Execute, which Resolve writes to
---        Support/logs/ResolveDebug.txt as  RC|<bridgeId>|<kind>|<hex(JSON)>
+--        Support/logs/ResolveDebug.txt as  RC|<bridgeId>|<kind>|<hex(JSON)>,
+--        long messages split across lines ending |<part>/<parts>/<msgId>
 --   in:  subfolders of the inbox named  <seq:8>.<part:3>.<parts:3>.<hex(JSON)>,
 --        listed with MediaStorage:GetSubFolderList (Free has no file reads).
 -- Inbound text is only ever parsed as JSON by jdecode below, never executed.
@@ -12,6 +13,8 @@ local MODE = ...
 local INBOX = [[__INBOX__]]
 local TICK = 0.05
 local SNAPSHOT_EVERY = 0.3
+local MEDIA_POOL_EVERY = 0.6
+local MEDIA_POOL_BUDGET = 60 -- existing clips fully re-read per media pool scan
 local HEARTBEAT_EVERY = 1
 local MAX_OUT_HEX = 1500 -- log lines are cut at ~2000 characters
 
@@ -48,7 +51,15 @@ function M.jencode(v)
       for i = 1, #v do parts[i] = M.jencode(v[i]) end
       return "[" .. table.concat(parts, ",") .. "]"
     end
-    for k, x in pairs(v) do parts[#parts + 1] = jstr(tostring(k)) .. ":" .. M.jencode(x) end
+    -- Sorted keys, so the same record always encodes the same way.
+    local keys = {}
+    for k in pairs(v) do keys[#keys + 1] = tostring(k) end
+    table.sort(keys)
+    for _, k in ipairs(keys) do
+      local x = v[k]
+      if x == nil then x = v[tonumber(k)] end
+      parts[#parts + 1] = jstr(k) .. ":" .. M.jencode(x)
+    end
     return "{" .. table.concat(parts, ",") .. "}"
   end
   return jstr("<" .. t .. ">")
@@ -204,13 +215,27 @@ local F = fusion
 local bridgeId = M.hex(string.sub(bmd.createuuid(), 1, 4)) .. string.format("%08x", math.floor(bmd.gettime() * 1000) % 0x100000000)
 local ACTIVE_PREF = "Global.ResolveCollab.ActiveBridge"
 
+local MAX_PARTS = 200
+local nextMsg = 0
+
+-- kind is a fixed word and the payload hex, so the generated code can't
+-- contain a quote or anything else Lua would interpret.
 local function emit(kind, payload)
   local h = M.hex(M.jencode(payload))
-  if #h > MAX_OUT_HEX then
-    h = M.hex(M.jencode({ error = "payload-too-large", kind = kind, bytes = #h / 2 }))
-    kind = "ERR"
+  if #h <= MAX_OUT_HEX then
+    F:Execute('error("RC|' .. bridgeId .. '|' .. kind .. '|' .. h .. '")')
+    return
   end
-  F:Execute('error("RC|' .. bridgeId .. '|' .. kind .. '|' .. h .. '")')
+  local parts = math.ceil(#h / MAX_OUT_HEX)
+  if parts > MAX_PARTS then
+    emit("ERR", { error = "payload-too-large", kind = kind, bytes = #h / 2 })
+    return
+  end
+  nextMsg = nextMsg + 1
+  for i = 1, parts do
+    local chunk = string.sub(h, (i - 1) * MAX_OUT_HEX + 1, i * MAX_OUT_HEX)
+    F:Execute('error("RC|' .. bridgeId .. '|' .. kind .. '|' .. chunk .. '|' .. i .. '/' .. parts .. '/' .. nextMsg .. '")')
+  end
 end
 
 local pm = R:GetProjectManager()
@@ -271,7 +296,336 @@ local function findMedia(folder, fileName)
   end
 end
 
+-- Media pool (SPEC §19.4) ------------------------------------------------------------
+-- Last-seen state by local unique ID: { obj, sig } for bins, plus { bin } for
+-- clips. A record whose encoding (sig) changes is reported as an edit.
+
+local mpBins, mpClips, mpOrder, mpCursor, mpProject = {}, {}, {}, 1, nil
+local timelineClips = {} -- timelines show up in the pool; M3 leaves them alone
+
+local function mediaPool()
+  return pm:GetCurrentProject():GetMediaPool()
+end
+
+local function flagList(clip)
+  local out = {}
+  for _, f in ipairs(clip:GetFlagList() or {}) do
+    if type(f) == "string" then out[#out + 1] = f end
+  end
+  table.sort(out)
+  return out
+end
+
+local function metaOf(clip)
+  local out = {}
+  for k, v in pairs(clip:GetMetadata() or {}) do
+    if type(k) == "string" and type(v) == "string" and v ~= "" then out[k] = v end
+  end
+  return out
+end
+
+local function binRecord(folder, parentId)
+  return { type = "mp.bin", id = folder:GetUniqueId(), name = folder:GetName(), parent = parentId }
+end
+
+local function clipRecord(clip, binId)
+  local rcId = clip:GetThirdPartyMetadata("rcId")
+  return { type = "mp.clip", id = clip:GetUniqueId(), rcId = type(rcId) == "string" and rcId or "",
+    name = clip:GetName(), bin = binId, color = clip:GetClipColor() or "", flags = flagList(clip),
+    meta = metaOf(clip), path = clip:GetClipProperty("File Path") or "" }
+end
+
+-- Store a record as last seen, so a change the bridge made isn't reported.
+local function keepBin(folder, parentId)
+  local rec = binRecord(folder, parentId)
+  mpBins[rec.id] = { obj = folder, sig = M.jencode(rec) }
+  return rec
+end
+
+local function keepClip(clip, binId)
+  local rec = clipRecord(clip, binId)
+  mpClips[rec.id] = { obj = clip, sig = M.jencode(rec), bin = binId }
+  return rec
+end
+
+local function isTimelineClip(clip)
+  local ok, t = pcall(function() return clip:GetClipProperty("Type") end)
+  return ok and t == "Timeline"
+end
+
+local function scanMediaPool(report)
+  local project = pm:GetCurrentProject()
+  if not project then return end
+  local root = project:GetMediaPool():GetRootFolder()
+  local seenBins, seenClips, order = {}, {}, {}
+  local function walk(folder, parentId)
+    local rec = binRecord(folder, parentId)
+    seenBins[rec.id] = true
+    local known = mpBins[rec.id]
+    local sig = M.jencode(rec)
+    if not known or known.sig ~= sig then
+      mpBins[rec.id] = { obj = folder, sig = sig }
+      if report then emit("EVT", rec) end
+    else
+      known.obj = folder
+    end
+    for _, clip in ipairs(folder:GetClipList() or {}) do
+      local uid = clip:GetUniqueId()
+      if not timelineClips[uid] then
+        local kc = mpClips[uid]
+        if not kc and isTimelineClip(clip) then
+          timelineClips[uid] = true
+        elseif not kc or kc.bin ~= rec.id then
+          local r = clipRecord(clip, rec.id)
+          local s = M.jencode(r)
+          if not kc or kc.sig ~= s then
+            mpClips[uid] = { obj = clip, sig = s, bin = rec.id }
+            if report then emit("EVT", r) end
+          end
+        else
+          kc.obj = clip
+        end
+        if mpClips[uid] then
+          seenClips[uid] = true
+          order[#order + 1] = uid
+        end
+      end
+    end
+    for _, sub in ipairs(folder:GetSubFolderList() or {}) do walk(sub, rec.id) end
+  end
+  walk(root, "")
+  for id in pairs(mpBins) do
+    if not seenBins[id] then
+      mpBins[id] = nil
+      if report then emit("EVT", { type = "mp.gone", kind = "bin", id = id }) end
+    end
+  end
+  for id in pairs(mpClips) do
+    if not seenClips[id] then
+      mpClips[id] = nil
+      if report then emit("EVT", { type = "mp.gone", kind = "clip", id = id }) end
+    end
+  end
+  -- Names, colours, flags and metadata: a rotating share of clips per scan.
+  mpOrder = order
+  for _ = 1, math.min(MEDIA_POOL_BUDGET, #mpOrder) do
+    if mpCursor > #mpOrder then mpCursor = 1 end
+    local kc = mpClips[mpOrder[mpCursor]]
+    mpCursor = mpCursor + 1
+    local r = clipRecord(kc.obj, kc.bin)
+    local s = M.jencode(r)
+    if s ~= kc.sig then
+      kc.sig = s
+      if report then emit("EVT", r) end
+    end
+  end
+end
+
+-- mp.reset with the project, everything as new, then mp.synced.
+local function snapshotMediaPool()
+  local project = pm:GetCurrentProject()
+  mpBins, mpClips, mpOrder, mpCursor = {}, {}, {}, 1
+  mpProject = project and project:GetUniqueId()
+  emit("EVT", { type = "mp.reset", project = project and { id = project:GetUniqueId(), name = project:GetName() } or nil })
+  scanMediaPool(true)
+  local bins, clips = 0, 0
+  for _ in pairs(mpBins) do bins = bins + 1 end
+  for _ in pairs(mpClips) do clips = clips + 1 end
+  emit("EVT", { type = "mp.synced", bins = bins, clips = clips,
+    project = project and { id = project:GetUniqueId(), name = project:GetName() } or nil })
+end
+
+local function bin(id)
+  local b = type(id) == "string" and mpBins[id]
+  return b and b.obj
+end
+
+local function clipOf(id)
+  local c = type(id) == "string" and mpClips[id]
+  return c and c.obj, c and c.bin
+end
+
+local function validName(name)
+  return type(name) == "string" and name ~= "" and #name <= 255 and not name:find("%c")
+end
+
+-- Sets the given fields, then reads them back.
+local function setClipFields(clip, binId, cmd)
+  if cmd.name ~= nil then
+    if not validName(cmd.name) then return nil, "bad-name" end
+    clip:SetName(cmd.name)
+  end
+  if cmd.color ~= nil then
+    if cmd.color == "" then clip:ClearClipColor() else clip:SetClipColor(cmd.color) end
+  end
+  if cmd.flags ~= nil then
+    clip:ClearFlags("All")
+    for _, f in ipairs(cmd.flags) do clip:AddFlag(f) end
+  end
+  if type(cmd.meta) == "table" and next(cmd.meta) then clip:SetMetadata(cmd.meta) end
+  if cmd.bin ~= nil and cmd.bin ~= binId then
+    local target = bin(cmd.bin)
+    if not target then return nil, "unknown-bin" end
+    mediaPool():MoveClips({ clip }, target)
+    binId = cmd.bin
+  end
+  local rec = keepClip(clip, clip:GetParentFolder():GetUniqueId())
+  if cmd.name ~= nil and rec.name ~= cmd.name then return rec, "readback-name" end
+  if cmd.color ~= nil and rec.color ~= cmd.color then return rec, "readback-color" end
+  if cmd.bin ~= nil and rec.bin ~= binId then return rec, "readback-bin" end
+  if type(cmd.meta) == "table" then
+    for k, v in pairs(cmd.meta) do
+      if (rec.meta[k] or "") ~= v then return rec, "readback-meta" end
+    end
+  end
+  return rec
+end
+
+local function result(rec, err, extra)
+  local r = extra or {}
+  r.ok = err == nil
+  r.error = err
+  r.records = rec and { rec } or nil
+  return r
+end
+
+-- Everything inside a bin, for the "gone" list after deleting it.
+local function contents(folder, out)
+  out = out or {}
+  for _, c in ipairs(folder:GetClipList() or {}) do out[#out + 1] = { kind = "clip", id = c:GetUniqueId() } end
+  for _, sub in ipairs(folder:GetSubFolderList() or {}) do
+    out[#out + 1] = { kind = "bin", id = sub:GetUniqueId() }
+    contents(sub, out)
+  end
+  return out
+end
+
+local function forget(gone)
+  for _, g in ipairs(gone) do
+    if g.kind == "bin" then mpBins[g.id] = nil else mpClips[g.id] = nil end
+  end
+end
+
 local handlers = {}
+
+handlers["mp.snapshot"] = function()
+  snapshotMediaPool()
+  return { ok = true }
+end
+
+handlers["mp.bin.create"] = function(cmd)
+  local parent = bin(cmd.parent)
+  if not parent then return { ok = false, error = "unknown-bin" } end
+  if not validName(cmd.name) then return { ok = false, error = "bad-name" } end
+  local folder = mediaPool():AddSubFolder(parent, cmd.name)
+  if not folder then return { ok = false, error = "create-failed" } end
+  local rec = keepBin(folder, cmd.parent)
+  return result(rec, rec.name ~= cmd.name and "readback-name" or nil)
+end
+
+-- Free has no Folder.SetName: make the new bin, move everything into it, and
+-- delete the old one only once it's empty (SPEC §19.1).
+handlers["mp.bin.rename"] = function(cmd)
+  local old = bin(cmd.id)
+  if not old then return { ok = false, error = "unknown-bin" } end
+  if not validName(cmd.name) then return { ok = false, error = "bad-name" } end
+  local parent = old:GetParentFolder()
+  if not parent then return { ok = false, error = "root-bin" } end
+  local pool = mediaPool()
+  local folder = pool:AddSubFolder(parent, cmd.name)
+  if not folder then return { ok = false, error = "create-failed" } end
+  local newId = folder:GetUniqueId()
+  local clips, subs = old:GetClipList() or {}, old:GetSubFolderList() or {}
+  if #clips > 0 then pool:MoveClips(clips, folder) end
+  if #subs > 0 then pool:MoveFolders(subs, folder) end
+  local records = { keepBin(folder, parent:GetUniqueId()) }
+  for _, c in ipairs(folder:GetClipList() or {}) do
+    if mpClips[c:GetUniqueId()] then records[#records + 1] = keepClip(c, newId) end
+  end
+  for _, sub in ipairs(folder:GetSubFolderList() or {}) do records[#records + 1] = keepBin(sub, newId) end
+  if #(old:GetClipList() or {}) > 0 or #(old:GetSubFolderList() or {}) > 0 then
+    return { ok = false, error = "move-failed", records = records }
+  end
+  pool:DeleteFolders({ old })
+  mpBins[cmd.id] = nil
+  return { ok = true, records = records, gone = { { kind = "bin", id = cmd.id } } }
+end
+
+handlers["mp.bin.move"] = function(cmd)
+  local folder, target = bin(cmd.id), bin(cmd.parent)
+  if not folder or not target then return { ok = false, error = "unknown-bin" } end
+  mediaPool():MoveFolders({ folder }, target)
+  local parent = folder:GetParentFolder()
+  local rec = keepBin(folder, parent and parent:GetUniqueId() or "")
+  return result(rec, rec.parent ~= cmd.parent and "readback-parent" or nil)
+end
+
+handlers["mp.bin.delete"] = function(cmd)
+  local folder = bin(cmd.id)
+  if not folder then return { ok = true, gone = { { kind = "bin", id = cmd.id } } } end
+  if not folder:GetParentFolder() then return { ok = false, error = "root-bin" } end
+  local gone = contents(folder)
+  gone[#gone + 1] = { kind = "bin", id = cmd.id }
+  if not mediaPool():DeleteFolders({ folder }) then return { ok = false, error = "delete-failed" } end
+  forget(gone)
+  return { ok = true, gone = gone }
+end
+
+handlers["mp.clip.import"] = function(cmd)
+  local target = bin(cmd.bin)
+  if not target then return { ok = false, error = "unknown-bin" } end
+  if type(cmd.path) ~= "string" or not bmd.fileexists(cmd.path) then return { ok = false, error = "file-missing" } end
+  if type(cmd.rcId) ~= "string" or not cmd.rcId:match("^[0-9a-f]+$") then return { ok = false, error = "bad-id" } end
+  local pool = mediaPool()
+  local current = pool:GetCurrentFolder()
+  pool:SetCurrentFolder(target)
+  local items = pool:ImportMedia({ cmd.path }) or {}
+  if current then pool:SetCurrentFolder(current) end -- the editor's view stays where it was
+  local clip = items[1]
+  if not clip then return { ok = false, error = "import-failed" } end
+  clip:SetThirdPartyMetadata({ rcId = cmd.rcId })
+  local rec, err = setClipFields(clip, cmd.bin, { name = cmd.name, color = cmd.color, flags = cmd.flags, meta = cmd.meta })
+  if not err and rec.rcId ~= cmd.rcId then err = "readback-id" end
+  return result(rec, err)
+end
+
+handlers["mp.clip.link"] = function(cmd)
+  local clip, binId = clipOf(cmd.id)
+  if not clip then return { ok = false, error = "unknown-clip" } end
+  if type(cmd.rcId) ~= "string" or not cmd.rcId:match("^[0-9a-f]+$") then return { ok = false, error = "bad-id" } end
+  clip:SetThirdPartyMetadata({ rcId = cmd.rcId })
+  local rec = keepClip(clip, binId)
+  return result(rec, rec.rcId ~= cmd.rcId and "readback-id" or nil)
+end
+
+handlers["mp.clip.set"] = function(cmd)
+  local clip, binId = clipOf(cmd.id)
+  if not clip then return { ok = false, error = "unknown-clip" } end
+  return result(setClipFields(clip, binId, cmd))
+end
+
+handlers["mp.clip.delete"] = function(cmd)
+  local clip = clipOf(cmd.id)
+  local gone = { { kind = "clip", id = cmd.id } }
+  if not clip then return { ok = true, gone = gone } end
+  if not mediaPool():DeleteClips({ clip }) then return { ok = false, error = "delete-failed" } end
+  forget(gone)
+  return { ok = true, gone = gone }
+end
+
+-- Backups go next to the inbox only: %USERPROFILE%\ResolveCollab\backups\.
+local BACKUPS = INBOX:gsub("[\\/][^\\/]+$", "") .. "\\backups\\"
+
+handlers["project.backup"] = function(cmd)
+  local path = cmd.path
+  if type(path) ~= "string" or path:sub(1, #BACKUPS) ~= BACKUPS or path:find("%.%.") or not path:match("%.drp$") then
+    return { ok = false, error = "bad-path" }
+  end
+  local project = pm:GetCurrentProject()
+  if not project then return { ok = false, error = "no-project" } end
+  pm:SaveProject()
+  return { ok = pm:ExportProject(project:GetName(), path, false) == true, path = path }
+end
 
 function handlers.ping()
   return { ok = true }
@@ -319,8 +673,9 @@ end
 F:SetPrefs(ACTIVE_PREF, bridgeId) -- a newer bridge run takes over from this one
 emit("HELLO", { product = R:GetProductName(), version = R:GetVersionString(), studio = R:IsStudio(), inbox = INBOX })
 scanTimeline(false)
+snapshotMediaPool()
 
-local lastHandled, lastBeat, lastScan = 0, 0, 0
+local lastHandled, lastBeat, lastScan, lastPoolScan = 0, 0, 0, 0
 while F:GetPrefs(ACTIVE_PREF) == bridgeId do
   bmd.wait(TICK)
   local now = bmd.gettime()
@@ -340,9 +695,18 @@ while F:GetPrefs(ACTIVE_PREF) == bridgeId do
     local ok, err = pcall(scanTimeline, true)
     if not ok then emit("ERR", { error = "scan-failed", detail = tostring(err) }) end
   end
+  if now - lastPoolScan >= MEDIA_POOL_EVERY then
+    lastPoolScan = now
+    local project = pm:GetCurrentProject()
+    local ok, err = pcall(function()
+      -- Another project open: report it whole, and the companion pauses (SPEC §9.2).
+      if project and project:GetUniqueId() ~= mpProject then snapshotMediaPool() else scanMediaPool(true) end
+    end)
+    if not ok then emit("ERR", { error = "media-pool-scan-failed", detail = tostring(err) }) end
+  end
   if now - lastBeat >= HEARTBEAT_EVERY then
     lastBeat = now
-    emit("HB", { t = now })
+    emit("HB", { t = now, handled = lastHandled })
   end
 end
 emit("ERR", { error = "bridge-stopped" })

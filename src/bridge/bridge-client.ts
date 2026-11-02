@@ -4,7 +4,7 @@
 import { EventEmitter } from "node:events";
 import { closeSync, mkdirSync, openSync, readdirSync, readSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { type JsonValue, type OutboundLine, encodeInboxFolders, parseInboxFolder, parseLogLine } from "../bridge-protocol/wire.ts";
+import { type JsonValue, type OutboundLine, PartAssembler, encodeInboxFolders, parseInboxFolder, parseRawLogLine } from "../bridge-protocol/wire.ts";
 
 export interface BridgeClientOptions {
   logPath: string; // Support/logs/ResolveDebug.txt
@@ -20,11 +20,14 @@ export interface CommandResult {
 }
 
 interface Pending {
+  command: { type: string } & Record<string, JsonValue>;
   resolve: (result: CommandResult) => void;
   timer: NodeJS.Timeout;
 }
 
-// Events: "hello" (payload), "event" (payload), "error" (payload), "alive" (boolean).
+// Events: "hello" (payload), "attached" (a bridge that was already running
+// when this client started), "event" (payload), "error" (payload),
+// "alive" (boolean).
 export class BridgeClient extends EventEmitter {
   private readonly logPath: string;
   private readonly inboxDir: string;
@@ -38,6 +41,8 @@ export class BridgeClient extends EventEmitter {
   private alive = false;
   private nextSeq = 1;
   private readonly pending = new Map<number, Pending>();
+  private readonly waiting = new Set<Pending>(); // sent before the bridge was seen
+  private readonly parts = new PartAssembler();
 
   constructor(options: BridgeClientOptions) {
     super();
@@ -64,23 +69,50 @@ export class BridgeClient extends EventEmitter {
       clearTimeout(pending.timer);
       pending.resolve({ ok: false, error: "stopped" });
     }
+    for (const waiting of this.waiting) {
+      clearTimeout(waiting.timer);
+      waiting.resolve({ ok: false, error: "stopped" });
+    }
     this.pending.clear();
+    this.waiting.clear();
   }
 
   get connected(): boolean {
     return this.alive;
   }
 
+  // Commands wait until the bridge has said which sequence numbers it has
+  // already handled, since a running bridge ignores numbers it has seen.
   send(command: { type: string } & Record<string, JsonValue>): Promise<CommandResult> {
-    const seq = this.nextSeq++;
-    for (const name of encodeInboxFolders(seq, command)) mkdirSync(join(this.inboxDir, name));
     return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(seq);
-        resolve({ ok: false, error: "timeout" });
-      }, this.commandTimeoutMs);
-      this.pending.set(seq, { resolve, timer });
+      const entry: Pending = {
+        command,
+        resolve,
+        timer: setTimeout(() => {
+          this.waiting.delete(entry);
+          for (const [seq, pending] of this.pending) if (pending === entry) this.pending.delete(seq);
+          resolve({ ok: false, error: "timeout" });
+        }, this.commandTimeoutMs),
+      };
+      if (this.bridgeId === undefined) this.waiting.add(entry);
+      else this.write(entry);
     });
+  }
+
+  private write(entry: Pending): void {
+    const seq = this.nextSeq++;
+    this.pending.set(seq, entry);
+    for (const name of encodeInboxFolders(seq, entry.command)) mkdirSync(join(this.inboxDir, name));
+  }
+
+  private flushWaiting(): void {
+    for (const entry of this.waiting) this.write(entry);
+    this.waiting.clear();
+  }
+
+  private seeHandled(payload: JsonValue): void {
+    const handled = (payload as Record<string, JsonValue> | null)?.handled;
+    if (typeof handled === "number" && Number.isSafeInteger(handled) && handled >= this.nextSeq) this.nextSeq = handled + 1;
   }
 
   private logSize(): number {
@@ -93,7 +125,14 @@ export class BridgeClient extends EventEmitter {
 
   private poll(): void {
     for (const line of this.readNewLines()) {
-      const message = parseLogLine(line);
+      const raw = parseRawLogLine(line);
+      if (!raw) continue;
+      let message: OutboundLine | null;
+      try {
+        message = this.parts.push(raw);
+      } catch {
+        continue; // a damaged line; the bridge's next snapshot repairs it
+      }
       if (message) this.handle(message);
     }
     const alive = this.bridgeId !== undefined && Date.now() - this.lastBeat < 3000;
@@ -125,8 +164,18 @@ export class BridgeClient extends EventEmitter {
     if (kind === "HELLO") {
       this.bridgeId = bridgeId;
       this.lastBeat = Date.now();
+      this.seeHandled(payload);
+      this.flushWaiting();
       this.emit("hello", payload);
       return;
+    }
+    // A bridge already running when this client started: its heartbeat says
+    // how far it has got.
+    if (kind === "HB" && this.bridgeId === undefined) {
+      this.bridgeId = bridgeId;
+      this.seeHandled(payload);
+      this.flushWaiting();
+      this.emit("attached");
     }
     if (bridgeId !== this.bridgeId) return; // output of an older bridge run
     this.lastBeat = Date.now();
@@ -145,6 +194,7 @@ export class BridgeClient extends EventEmitter {
         this.emit("error", payload);
         break;
       case "HB":
+        this.seeHandled(payload);
         break;
     }
   }

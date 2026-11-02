@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { INBOX_CHUNK_BYTES, WireError, decodeInbox, encodeInboxFolders, parseInboxFolder, parseLogLine } from "./wire.ts";
+import { INBOX_CHUNK_BYTES, PartAssembler, WireError, decodeInbox, encodeInboxFolders, parseInboxFolder, parseLogLine, parseRawLogLine } from "./wire.ts";
 
 const hex = (s: string) => Buffer.from(s, "utf8").toString("hex");
 
@@ -13,6 +13,31 @@ describe("parseLogLine", () => {
     expect(parseLogLine("[0x1] | Main | INFO | Application state changed")).toBeNull();
     expect(parseLogLine(`RC|a1b2c3d4|NOPE|${hex("1")}`)).toBeNull();
     expect(parseLogLine("RCFEAS|Stage|00")).toBeNull();
+  });
+});
+
+describe("multi-line messages", () => {
+  const message = JSON.stringify({ type: "mp.clip", meta: { Description: "ü".repeat(500) } });
+  const full = hex(message);
+  const lines = [full.slice(0, 700), full.slice(700, 1400), full.slice(1400)].map(
+    (h, i) => `x: RC|a1b2c3d4|EVT|${h}|${i + 1}/3/42`,
+  );
+
+  it("reassembles parts in order", () => {
+    const parts = new PartAssembler();
+    const out = lines.map((l) => parts.push(parseRawLogLine(l)!));
+    expect(out.slice(0, 2)).toEqual([null, null]);
+    expect(out[2]).toEqual({ bridgeId: "a1b2c3d4", kind: "EVT", payload: JSON.parse(message) });
+    expect(parseLogLine(lines[0]!)).toBeNull(); // a part alone is not a message
+  });
+
+  it("drops a message with a missing part, then carries on", () => {
+    const parts = new PartAssembler();
+    expect(parts.push(parseRawLogLine(lines[0]!)!)).toBeNull();
+    expect(parts.push(parseRawLogLine(lines[2]!)!)).toBeNull();
+    const single = parseRawLogLine(`x: RC|a1b2c3d4|HB|${hex("{}")}`)!;
+    expect(parts.push(single)).toEqual({ bridgeId: "a1b2c3d4", kind: "HB", payload: {} });
+    expect(lines.map((l) => parts.push(parseRawLogLine(l)!))[2]).not.toBeNull();
   });
 });
 
