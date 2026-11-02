@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { INBOX_CHUNK_BYTES, PartAssembler, WireError, decodeInbox, encodeInboxFolders, parseInboxFolder, parseLogLine, parseRawLogLine } from "./wire.ts";
+import { INBOX_CHUNK_BYTES, PartAssembler, WireError, decodeInbox, encodeInboxFolders, parseInboxFolder, parseLogLine, parseRawLogLine, parseReadyFolder, readyFolder } from "./wire.ts";
 
 const hex = (s: string) => Buffer.from(s, "utf8").toString("hex");
 
@@ -65,7 +65,14 @@ describe("inbox folders", () => {
   });
 
   it("ignores folders that aren't inbox messages", () => {
-    expect(decodeInbox(["New folder", "00000001.001.001.zz"])).toEqual([]);
+    expect(decodeInbox(["New folder", "00000001.001.001.zz", readyFolder(1)])).toEqual([]);
+  });
+
+  it("names the ready folder that tells the bridge to list", () => {
+    expect(readyFolder(7)).toBe("00000007.ready");
+    expect(parseReadyFolder("00000007.ready")).toBe(7);
+    expect(parseReadyFolder("00000007.001.001.7b7d")).toBeNull();
+    expect(parseInboxFolder(readyFolder(7))).toBeNull();
   });
 
   it("keeps folder names within the Windows path budget", () => {

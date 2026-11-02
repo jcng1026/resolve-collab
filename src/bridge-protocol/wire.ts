@@ -6,7 +6,10 @@
 // ending `|<part>/<parts>/<msgId>` (SPEC §19.4).
 // Companion → bridge: subfolders of an inbox folder named
 // `<seq:8>.<part:3>.<parts:3>.<hex(JSON chunk)>`, listed by the bridge with
-// MediaStorage:GetSubFolderList.
+// MediaStorage:GetSubFolderList. Listing makes Resolve's Media Storage
+// browser jump to the inbox and empties the Metadata panel, so the bridge
+// lists only after the companion creates `<seq:8>.ready` for the next
+// message, which it checks with bmd.direxists (no side effects).
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 
@@ -96,6 +99,16 @@ export function encodeInboxFolders(seq: number, message: JsonValue): string[] {
     names.push(`${String(seq).padStart(8, "0")}.${String(i + 1).padStart(3, "0")}.${String(parts).padStart(3, "0")}.${chunk}`);
   }
   return names;
+}
+
+// Created after all of a message's folders, to tell the bridge to list.
+export function readyFolder(seq: number): string {
+  return `${String(seq).padStart(8, "0")}.ready`;
+}
+
+export function parseReadyFolder(name: string): number | null {
+  const match = /^(\d{8})\.ready$/.exec(name);
+  return match ? Number(match[1]) : null;
 }
 
 export interface InboxFolder {

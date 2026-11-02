@@ -6,8 +6,8 @@
 
 import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, readdirSync } from "node:fs";
-import { basename } from "node:path";
-import { type JsonValue, decodeInbox } from "../bridge-protocol/wire.ts";
+import { basename, join } from "node:path";
+import { type JsonValue, decodeInbox, readyFolder } from "../bridge-protocol/wire.ts";
 
 export interface FakeClip {
   timeline: string;
@@ -155,11 +155,14 @@ export class FakeBridge {
 
   private tick(): void {
     this.emit("HB", { handled: this.lastHandled });
-    let names: string[];
-    try {
-      names = readdirSync(this.inboxDir);
-    } catch {
-      return;
+    // Like the real bridge, list the inbox only once the next message is ready.
+    let names: string[] = [];
+    if (existsSync(join(this.inboxDir, readyFolder(this.lastHandled + 1)))) {
+      try {
+        names = readdirSync(this.inboxDir);
+      } catch {
+        return;
+      }
     }
     for (const { seq, message } of decodeInbox(names)) {
       if (seq <= this.lastHandled) continue;

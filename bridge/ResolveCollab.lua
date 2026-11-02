@@ -4,7 +4,9 @@
 --        Support/logs/ResolveDebug.txt as  RC|<bridgeId>|<kind>|<hex(JSON)>,
 --        long messages split across lines ending |<part>/<parts>/<msgId>
 --   in:  subfolders of the inbox named  <seq:8>.<part:3>.<parts:3>.<hex(JSON)>,
---        listed with MediaStorage:GetSubFolderList (Free has no file reads).
+--        listed with MediaStorage:GetSubFolderList (Free has no file reads),
+--        but only once <seq:8>.ready exists for the next message: listing
+--        makes the Media Storage browser jump and empties the Metadata panel.
 -- Inbound text is only ever parsed as JSON by jdecode below, never executed.
 
 -- Tests load this file with loadfile(path)("test") to get the pure helpers.
@@ -204,6 +206,11 @@ function M.decodeInbox(paths, lastHandled)
     out[#out + 1] = { seq = seq, message = ok and message or nil, error = (not ok) and tostring(message) or nil }
   end
   return out
+end
+
+-- Folder the companion creates once message seq is complete.
+function M.readyName(seq)
+  return string.format("%08d.ready", seq)
 end
 
 if MODE == "test" then return M end
@@ -680,7 +687,9 @@ while F:GetPrefs(ACTIVE_PREF) == bridgeId do
   bmd.wait(TICK)
   local now = bmd.gettime()
   local stopping = false
-  local messages = M.decodeInbox(ms:GetSubFolderList(INBOX) or {}, lastHandled)
+  -- bmd.direxists has no side effects; without it, list every tick.
+  local ready = not bmd.direxists or bmd.direxists(INBOX .. "\\" .. M.readyName(lastHandled + 1))
+  local messages = ready and M.decodeInbox(ms:GetSubFolderList(INBOX) or {}, lastHandled) or {}
   for _, entry in ipairs(messages) do
     lastHandled = entry.seq
     local result = entry.message and handle(entry.message) or { ok = false, error = "bad-message", detail = entry.error }

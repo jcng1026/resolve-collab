@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { encodeInboxFolders } from "../src/bridge-protocol/wire.ts";
+import { encodeInboxFolders, readyFolder } from "../src/bridge-protocol/wire.ts";
 
 const FUSCRIPT = "C:\\Program Files\\Blackmagic Design\\DaVinci Resolve\\fuscript.exe";
 const BRIDGE = join(dirname(fileURLToPath(import.meta.url)), "ResolveCollab.lua").replaceAll("\\", "/");
@@ -79,6 +79,15 @@ describe.skipIf(!existsSync(FUSCRIPT))("Lua bridge codec (fuscript)", () => {
     expect(newer!.value).toEqual([{ seq: 3, message: big }]);
     // One part of seq 3 missing: only the complete message comes through.
     expect((partial!.value as { seq: number }[]).map((m) => m.seq)).toEqual([1]);
+  });
+
+  it("names the ready folder as the companion does, and decodeInbox ignores it", () => {
+    const [name, decoded] = runLua([
+      { body: "return M.readyName(tonumber(input))", input: "42" },
+      { body: "return M.decodeInbox(M.jdecode(input), 0)", input: JSON.stringify([readyFolder(1), ...encodeInboxFolders(1, { type: "ping" })]) },
+    ]);
+    expect(name!.value).toBe(readyFolder(42));
+    expect(decoded!.value).toEqual([{ seq: 1, message: { type: "ping" } }]);
   });
 
   it("round-trips hex", () => {

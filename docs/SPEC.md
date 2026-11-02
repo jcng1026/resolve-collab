@@ -67,7 +67,7 @@ ResolveCollab lets up to 5 people edit the same DaVinci Resolve project together
 ### 3.2 Bridge ↔ companion channel
 Resolve Free 21.1 Lua has no sockets or general file I/O. Measured on Free 21.1.2 for Windows (`docs/feasibility/findings-2026-11-02.md`):
 - **Bridge → companion (works):** the bridge runs `fusion:Execute('error("RCFEAS|<key>|<hex>")')`. Resolve writes each error to `Support/logs/ResolveDebug.txt` immediately and the bridge keeps running. The companion follows the log. Payloads are hex and split into ≤1500-character chunks, because log lines are cut at ~2000 characters. Throughput: 200 messages in 17 ms, in order.
-- **Companion → bridge (approved 2026-11-02):** `loadfile`, `dofile`, `io`, `bmd.readfile` and `fusion:LoadPrefs` are all nil, so the bridge can't read request files. Instead, the companion creates **subfolders in an inbox folder whose names are the messages** (`<seq>_<hex payload>`). The bridge reads them with `resolve:GetMediaStorage():GetSubFolderList(inbox)` each tick: 100 messages in ~33 ms, with nothing in Resolve touched. The bridge acknowledges the highest sequence it has handled through the error log, and the companion then deletes those folders. Large payloads are split across several folders.
+- **Companion → bridge (approved 2026-11-02):** `loadfile`, `dofile`, `io`, `bmd.readfile` and `fusion:LoadPrefs` are all nil, so the bridge can't read request files. Instead, the companion creates **subfolders in an inbox folder whose names are the messages** (`<seq>_<hex payload>`). The bridge reads them with `resolve:GetMediaStorage():GetSubFolderList(inbox)`: 100 messages in ~33 ms. Each listing makes Resolve's Media Storage browser jump to the inbox and empties the Metadata panel (found 2026-11-03). So the companion also creates a `<seq>.ready` folder once a message is complete. The bridge checks only for the next one, with `bmd.direxists`, which has no side effects, and lists the inbox only when it's there. The bridge acknowledges the highest sequence it has handled through the error log, and the companion then deletes those folders. Large payloads are split across several folders.
   - Inbound messages stay **data only**: decoded by the bridge's own parser, never executed.
   - *Superseded:* the keyboard-preset trick (the bridge can't know the file name it would have to import) and the OTIO timeline trick (switches the editor's current timeline).
 - *Rejected:* `Fusion.prefs` via `SetPrefs`/`SavePrefs`. `SavePrefs` doesn't exist on Free, and the file is only written when Resolve restarts.
@@ -340,7 +340,7 @@ Every feature follows: spec section → automated tests (using a **fake bridge**
 | Diagnostics | Local logs (14 days) + Export diagnostics; no telemetry |
 | Name | ResolveCollab |
 | Bridge → companion | Errors raised in `fusion:Execute`, read from `ResolveDebug.txt` (§3.2) |
-| Companion → bridge | Subfolder names in an inbox, read with `MediaStorage:GetSubFolderList` (§3.2) |
+| Companion → bridge | Subfolder names in an inbox, read with `MediaStorage:GetSubFolderList` only after `bmd.direxists` finds the next `<seq>.ready` folder (§3.2) |
 | Shared state | Host-ordered operation log, not Yjs (2026-11-02) |
 | Merge questions before the companion window exists | Asked in the companion's terminal |
 | Media pool deletes | Sync live; the host keeps deleted items so undo (M7) can restore them |
@@ -490,4 +490,5 @@ If none matches, the clip goes on the **missing list**, printed with a `locate <
   - Member → Resolve: each change read back in 0.2–0.4 s.
   - Resolve → member: within one 0.6 s scan.
   - The final snapshot after re-attaching matched the member's pool.
+  - **Re-run after the inbox doorbell (§3.2), same day: all checks passed again, this time on the Media page.** A Scene number typed into the Metadata panel stayed while the bridge ran, and was reported about 1 s later.
 - **Two PCs:** the user's checklist in `docs/m3-two-pc-test.md`.

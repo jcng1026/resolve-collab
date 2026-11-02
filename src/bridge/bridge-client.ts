@@ -4,7 +4,7 @@
 import { EventEmitter } from "node:events";
 import { closeSync, mkdirSync, openSync, readdirSync, readSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { type JsonValue, type OutboundLine, PartAssembler, encodeInboxFolders, parseInboxFolder, parseRawLogLine } from "../bridge-protocol/wire.ts";
+import { type JsonValue, type OutboundLine, PartAssembler, encodeInboxFolders, parseInboxFolder, parseRawLogLine, parseReadyFolder, readyFolder } from "../bridge-protocol/wire.ts";
 
 export interface BridgeClientOptions {
   logPath: string; // Support/logs/ResolveDebug.txt
@@ -24,6 +24,8 @@ interface Pending {
   resolve: (result: CommandResult) => void;
   timer: NodeJS.Timeout;
 }
+
+const inboxSeq = (name: string): number | null => parseInboxFolder(name)?.seq ?? parseReadyFolder(name);
 
 // Events: "hello" (payload), "attached" (a bridge that was already running
 // when this client started), "event" (payload), "error" (payload),
@@ -57,7 +59,7 @@ export class BridgeClient extends EventEmitter {
   start(): void {
     mkdirSync(this.inboxDir, { recursive: true });
     for (const name of readdirSync(this.inboxDir)) {
-      if (parseInboxFolder(name)) rmSync(join(this.inboxDir, name), { recursive: true, force: true });
+      if (inboxSeq(name) !== null) rmSync(join(this.inboxDir, name), { recursive: true, force: true });
     }
     this.offset = this.logSize();
     this.timer = setInterval(() => this.poll(), this.pollMs);
@@ -103,6 +105,7 @@ export class BridgeClient extends EventEmitter {
     const seq = this.nextSeq++;
     this.pending.set(seq, entry);
     for (const name of encodeInboxFolders(seq, entry.command)) mkdirSync(join(this.inboxDir, name));
+    mkdirSync(join(this.inboxDir, readyFolder(seq)));
   }
 
   private flushWaiting(): void {
@@ -201,8 +204,8 @@ export class BridgeClient extends EventEmitter {
 
   private removeAcknowledged(upTo: number): void {
     for (const name of readdirSync(this.inboxDir)) {
-      const folder = parseInboxFolder(name);
-      if (folder && folder.seq <= upTo) rmSync(join(this.inboxDir, name), { recursive: true, force: true });
+      const seq = inboxSeq(name);
+      if (seq !== null && seq <= upTo) rmSync(join(this.inboxDir, name), { recursive: true, force: true });
     }
   }
 
