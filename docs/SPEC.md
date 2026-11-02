@@ -382,5 +382,10 @@ Goal: on two PCs, a clip appended to the current timeline on one appears on the 
   - Clips the bridge added were not echoed back.
   - The bridge stopped cleanly on a `stop` command.
 - Re-checked after adding acknowledged delivery, over the public network: ~127 ms peer → Resolve, 65 ms Resolve → peer. Hosting took ~13 s to announce, and joining connected in ~4 s.
-- Outstanding: the two-PC check.
+- **Two-PC check passed (M2 done):** two Windows PCs on genuine Resolve Free 21.1.2, over the public network, joined with an invite code.
+  - Three clips were synced: one from PC 1 to PC 2, and two from PC 2 to PC 1. Each landed at the sender's position on V1.
+  - The media sat at a different path on each PC (`…\jcng7\Downloads` and `…\moeyn\Downloads`) and was matched by file name.
+  - Applying a clip in Resolve took 161–499 ms.
+  - The two PCs' clocks differ by ~85 s, so one-way time can't be read off directly. Adding the two directions gives ~0.94 s for a round trip, i.e. **~0.5 s from detection to applied**, comfortably under the 2 s target.
+  - There were no echoes.
 - Deviations from §18.1: payloads over ~750 bytes are reported as `ERR payload-too-large` instead of split (none occur in M2). A second bridge run takes over from the first through an in-memory `SetPrefs` key.
