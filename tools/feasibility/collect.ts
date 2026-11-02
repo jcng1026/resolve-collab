@@ -1,12 +1,12 @@
-// Watches Fusion.prefs while the Lua probe runs, measures the request → echo
-// round trip on Node's clock (F1/F2), and saves the probe's results to
-// docs/feasibility/. Run with: node tools/feasibility/collect.ts
+// Follows Resolve's debug log while the Lua probe runs, measures the
+// request → echo round trip on Node's clock (F1/F2), and saves the probe's
+// results to docs/feasibility/. Run with: node tools/feasibility/collect.ts
 
-import { readFileSync, renameSync, writeFileSync, mkdirSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { toLuaLiteral } from "../../src/bridge-protocol/lua-literal.ts";
-import { FUSION_PREFS, STATE_DIR, extractRcKeys, hexToUtf8, joinResultChunks, summarize } from "./lib.ts";
+import { RESOLVE_DEBUG_LOG, STATE_DIR, hexToUtf8, joinResultChunks, parseLogLine, summarize } from "./lib.ts";
 
 const OUT_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "docs", "feasibility");
 const POLL_MS = 25;
@@ -15,17 +15,26 @@ const TIMEOUT_MS = 15 * 60 * 1000;
 
 const REQUEST = join(STATE_DIR, "request.lua");
 
-function readKeys(): Map<string, string> {
-  try {
-    return extractRcKeys(readFileSync(FUSION_PREFS, "utf8"));
-  } catch {
-    return new Map(); // Resolve may be mid-write; try again next poll.
-  }
-}
+// Reads only what was appended since the last poll. The log is replaced when
+// Resolve restarts, so a shrinking file starts over from the beginning.
+let offset = statSync(RESOLVE_DEBUG_LOG).size;
+let partial = "";
 
-function decode(keys: Map<string, string>, key: string): string | undefined {
-  const value = keys.get(key);
-  return value === undefined ? undefined : hexToUtf8(value);
+function newLines(): string[] {
+  const size = statSync(RESOLVE_DEBUG_LOG).size;
+  if (size < offset) offset = 0;
+  if (size === offset) return [];
+  const buffer = Buffer.alloc(size - offset);
+  const fd = openSync(RESOLVE_DEBUG_LOG, "r");
+  try {
+    readSync(fd, buffer, 0, buffer.length, offset);
+  } finally {
+    closeSync(fd);
+  }
+  offset = size;
+  const lines = (partial + buffer.toString("utf8")).split(/\r?\n/);
+  partial = lines.pop() ?? "";
+  return lines;
 }
 
 // Write-then-rename so the probe never loads a half-written file.
@@ -34,20 +43,16 @@ function sendRequest(n: number): void {
   renameSync(`${REQUEST}.tmp`, REQUEST);
 }
 
-const initial = readKeys();
-const pythonAtStart = initial.has("Python");
-let lastStage = decode(initial, "Stage");
-let sawRunning = false;
+const keys = new Map<string, string>();
+let stage: string | undefined;
 let nextN = 1;
 let lastSent = 0;
-let lastEcho = decode(initial, "Echo");
 const sentAt = new Map<number, number>();
 const rtts: number[] = [];
 const stages: { stage: string; at: number }[] = [];
 const started = Date.now();
 
 console.log("Waiting for the probe. In Resolve: Workspace > Scripts > ResolveCollab_Feasibility");
-console.log("Also run Workspace > Scripts > ResolveCollab_PythonProbe if it is listed.");
 
 const timer = setInterval(() => {
   const now = Date.now();
@@ -57,13 +62,19 @@ const timer = setInterval(() => {
     process.exitCode = 1;
     return;
   }
-  const keys = readKeys();
-  const stage = decode(keys, "Stage");
-  if (stage !== undefined && stage !== lastStage) {
-    lastStage = stage;
-    stages.push({ stage, at: now - started });
-    if (stage !== "done") sawRunning = true;
-    console.log(`  ${((now - started) / 1000).toFixed(1).padStart(6)} s  ${stage}`);
+
+  for (const line of newLines()) {
+    const message = parseLogLine(line);
+    if (!message) continue;
+    keys.set(message.key, message.hex);
+    if (message.key === "Stage") {
+      stage = hexToUtf8(message.hex);
+      stages.push({ stage, at: now - started });
+      console.log(`  ${((now - started) / 1000).toFixed(1).padStart(6)} s  ${stage}`);
+    } else if (message.key === "Echo") {
+      const sent = sentAt.get(Number(hexToUtf8(message.hex)));
+      if (sent !== undefined) rtts.push(now - sent);
+    }
   }
 
   if (stage === "pollLoop" && now - lastSent >= REQUEST_EVERY_MS) {
@@ -71,35 +82,28 @@ const timer = setInterval(() => {
     sendRequest(nextN++);
     lastSent = now;
   }
-  const echo = decode(keys, "Echo");
-  if (echo !== undefined && echo !== lastEcho) {
-    lastEcho = echo;
-    const sent = sentAt.get(Number(echo));
-    if (sent !== undefined) rtts.push(now - sent);
-  }
 
-  if (sawRunning && stage === "done") {
-    const fatal = decode(keys, "Fatal");
+  if (stage === "done") {
+    const fatal = keys.get("Fatal");
     if (fatal !== undefined && !keys.has("ResultCount")) {
       clearInterval(timer);
-      save({ fatal, globals: decode(keys, "Globals") }, keys);
+      save({ fatal: hexToUtf8(fatal) });
       return;
     }
     const text = joinResultChunks(keys);
-    if (text === null) return; // chunks not all flushed yet
+    if (text === null) return; // chunks not all read yet
     clearInterval(timer);
-    save(JSON.parse(text), keys);
+    save(JSON.parse(text));
   }
 }, POLL_MS);
 
-function save(probe: unknown, keys: Map<string, string>): void {
+function save(probe: unknown): void {
   const report = {
     collectedAt: new Date().toISOString(),
     roundTripMs: summarize(rtts),
     requestsSent: nextN - 1,
     echoesSeen: rtts.length,
     stages,
-    python: { listedAndRan: keys.has("Python") && !pythonAtStart, seenBeforeRun: pythonAtStart },
     probe,
   };
   mkdirSync(OUT_DIR, { recursive: true });

@@ -1,25 +1,33 @@
 // Pure helpers for the feasibility tools (prepare.ts, collect.ts).
 
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const APPDATA = process.env.APPDATA ?? join(homedir(), "AppData", "Roaming");
-const LOCALAPPDATA = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
 
-export const STATE_DIR = join(LOCALAPPDATA, "ResolveCollab", "feasibility");
+// Not under %LOCALAPPDATA%: when these tools run from a packaged (MSIX) app,
+// Windows redirects that folder into a private copy Resolve cannot see.
+// `local/` is gitignored.
+export const STATE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "local", "feasibility");
 export const RESOLVE_SUPPORT = join(APPDATA, "Blackmagic Design", "DaVinci Resolve", "Support");
 export const SCRIPTS_UTILITY = join(RESOLVE_SUPPORT, "Fusion", "Scripts", "Utility");
-export const FUSION_PREFS = join(RESOLVE_SUPPORT, "Fusion", "Profiles", "Default", "Fusion.prefs");
+// The probe reports through errors raised in fusion:Execute, which Resolve
+// writes here immediately (docs/feasibility/findings-2026-11-02.md).
+export const RESOLVE_DEBUG_LOG = join(RESOLVE_SUPPORT, "logs", "ResolveDebug.txt");
 
-const KEY_PATTERN = /\bRCFeas(\w+)\s*=\s*"([0-9a-fA-F]*)"/g;
+const LINE_PATTERN = /RCFEAS\|(\w+)\|([0-9a-fA-F]*)/;
 
-// Returns the RCFeas* keys in a Fusion.prefs text, still hex-encoded.
-export function extractRcKeys(prefsText: string): Map<string, string> {
-  const keys = new Map<string, string>();
-  for (const match of prefsText.matchAll(KEY_PATTERN)) {
-    keys.set(match[1]!, match[2]!);
-  }
-  return keys;
+export interface ProbeMessage {
+  key: string;
+  hex: string;
+}
+
+// Parses one log line, e.g.
+// `... | Fusion | ERROR | ... | [string "???"]:1: RCFEAS|Stage|706f6c6c`.
+export function parseLogLine(line: string): ProbeMessage | null {
+  const match = LINE_PATTERN.exec(line);
+  return match ? { key: match[1]!, hex: match[2]! } : null;
 }
 
 export function hexToUtf8(hex: string): string {

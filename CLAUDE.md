@@ -12,7 +12,8 @@ Real-time collaboration for DaVinci Resolve: a Lua bridge inside Resolve plus a 
 - Every write through the Resolve API must be read back to confirm it persisted (SPEC §15 F12).
 - Peers send data, never code. Bridge request files are produced only by `src/bridge-protocol/` and must stay pure Lua table literals (SPEC §3.2, §13).
 - Target genuine Resolve Free/Studio 21.1+ on Windows only. Do not add workarounds for cracked or modified builds.
-- Free 21.1 Lua sandbox: no `io`, `os.execute`, `require`, sockets or UIManager. Python is Studio-only.
+- Free 21.1.2 Lua sandbox: no `io`, `loadfile`, `dofile`, `require`, `os.execute`, `bmd.readfile`/`writefile`, `fusion:SavePrefs`, sockets or UIManager. Python is Studio-only. Use the `resolve` global, not `Resolve()` (blocks ~4 s, then fails).
 
 # Gotchas
-- Resolve is not installed on the original dev PC; code that needs Resolve must be testable against the fake bridge.
+- Genuine Resolve Free 21.1.2 is installed on the dev PC. Workspace ▸ Console runs Lua and is the quickest way to check a call. Feasibility tooling: `tools/feasibility/` (state in gitignored `local/`).
+- Files written under `%LOCALAPPDATA%` from the Claude desktop app are invisible to Resolve (packaged-app redirection).

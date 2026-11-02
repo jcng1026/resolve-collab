@@ -7,8 +7,11 @@
 -- script. The project that was open is saved first, never modified, and
 -- reopened at the end.
 --
--- Results are written to Fusion.prefs under keys starting with "RCFeas", as
--- hex-encoded JSON, because Free 21.1 Lua has no file or socket access.
+-- Free 21.1 Lua has no file or socket access, and fusion:SavePrefs does not
+-- exist, so results leave as errors raised inside fusion:Execute: Resolve
+-- writes each one to Support/logs/ResolveDebug.txt at once and this script
+-- keeps running (docs/feasibility/findings-2026-11-02.md). Each line carries
+-- "RCFEAS|<key>|<hex>"; log lines are cut at ~2000 characters.
 --
 -- Every API call used here is listed in docs/resolve-api/DaVinciResolveScript.pyi.
 
@@ -66,32 +69,19 @@ local function hex(s)
   return (s:gsub(".", function(c) return string.format("%02x", c:byte()) end))
 end
 
--- Same prefix shape as the community bridge ("Global.<Name>."); Fusion.prefs
--- on 21.1.2 Windows stores the key at the top level as RCFeas<Key>.
-local PREFIX = "Global.ResolveCollab.RCFeas"
+-- Payload stays well under the ~2000-character log line limit.
+local CHUNK = 1500
 
--- SavePrefs can fail while Resolve is still writing the previous save, so a
--- failed save is retried (the community bridge does the same). A save that
--- returns anything but false counts as done.
-local saveStats = { calls = 0, retries = 0, gaveUp = 0, returns = {} }
-
-local function save()
-  for attempt = 1, 20 do
-    saveStats.calls = saveStats.calls + 1
-    local ok, ret = pcall(function() return F:SavePrefs() end)
-    saveStats.returns[tostring(ok) .. ":" .. tostring(ret)] = true
-    if ok and ret ~= false then return true end
-    saveStats.retries = saveStats.retries + 1
-    bmd.wait(0.1)
-  end
-  saveStats.gaveUp = saveStats.gaveUp + 1
-  return false
+-- key is a plain identifier and payload is hex, so the generated code cannot
+-- contain a quote or anything else Lua would interpret.
+local function emitRaw(key, payload)
+  if not F then return false end -- reporting starts once R:Fusion() is known
+  F:Execute('error("RCFEAS|' .. key .. '|' .. payload .. '")')
+  return true
 end
 
 local function put(key, text)
-  if not F then return false end -- no fusion global yet; reporting starts once R:Fusion() is known
-  F:SetPrefs(PREFIX .. key, hex(text))
-  return save()
+  return emitRaw(key, hex(text))
 end
 
 -- Probing --------------------------------------------------------------------
@@ -139,24 +129,16 @@ local function write(id, label, read, fn)
   end)
 end
 
--- The result is split into chunks in case prefs values have a size limit.
-local CHUNK = 16000
-
 local function finish(note)
   results.note = note
-  results.saveStats = saveStats
   local h = hex(json(results))
   local n = 0
   for i = 1, #h, CHUNK do
     n = n + 1
-    F:SetPrefs(PREFIX .. "Result" .. n, string.sub(h, i, i + CHUNK - 1))
+    emitRaw("Result" .. n, string.sub(h, i, i + CHUNK - 1))
   end
-  F:SetPrefs(PREFIX .. "ResultCount", hex(tostring(n)))
-  save()
+  put("ResultCount", tostring(n))
   put("Stage", "done")
-  -- One more save after a pause, in case the last one was swallowed.
-  bmd.wait(1)
-  save()
 end
 
 -- Environment (F3, sandbox) --------------------------------------------------
@@ -164,21 +146,22 @@ end
 put("Stage", "started")
 put("Globals", json(results.globals))
 
--- Shipped examples use Resolve(); the plain global and bmd.scriptapp are
--- fallbacks. Each attempt is announced first so a hang shows where it is.
+-- The plain global works on Free 21.1.2; Resolve() blocks for ~4 s and then
+-- fails there, so it is only a last resort. Each attempt is announced first
+-- so a hang shows where it is.
 local R
 local function accept(obj)
   if type(obj) ~= "userdata" and type(obj) ~= "table" then return nil end
   local ok, name = pcall(function() return obj:GetProductName() end)
   if ok and type(name) == "string" then return obj end
 end
-put("Stage", "acquire:Resolve()")
-if type(Resolve) == "function" then
+put("Stage", "acquire:global")
+R = accept(resolve)
+if not R and type(Resolve) == "function" then
+  put("Stage", "acquire:Resolve()")
   local ok, v = pcall(Resolve)
   if ok then R = accept(v) end
 end
-if not R then put("Stage", "acquire:global"); R = accept(resolve) end
-if not R then put("Stage", "acquire:scriptapp"); R = accept(bmd.scriptapp("Resolve")) end
 if not R then
   put("Fatal", "no usable Resolve object")
   put("Stage", "done")
@@ -207,7 +190,11 @@ end)
 local perSecond = probe("ENV", "gettimeUnitsPerSecond", function()
   local a = now(); bmd.wait(1); return now() - a
 end) or 1
-probe("F2", "savePrefsReturn", function() return put("Hello", "hello") end)
+probe("F2", "emitCost", function()
+  local t0 = now()
+  for i = 1, 50 do put("Hello", tostring(i)) end
+  return (now() - t0) / 50
+end)
 
 -- F1/F2: polling loop and request round trip ---------------------------------
 -- collect.ts rewrites request.lua with an increasing n; the loop echoes each
@@ -284,9 +271,18 @@ results.scratchName = scratchName
 local mp = proj:GetMediaPool()
 local MEDIA = STATE_DIR .. "\\media\\"
 
+probe("F4", "mediaVisible", function()
+  return { dir = bmd.direxists(MEDIA), original = bmd.fileexists(MEDIA .. "original.mp4") }
+end)
 local imported = probe("F4", "importMedia", function()
   return mp:ImportMedia({ { FilePath = MEDIA .. "original.mp4" }, { FilePath = MEDIA .. "spare.mp4" } })
 end)
+if not (imported and imported[1]) then
+  -- Deprecated plain-path form, in case the clipInfo form is not accepted here.
+  imported = probe("F4", "importMediaPaths", function()
+    return mp:ImportMedia({ MEDIA .. "original.mp4", MEDIA .. "spare.mp4" })
+  end)
+end
 local clip = imported and imported[1]
 local spare = imported and imported[2]
 if not clip then

@@ -65,9 +65,10 @@ ResolveCollab lets up to 5 people edit the same DaVinci Resolve project together
 - **ffmpeg:** bundled, used only for proxies and media inspection.
 
 ### 3.2 Bridge ↔ companion channel
-Resolve Free 21.1 Lua has no sockets or general file I/O, so the channel works like this (approach proven by community projects on macOS; **must be verified on Windows**, see §15):
-- **Companion → bridge:** the companion writes numbered request files into a private state folder. The bridge polls every ~50 ms using `bmd.fileexists` and loads each one with `loadfile` in an **empty environment**. Request files contain **data only** (a Lua table literal: command name + arguments), never code.
-- **Bridge → companion:** the bridge writes responses and snapshots into keys in `Fusion.prefs` via `fusion:SetPrefs` and `fusion:SavePrefs` (with retries). The companion reads the prefs file.
+Resolve Free 21.1 Lua has no sockets or general file I/O. Measured on Free 21.1.2 for Windows (`docs/feasibility/findings-2026-11-02.md`):
+- **Bridge → companion (works):** the bridge runs `fusion:Execute('error("RCFEAS|<key>|<hex>")')`. Resolve writes each error to `Support/logs/ResolveDebug.txt` immediately and the bridge keeps running. The companion follows the log. Payloads are hex and split into ≤1500-character chunks, because log lines are cut at ~2000 characters. Throughput: 200 messages in 17 ms, in order.
+- **Companion → bridge (OPEN, blocks live sync on Free):** the planned `loadfile` of request files is impossible. `loadfile`, `dofile`, `io`, `bmd.readfile` and `fusion:LoadPrefs` are all nil. Candidate replacements are listed in the findings. Whatever is chosen, inbound messages stay **data only**, never code.
+- *Rejected:* `Fusion.prefs` via `SetPrefs`/`SavePrefs`. `SavePrefs` doesn't exist on Free, and the file is only written when Resolve restarts.
 - **Protocol:** every request has a sequence number, a command, arguments and a timeout. Every response echoes the sequence number, plus a status (`ok` / `error` / `unsupported`) and its data. Requests older than 120 s are refused.
 - **Liveness:** the bridge writes a heartbeat key every second. No heartbeat for 3 s means the bridge is not running (§9.4).
 
@@ -268,22 +269,22 @@ A small window docked beside Resolve:
 
 ## 15. Open technical risks: the feasibility test must answer these
 
-The feasibility test is a read-only Lua script run once in genuine Resolve Free 21.1 on Windows. It reports:
+The feasibility test runs in a throwaway project in genuine Resolve Free 21.1.2 on Windows. Results as of 2026-11-02 (details in `docs/feasibility/findings-2026-11-02.md`):
 
-| # | Question | If the answer is "no" |
+| # | Question | Result |
 |---|---|---|
-| F1 | Does the bridge loop (`bmd.wait`, `loadfile`, `bmd.fileexists`) run on Windows Free 21.1, with Resolve staying responsive? | Whole Free design is blocked; rethink |
-| F2 | Do `fusion:SetPrefs` / `SavePrefs` write reliably, and how fast can the companion read them? | Look for another output channel |
-| F3 | Script install path on Windows, and does the Scripts menu list `.lua` files there? | Adjust installer |
-| F4 | Which timeline item operations exist on Free (move, trim, extend, set properties, delete, append with `recordFrame`)? | Decides how often tiers 2 and 3 are needed |
-| F5 | Can every item property be read back (transform, speed, markers, Fusion comp, fades)? | Tier 2 not possible for those; use tier 3 |
-| F6 | Do `.drt` export and `ImportTimelineFromFile` work on Free? | Tier 3 not possible; some edits can't sync to Free |
-| F7 | Do `ExportProject` / `ImportProject` (`.drp`) work on Free? | Joining and backups need another approach |
-| F8 | Presence reads: current page, timeline, playhead timecode, `GetCurrentVideoItem`? | Semantic presence limited |
-| F9 | Relink, `ReplaceClip`, `LinkProxyMedia` on Free? | Media flow needs manual steps |
-| F10 | Unique IDs and third-party metadata on media pool and timeline items? | Fall back to fingerprint matching only |
-| F11 | Snapshot time for a medium project (for example 5 timelines × 300 clips)? | Incremental snapshots, slower polling |
-| F12 | Do writes persist after save? Each write is read back to confirm | Add read-back confirmation everywhere |
+| F1 | Bridge loop runs with Resolve responsive; bridge can read request files | Loop **yes** (52 ms worst gap). Reading files **no**: inbound channel open (§3.2) |
+| F2 | Outbound channel | `Fusion.prefs` **no**; error log via `fusion:Execute` **yes** (§3.2) |
+| F3 | Script install path | `%APPDATA%\…\Support\Fusion\Scripts\Utility\` **yes**; `.py` not listed on Free. Don't put shared files under `%LOCALAPPDATA%` when started from a packaged app |
+| F4 | Timeline / media pool edits on Free | **All needed edits work**, including trims, moves, track changes. Exception: bins can't be renamed (no `Folder.SetName`). `ImportMedia` only accepts plain paths |
+| F5 | Item state readable | **Yes** |
+| F6 | `.drt` export/import | **Yes** |
+| F7 | `.drp` export/import | **Yes** |
+| F8 | Presence reads | **Yes**, including selected clips |
+| F9 | Media relinking | `LinkProxyMedia`, `ReplaceClip` **yes**; `RelinkClips` to recheck with an offline clip |
+| F10 | IDs and metadata | **Yes** (`GetUniqueId`, third-party metadata, marker `customData`) |
+| F11 | Snapshot cost, 300 items | 101 ms light, 590 ms full, so snapshots must be incremental |
+| F12 | Writes persist | Mostly. **Fades and added Fusion comps were lost after save + reopen** despite returning `true`, so read-back after save is required |
 
 Risks the feasibility test can't cover, tested later:
 - Ctrl+Z interception and Resolve's own shortcuts.

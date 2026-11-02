@@ -1,14 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { extractRcKeys, hexToUtf8, joinResultChunks, stampStateDir, summarize } from "./lib.ts";
+import { hexToUtf8, joinResultChunks, parseLogLine, stampStateDir, summarize } from "./lib.ts";
 
 const hex = (s: string) => Buffer.from(s, "utf8").toString("hex");
 
-describe("extractRcKeys", () => {
-  it("finds RCFeas keys among other prefs", () => {
-    const text = `{\n\tComp = { Info = { Author = "" } },\n\tRCFeasStage = "${hex("pollLoop")}",\n\tRCFeasEcho = "${hex("7")}",\n\tOther = "zz"\n}`;
-    const keys = extractRcKeys(text);
-    expect([...keys.keys()]).toEqual(["Stage", "Echo"]);
-    expect(hexToUtf8(keys.get("Stage")!)).toBe("pollLoop");
+describe("parseLogLine", () => {
+  it("reads a probe message from a Resolve log line", () => {
+    const line = `[0x00006b20] | Fusion               | ERROR | 2026-11-02 18:25:27,149 | [string "???"]:1: RCFEAS|Stage|${hex("pollLoop")}`;
+    expect(parseLogLine(line)).toEqual({ key: "Stage", hex: hex("pollLoop") });
+  });
+
+  it("ignores other log lines", () => {
+    expect(parseLogLine("[0x0000380c] | Main | INFO | 2026-11-02 18:11:39,723 | Application state changed")).toBeNull();
+    expect(parseLogLine('[string "???"]:1: RCFEAS-RATE 7')).toBeNull();
   });
 });
 
