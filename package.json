@@ -1,0 +1,21 @@
+{
+  "name": "resolve-collab",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Real-time collaboration companion for DaVinci Resolve (see docs/SPEC.md)",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}
