@@ -15,7 +15,8 @@ import { dirname, join } from "node:path";
 import type { JsonValue } from "./bridge-protocol/wire.ts";
 import type { BridgeClient } from "./bridge/bridge-client.ts";
 import { type Commit, HostLog, MemberLog, type SessionState } from "./sync/host-log.ts";
-import { type Fingerprint, type Op, validatePool } from "./sync/media-pool.ts";
+import type { Fingerprint, Op } from "./sync/media-pool.ts";
+import { validateModel } from "./sync/session-model.ts";
 import { type BridgeResult, MediaPoolSync } from "./sync/media-pool-sync.ts";
 import type { Answer, Conflict } from "./sync/reconcile.ts";
 import type { PeerLink } from "./peer/peer-link.ts";
@@ -49,8 +50,7 @@ export class Session {
     const store = join(options.storeDir, `${role}.json`);
     this.hostStore = join(options.storeDir, "host-log.json");
     if (role === "host") {
-      const saved = existsSync(this.hostStore) ? (JSON.parse(readFileSync(this.hostStore, "utf8")) as SessionState) : undefined;
-      this.host = new HostLog(saved);
+      this.host = new HostLog(this.loadHost());
     }
 
     this.sync = new MediaPoolSync({
@@ -64,7 +64,7 @@ export class Session {
       log,
       store,
     });
-    if (this.host) this.sync.sessionReset(this.host.model);
+    if (this.host) this.sync.sessionReset(this.host.model.pool);
 
     bridge.on("hello", (hello: Message) => log(`bridge connected: ${hello.product} ${hello.version ?? ""}`));
     // A bridge that was already running sent its media pool before we were
@@ -141,7 +141,7 @@ export class Session {
       return;
     }
     this.options.peers.send({ type: "commit", commit: result as unknown as JsonValue });
-    this.sync.sessionChanged(host.model, result);
+    this.sync.sessionChanged(host.model.pool, result);
     this.scheduleHostSave();
   }
 
@@ -164,7 +164,7 @@ export class Session {
       case "welcome": {
         if (this.host || (this.hostId && this.hostId !== from)) return;
         const state = message.state as unknown as SessionState;
-        const model = validatePool(state?.model);
+        const model = validateModel(state?.model);
         if (!Number.isSafeInteger(state?.seq) || !model) {
           this.options.log(`ignored a malformed session state from ${from}`);
           return;
@@ -172,7 +172,7 @@ export class Session {
         if (!this.hostId) this.options.log(`joined the session hosted by ${from}`);
         this.hostId = from;
         this.member.reset({ seq: state.seq, model });
-        this.sync.sessionReset(this.member.model);
+        this.sync.sessionReset(this.member.model.pool);
         return;
       }
       case "commit": {
@@ -180,7 +180,7 @@ export class Session {
         const commit = message.commit as unknown as Commit;
         if (typeof commit?.seq !== "number") return;
         const outcome = this.member.receive(commit);
-        if (outcome === "applied") this.sync.sessionChanged(this.member.model, commit);
+        if (outcome === "applied") this.sync.sessionChanged(this.member.model.pool, commit);
         else if (outcome === "gap") this.options.peers.sendTo(from, { type: "want-state" });
         return;
       }
@@ -206,6 +206,16 @@ export class Session {
       this.saveTimer = undefined;
       this.saveHost();
     }, 500);
+  }
+
+  // The saved log, checked like a state from a peer (and accepting the M3
+  // format, which held the media pool alone).
+  private loadHost(): SessionState | undefined {
+    if (!existsSync(this.hostStore)) return undefined;
+    const saved = JSON.parse(readFileSync(this.hostStore, "utf8")) as SessionState;
+    const model = validateModel(saved?.model);
+    if (!Number.isSafeInteger(saved?.seq) || !model) throw new Error(`unreadable session log: ${this.hostStore}`);
+    return { seq: saved.seq, model };
   }
 
   private saveHost(): void {

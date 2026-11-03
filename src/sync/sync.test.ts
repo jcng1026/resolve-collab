@@ -78,7 +78,7 @@ describe("host-ordered log", () => {
     const c2 = host.propose({ type: "bin.set", id: id(1), name: "B" }, "h") as never;
     const member = new MemberLog();
     expect(member.receive(c1)).toBe("gap"); // no state yet
-    member.reset({ seq: 0, model: emptyPool() });
+    member.reset({ seq: 0, model: { pool: emptyPool(), timelines: { timelines: {}, tracks: {}, items: {} } } });
     expect(member.receive(c2)).toBe("gap");
     expect(member.receive(c1)).toBe("applied");
     expect(member.receive(c1)).toBe("old");
