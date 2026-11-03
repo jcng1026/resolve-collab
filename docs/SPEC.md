@@ -352,6 +352,7 @@ Every feature follows: spec section → automated tests (using a **fake bridge**
 | Titles and generators | Text+ fully (text, font, size, place, length). Basic titles and generators placed at the right length; their words/settings can't sync, the companion warns (2026-11-03) |
 | Apply tiers | All three built; tier 1 used whenever it works; a test switch forces tiers 2 and 3 (2026-11-03) |
 | Tier 3 (timeline swap) | Off in normal use, only with `--force-tier 3`: importing another PC's `.drt` could run scripts hidden in Fusion comps. A change that would need it is reported, to be made by hand (2026-11-03) |
+| Markers | Timeline, item and media pool clip markers all sync; each carries its collab ID in its hidden `customData`; markers on a timeline that isn't open arrive when it's opened (2026-11-04, §21) |
 
 ---
 
@@ -662,3 +663,60 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
   - First run, 2026-11-03: PC 1's Resolve crashed while a clip was held mid-drag (fixed in §20.4/§20.5).
   - **Second run, 2026-11-04, Free 21.1.2 on both PCs: every step passed** after the fixes in `docs/feasibility/findings-2026-11-02.md` ("second M4 two-PC test"): live edits both ways including zoom, a held drag, Text+ and basic titles, a dissolve, deletes and disable, a fade and its return after reopening, a timeline that wasn't open, an offline merge with one length question, and deleting a timeline for everyone. Undo on PC 1 also synced, taking back PC 2's change too (a known limit until M7, §7).
 - **Free ↔ Studio** can only be checked by a user with genuine Studio. Until then it is untested.
+
+---
+
+## 21. M5 design: markers
+
+Goal (§16): §6.1 markers sync both ways, live and after offline or bridge-off time. Decisions of 2026-11-04 (asked before building): **all three kinds** of marker sync; each marker carries its **collab ID in its hidden `customData`**; markers on a timeline that isn't open arrive **when it's opened**, like its items (§20.5).
+
+### 21.1 What Resolve allows (probe, `docs/feasibility/findings-2026-11-02.md`, "M5 marker probe")
+- Three kinds, each with the same calls: **timeline markers** (on the ruler), **item markers** (on a clip in a timeline) and **clip markers** (on a media pool clip, set in the source viewer).
+- **No call changes a marker.** Colour, name, note, duration and frame change by deleting it and adding it again.
+- **One marker per frame per owner.** Timeline markers count frames from the timeline's start; item and clip markers count frames in the source media, so they stay put when an item is moved or trimmed.
+- `customData` is hidden from users, can be set on an existing marker, and survives renaming, recolouring and dragging in Resolve's interface and save + reopen.
+- **Copies:** adding a clip to a timeline copies the pool clip's markers onto the new item, and `DuplicateTimeline` copies timeline and item markers, both with their `customData`.
+- Markers on a timeline that isn't current can be read and written, but its items aren't scanned (§20.4), so the open-timeline rule stays.
+- Reading is cheap: 0.74 ms per 100 timeline markers, under 0.1 ms per item or clip.
+
+### 21.2 Model and operations
+- **Timeline and item markers** live in the timelines model: `markers: {id → {id, timeline, item, frame, duration, color, name, note}}`. `item` is `""` for a timeline marker, else the item's collab ID. `frame` is the timeline frame for a timeline marker and the source frame for an item marker.
+- **Clip markers** live in the media pool model: `markers: {id → {id, clip, frame, duration, color, name, note}}`.
+- **Operations:** `marker.create/set/delete` (timelines) and `poolmarker.create/set/delete` (media pool), through the same host-ordered log (§19.3). Session models saved before M5 are accepted (no markers).
+- **Deletes cascade:** a timeline or item takes its markers, a pool clip its clip markers.
+- **Checks:** colour is one of Resolve's 16 marker colours; frames are 0 to 100,000,000 and durations 1 or more; names up to 255 characters and notes up to 10,000; up to 5,000 markers per owner.
+- Two markers on the same owner and frame are allowed in the model (two people adding one at the same moment). The PC that can't place the second one says so once.
+
+### 21.3 Identity
+- `customData` holds `rc:<collab ID>`.
+- **A local marker is matched:**
+  1. by its `rc:` ID, if the session doesn't have that ID on another owner (a copy made by `DuplicateTimeline` or by adding a clip to a timeline keeps the original's ID, and is a new marker);
+  2. else to a session marker on the same owner at the same frame with the same colour, name, note and duration (first join, and copies another PC made);
+  3. else it's new and gets a new collab ID.
+- **Tagging:** a marker whose `customData` isn't its `rc:` ID is given it (`UpdateMarkerCustomData`). `customData` that another tool wrote (not empty, not `rc:`) is never overwritten: such a marker is matched by owner and frame instead.
+- Markers of an item the companion adds (or rebuilds, §20.6) start empty: Resolve's copies of the pool clip's markers are removed, and the session's markers for that item are added. Copies made when the user adds a clip are the user's edit and sync as new markers.
+
+### 21.4 Bridge side
+- **Scan:**
+  - Timeline markers of the current timeline every scan, one `tl.marker` record per marker and `tl.marker.gone` by frame;
+  - item markers as part of each item's record;
+  - clip markers as part of each media pool clip's record.
+  - Marker changes count as the user editing (§20.4): they're held until the timeline has been still for 1 s.
+- **Commands**, each read back:
+  - `marker.add` `{owner, frame, duration, color, name, note, tag}`;
+  - `marker.set` `{owner, frame, …}`: deletes the marker at `frame` and adds the new values (frame included), keeping its tag;
+  - `marker.delete` `{owner, frame}`;
+  - `marker.tag` `{owner, frame, tag}`.
+  - `owner` is `{kind: "timeline" | "item" | "clip", id}` with the local unique ID. Timeline and item markers need their timeline to be current (`not-current` otherwise); clip markers don't.
+  - `item.add` removes the new item's markers before answering (§21.3).
+
+### 21.5 Companion side
+- **The same reconciler**, with markers as another kind in each domain. Within a batch, markers come after the items and clips they belong to are created, and before those are deleted.
+- **Timeline and item markers** follow the open-timeline rule (§20.5). **Clip markers** sync whenever the media pool does.
+- **Warnings**, once per marker: a marker that couldn't be placed (another marker on that frame); a marker on an item kind Resolve doesn't take markers on.
+
+### 21.6 Verification
+- **Unit tests:** marker ops and their checks, cascades, the reconciler with markers (a moved marker is one change, not a delete and an add), identification (`rc:` IDs, copies keeping another owner's ID, matching by place, foreign `customData`).
+- **Pipeline test** (fake bridges): timeline, item and clip markers both ways; a moved and a recoloured marker; markers on a timeline that isn't open; a duplicated timeline; markers copied when a clip is added, by the user and by the companion; an offline merge of marker edits.
+- **Real Resolve on one PC:** marker steps in a check tool like `tools/m4-resolve-check.ts`.
+- **Two PCs:** marker steps in a checklist like `docs/m4-two-pc-test.md`.
