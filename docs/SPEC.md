@@ -606,11 +606,12 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
   - Grouped to at most once every 2 s per timeline.
 - **Test switch:** `--force-tier 2|3` on the companion (and the same option in the fake bridge) makes every eligible command use that tier. The pipeline tests and the real-Resolve check run all three.
 
-### 20.7 To confirm early in M4 (small probes before building on them)
-- In/Out marks set the length of an inserted Text+.
-- A transition can be deleted with `DeleteClips`, and its duration and alignment changed with `SetProperty` (`TransitionDuration`, `TransitionAlignment`).
-- `CreateEmptyTimeline` doesn't change the current timeline. `SetSettings` on a new timeline sets fps and resolution.
+### 20.7 Confirmed before building (probe, 2026-11-03)
+- **In/Out marks set the length** of an inserted Text+, basic Text title and Solid Color generator, including longer than the 120-frame default (300 frames tested).
+- **Transitions:** `SetProperty("TransitionDuration")` changes the duration, and `DeleteClips` deletes a transition. **`TransitionAlignment` can't be changed**, so an alignment change is applied as delete + add.
+- **`CreateEmptyTimeline` makes the new timeline current**, so the bridge switches back afterwards. `SetSettings` on a new timeline sets fps and resolution.
 - The user's In/Out marks can be read and restored exactly.
+- `DeleteTrack` on a track with items deletes the items too.
 
 ### 20.8 Verification
 - **Unit tests:** model and operations, track index shifts, reconciler per field including volatile fades and waiting timelines, batch ordering, transition edges, item map rebuild.

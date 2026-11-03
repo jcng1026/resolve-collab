@@ -395,6 +395,87 @@ probe("ALT", "enableOnOtherTimeline", function()
   return out
 end)
 
+-- SPEC §20.7 confirmations -------------------------------------------------------
+
+probe("CONFIRM", "textPlusLengthFromMarks", function()
+  proj:SetCurrentTimeline(A)
+  local markIn = A:GetEndFrame() - base + 48
+  A:SetMarkInOut(markIn, markIn + 83)
+  A:SetCurrentTimecode(tcAt(markIn))
+  local plus = A:InsertFusionTitleIntoTimeline("Text+")
+  local rec = plus and itemRecord(plus)
+  A:ClearMarkInOut()
+  if plus then plus:SetPosition({ startFrame = base + 2200, trackIndex = 2 }) end
+  return { record = rec, expected = 84 }
+end)
+probe("CONFIRM", "longTitlesFromMarks", function()
+  local out = {}
+  local inserts = {
+    textplus = function() return A:InsertFusionTitleIntoTimeline("Text+") end,
+    text = function() return A:InsertTitleIntoTimeline("Text") end,
+    solid = function() return A:InsertGeneratorIntoTimeline("Solid Color") end,
+  }
+  local y = 0
+  for name, insert in pairs(inserts) do
+    local markIn = A:GetEndFrame() - base + 48
+    A:SetMarkInOut(markIn, markIn + 299)
+    A:SetCurrentTimecode(tcAt(markIn))
+    local it = insert()
+    out[name] = it and { start = it:GetStart(), ["end"] = it:GetEnd(), duration = it:GetDuration(),
+      left = try(function() return it:GetLeftOffset() end), right = try(function() return it:GetRightOffset() end) } or "not inserted"
+    A:ClearMarkInOut()
+    if it then it:SetPosition({ startFrame = base + 3000 + y, trackIndex = 2 }); y = y + 400 end
+  end
+  out.expected = 300
+  return out
+end)
+probe("CONFIRM", "transitionEditAndDelete", function()
+  local tr = findItem(A, function(it) return it:GetType() == "transition" end)
+  if not tr then return "no transition" end
+  local out = { before = itemRecord(tr) }
+  for _, k in ipairs({ "TransitionType", "TransitionCategory", "TransitionDuration", "TransitionAlignment" }) do
+    out["get_" .. k] = try(function() return tr:GetProperty(k) end)
+  end
+  out.setDuration = try(function() return tr:SetProperty("TransitionDuration", 20) end)
+  out.setAlignment = try(function() return tr:SetProperty("TransitionAlignment", "center") end)
+  out.afterSet = itemRecord(tr)
+  out.durationAfter = try(function() return tr:GetProperty("TransitionDuration") end)
+  local n = #(A:GetItemListInTrack("video", 1) or {})
+  out.deleted = try(function() return A:DeleteClips({ tr }, false) end)
+  out.countBefore, out.countAfter = n, #(A:GetItemListInTrack("video", 1) or {})
+  out.neighbour = itemRecord(spareItem)
+  return out
+end)
+probe("CONFIRM", "createTimelineKeepsCurrentAndSettings", function()
+  local before = proj:GetCurrentTimeline():GetName()
+  local T = mp:CreateEmptyTimeline("RC Alt Settings")
+  local after = proj:GetCurrentTimeline():GetName()
+  local set = T and try(function()
+    return T:SetSettings({ useCustomSettings = "1", timelineFrameRate = "25", timelineResolutionWidth = "1280", timelineResolutionHeight = "720" })
+  end)
+  local s = T and T:GetSettings() or {}
+  proj:SetCurrentTimeline(A)
+  return { currentBefore = before, currentAfter = after, set = set, custom = s.useCustomSettings, fps = s.timelineFrameRate,
+    width = s.timelineResolutionWidth, height = s.timelineResolutionHeight }
+end)
+probe("CONFIRM", "marksSaveAndRestore", function()
+  A:SetMarkInOut(100, 200)
+  local user = A:GetMarkInOut()
+  A:SetMarkInOut(5000, 5059)
+  local ours = A:GetMarkInOut()
+  A:ClearMarkInOut()
+  local cleared = A:GetMarkInOut()
+  local v = user and user.video
+  local restored = v and v["in"] and A:SetMarkInOut(v["in"], v["out"])
+  return { user = user, ours = ours, cleared = cleared, restored = restored, after = A:GetMarkInOut() }
+end)
+probe("CONFIRM", "deleteTrackWithItems", function()
+  local n = A:GetTrackCount("video")
+  local count = #(A:GetItemListInTrack("video", n) or {})
+  local ok = try(function() return A:DeleteTrack("video", n) end)
+  return { track = n, items = count, deleted = ok, tracksAfter = A:GetTrackCount("video") }
+end)
+
 -- Persistence -------------------------------------------------------------------
 
 results.persist.before = { a = records(A) }
