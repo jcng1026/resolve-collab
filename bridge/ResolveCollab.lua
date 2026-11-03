@@ -1144,7 +1144,9 @@ end
 -- Main loop -------------------------------------------------------------------------
 
 F:SetPrefs(ACTIVE_PREF, bridgeId) -- a newer bridge run takes over from this one
-emit("HELLO", { product = R:GetProductName(), version = R:GetVersionString(), studio = R:IsStudio(), inbox = INBOX })
+-- handled: this run counts inbox messages from 0 (a companion that wrote
+-- for an earlier run starts again from here).
+emit("HELLO", { product = R:GetProductName(), version = R:GetVersionString(), studio = R:IsStudio(), inbox = INBOX, handled = 0 })
 snapshotMediaPool()
 
 local lastHandled, lastBeat, lastScan, lastPoolScan = 0, 0, 0, 0

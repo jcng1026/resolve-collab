@@ -94,6 +94,24 @@ describe("BridgeClient with a fake bridge", () => {
     expect(first.fake.clips).toHaveLength(2);
   });
 
+  it("starts numbering again when a new bridge run says hello", async () => {
+    const first = setup();
+    first.fake.media.add("interview.mp4");
+    first.fake.start(10);
+    await until(first.client, "hello");
+    expect(await first.client.send({ type: "clip.append", ...clip } as never)).toMatchObject({ ok: true });
+    first.fake.stop();
+    // The bridge script is started again in Resolve: a new run, counting from 0.
+    const second = new FakeBridge(join(first.inboxDir, "..", "ResolveDebug.txt"), first.inboxDir);
+    second.media.add("interview.mp4");
+    stops.push(() => second.stop());
+    const hello = until(first.client, "hello");
+    second.start(10);
+    await hello;
+    expect(await first.client.send({ type: "clip.append", ...clip } as never)).toMatchObject({ ok: true });
+    expect(second.clips).toHaveLength(1);
+  });
+
   it("times out when no bridge answers", async () => {
     const { client } = setup();
     expect(await client.send({ type: "clip.append" })).toEqual({ ok: false, error: "timeout" });

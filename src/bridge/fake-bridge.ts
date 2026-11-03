@@ -66,7 +66,7 @@ export class FakeBridge {
   }
 
   start(pollMs = 20): void {
-    this.emit("HELLO", { product: "Fake Resolve", studio: false, inbox: this.inboxDir });
+    this.emit("HELLO", { product: "Fake Resolve", studio: false, inbox: this.inboxDir, handled: this.lastHandled });
     this.snapshot();
     this.timer = setInterval(() => this.tick(), pollMs);
   }

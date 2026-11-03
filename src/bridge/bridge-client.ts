@@ -108,6 +108,17 @@ export class BridgeClient extends EventEmitter {
     mkdirSync(join(this.inboxDir, readyFolder(seq)));
   }
 
+  private dropInFlight(error: string): void {
+    for (const [, pending] of this.pending) {
+      clearTimeout(pending.timer);
+      pending.resolve({ ok: false, error });
+    }
+    this.pending.clear();
+    for (const name of readdirSync(this.inboxDir)) {
+      if (inboxSeq(name) !== null) rmSync(join(this.inboxDir, name), { recursive: true, force: true });
+    }
+  }
+
   private flushWaiting(): void {
     for (const entry of this.waiting) this.write(entry);
     this.waiting.clear();
@@ -165,9 +176,14 @@ export class BridgeClient extends EventEmitter {
 
   private handle({ bridgeId, kind, payload }: OutboundLine): void {
     if (kind === "HELLO") {
+      // A new bridge run counts inbox messages from its own start: what was
+      // written for the old run is cleared, and commands in flight fail (the
+      // syncs make them again).
+      if (this.bridgeId !== undefined && this.bridgeId !== bridgeId) this.dropInFlight("bridge-restarted");
       this.bridgeId = bridgeId;
       this.lastBeat = Date.now();
-      this.seeHandled(payload);
+      const handled = (payload as Record<string, JsonValue> | null)?.handled;
+      this.nextSeq = (typeof handled === "number" && Number.isSafeInteger(handled) && handled >= 0 ? handled : 0) + 1;
       this.flushWaiting();
       this.emit("hello", payload);
       return;
