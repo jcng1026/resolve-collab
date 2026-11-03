@@ -360,7 +360,7 @@ Goal: on two PCs, a clip appended to the current timeline on one appears on the 
 
 ### 18.1 Bridge wire format
 - **Outbound log line:** `RC|<bridgeId>|<kind>|<hex(JSON)>`, raised through `fusion:Execute('error("…")')`. `bridgeId` is random per bridge start, so lines from older runs are ignored. Kinds:
-  - `HELLO` (product, version, Studio flag, inbox)
+  - `HELLO` (product, version, Studio flag, inbox, and `handled` = 0: a new run counts inbox messages from its own start)
   - `HB` (heartbeat, every 1 s; carries `handled`, see §19.4)
   - `ACK` (highest inbox sequence handled)
   - `EVT` (detected local change)
@@ -526,61 +526,68 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
 - Item and timeline unique IDs persist. Reading costs ~0.5 ms per item for positions and ~1.4 ms for everything.
 
 ### 20.2 Model and operations
-- **Timeline** `{id, name, fps, width, height, tracks}`.
-  - `tracks` is an ordered list per kind (`video`, `audio`), each `{name, enabled, locked, subType}`.
-  - A track is addressed by kind + 1-based index, as in Resolve.
-- **Item** `{id, timeline, kind, track, start, duration, …}`.
+- **Timeline** `{id, name, fps, width, height}`.
+- **Track** `{id, timeline, kind, order, name, enabled, locked, subType}`.
+  - Resolve's tracks have no IDs, only positions, so tracks get collab IDs and items point at a track ID. Deleting a middle track then can't be mistaken for deleting another one.
+  - `order` is the 1-based position. A track delete moves the tracks above it down, as in Resolve.
+  - Resolve's default names ("Video 2") follow the position, so they're stored as no name.
+- **Item** `{id, timeline, kind, track, start, duration, enabled, color, name, …}`.
   - `start` counts frames from the timeline start.
   - `kind` is one of:
-    - `clip`: also `media` (collab clip ID), `mediaType` (video/audio), `srcStart`, `link` (collab ID shared by linked video and audio), `props` (the 32 `GetProperties` keys), `speed`, `fades {in, out}`;
-    - `textplus`: also `text {styled, font, style, size}`, `props`, `fades`;
+    - `clip`: also `media` (collab clip ID), `srcStart`, `speed`, `link` (the smallest collab ID of a linked video/audio group), `fadeIn`, `fadeOut`, and for video `props` (the 32 `GetProperties` keys);
+    - `textplus`: also `template`, `text {styled, font, style, size}`, `props`, `fadeIn`, `fadeOut`;
     - `title` / `generator`: also `template` (for example `Text`, `Solid Color`);
-    - `transition`: also `template` and `edge`. `edge` is `{item, side}`, where `side` is `start`, `end` or `cut`, with `alignment`.
-  - All kinds have `enabled`, `color`, `name`.
-- **Operations** set values, as in M3:
-  - `timeline.create/set/delete`, `timeline.duplicate {from, id, items: [old → new collab IDs]}`;
-  - `track.add/set/delete`;
-  - `item.create/set/delete`.
-- They go through the same host-ordered log (§19.3).
+    - `transition`: also `template` and `edge {item, side, alignment}`, where `side` is `start`, `end` or `cut`.
+- **Operations** set values, as in M3: `timeline.create/set/delete`, `track.create/set/delete`, `item.create/set/delete`.
+  - Deletes cascade: a timeline takes its tracks and items, a track its items, an item its transitions.
+  - A duplicated timeline needs no operation of its own: it arrives as a new timeline with its tracks and items.
+- They go through the same host-ordered log (§19.3). The session model is the media pool and the timelines together, and operations are routed by type. A saved M3 log (media pool only) is still accepted.
 - Compound clips, multicam, Fusion clips, effects, keyframes and Fairlight settings are not part of M4. An item using them is reported as "not synced" and left alone.
 
 ### 20.3 Identity
 - **Timelines:** the collab ID is stored as `rcId` in the timeline's media pool item.
-  - Two timelines with the same `rcId` (a `.drt` import or a copied project) are resolved by keeping the older local one. The newer one gets a new collab ID and is proposed as a new timeline.
-- **Items:** the companion stores a map from local unique ID to collab ID per timeline (items have no metadata).
-  - After a timeline swap (tier 3), a duplicate or a `.drp` copy, the map is rebuilt by matching kind, track, start, duration, media and source start.
+  - Two timelines with the same `rcId` (a `.drt` import or a copied project) keep the first. The other gets a new collab ID and is proposed as a new timeline.
+  - On first join, a timeline without an `rcId` is matched to a session timeline of the same name.
+- **Tracks:** the companion keeps each timeline's track collab IDs by position.
+  - When positions change, it works out which track went where from where each track's clips went, then by name, then by order.
+  - A timeline seen for the first time maps onto the session's tracks by position.
+- **Items:** the companion keeps a map from local unique ID to collab ID (items have no metadata).
+  - An unknown local item is matched to a session item of the same kind in the same place (track, start, duration, media). This covers a first join, a tier-3 swap, and Resolve giving an item a new ID.
+  - Only items Resolve still has hold their collab IDs, so an ID whose item has gone is free to be matched again.
+- **Transitions** are found from where they sit: a clip starting where the transition starts, ending where it ends, or a cut at its middle. Resolve's reported alignment is only a first guess: it read "center" for a transition it had reported as "right" moments before.
 
 ### 20.4 Bridge side
 - **Scan:**
-  - Only the current timeline can be edited by the user, so only it is scanned: light every 0.3 s (IDs, kind, track, start, end, offsets), and full records in rotation (like §19.4).
-  - Timeline create, rename and delete are seen through the media pool scan (`Type` = `Timeline`).
-  - Switching timelines triggers a full scan of the new one.
+  - The timeline list, with its project's ID, every 0.3 s.
+  - Only the current timeline can be edited by the user, so only its tracks and items are scanned. Positions of every item every scan (~0.5 ms per item); full records for new or moved items and a rotating share of the rest (like §19.4).
+  - Switching timelines reports the new one in full: `tl.reset`, tracks, items, `tl.synced`.
+  - **Both the media pool scan and the timeline scan hold their findings back**, and drop them if the project changed during the scan. Resolve keeps the bridge running while it loads another project; once, a pool walk read the other project, and its bins were reported as new and this project's clips as deleted.
 - **Commands**, each reading the result back:
-  - `tl.create/rename/delete/duplicate/settings`;
-  - `track.add/set/delete`;
+  - `tl.create/link/set/delete/export/swap`. A created timeline becomes current in Resolve, so the bridge puts the user's timeline back.
+  - `track.add/set/delete`. Each returns the new track list, since the bridge doesn't report its own changes as events.
   - `item.add`:
     - clips: `AppendToTimeline` with `recordFrame`, `trackIndex`, `startFrame`/`endFrame` and `mediaType`;
     - titles and generators: save the user's In/Out marks, mark the length past the end of the timeline, insert, restore the marks, then move into place;
     - Text+: also sets its Fusion inputs;
-  - `item.set` (offsets, position, properties, speed, fades, enabled, colour, name, link, text);
-  - `item.delete`;
-  - `transition.add`.
-- **The playhead is put back** after every append and insert. **The current timeline is put back** after a duplicate or a tier-3 swap.
-- **Order within a batch:** deletes, then sets (moves and trims), then adds, then transitions. This way appends land in cleared space. A move that overwrites removes the same items on every PC, so the overwritten items' reported changes match the session and just update the base.
+    - transitions: `AddTransition` on the edge item, trying the categories in turn.
+  - `item.set` (source start, length, position and track, properties, speed, fades, enabled, colour, name, text). A basic title or generator can't be trimmed, so a length change answers `cannot-trim` and is rebuilt (tier 2).
+  - `item.delete`, `item.link`.
+- **The playhead is put back** after every append and insert.
+- `HELLO` carries `handled` (0): a bridge started again counts inbox messages from its own start, and the companion follows (§18.1).
 
 ### 20.5 Companion side
-- **The same reconciler as §19.5**, per timeline, comparing base, local and session values per item field.
-- **Timelines that aren't open:**
-  - commands for them wait;
-  - when that timeline becomes current, its waiting commands run first, then the usual comparison (as a catch-up for that timeline);
-  - timeline-level operations (create, rename, delete, duplicate, tracks) apply at once;
-  - while commands wait, rendering that timeline on this PC renders the older state. The companion shows "N changes waiting for <timeline>".
+- **The same reconciler as §19.5**, for the timeline domain. It compares the timeline list and **the open timeline only**.
+- **Timelines that aren't open:** their changes stay in the session. When one is opened, it's compared as a catch-up, which applies them. No queue is needed. Timeline-level changes (create, rename, delete) apply at once. The companion says "changes to <timeline> will be applied when you open it".
+- **Another project open:** timeline lists from a project other than the session's are never compared (§9.2).
+- **Order within a batch:** timeline and track creates, item deletes, item sets, item creates, transitions, track sets and deletes, then timeline sets and deletes. Items moving right go rightmost first and items moving left leftmost first, so a ripple never lands on a neighbour (a move onto occupied space overwrites in Resolve).
+- **Fields one side doesn't report** (transform properties of audio clips in Resolve) are neither proposed nor applied.
+- **An already synced item that can't be identified for a moment** is skipped, not taken as deleted.
 - **Fades are volatile:**
   - in catch-up after the project opens, a local fade of 0 where the base has a fade is treated as "Resolve forgot it" and re-applied, not proposed;
   - removing a fade while the bridge is running syncs normally;
   - removing one while the bridge is off is undone at the next start;
   - a PC that opens or renders the project without the bridge has no API-set fades.
-- **Media:** a clip whose media this PC lacks waits on the missing list (§19.6). "N timeline items waiting for media" is shown, and they're added once the clip is found.
+- **Media:** a clip whose media pool clip isn't linked yet is retried every second; one whose file is missing waits on the missing list (§19.6).
 - **Warnings**, each shown once per item: basic title words not synced; generator settings not synced; items of unsupported kinds not synced.
 - **Timeline delete:**
   - when the bridge sees a local timeline deletion, the companion asks the deleter in the terminal: "Delete '<name>' for everyone?";
@@ -588,23 +595,15 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
   - receivers save a backup `.drp` before applying a remote timeline delete.
 
 ### 20.6 Apply tiers (§3.5)
-- **Tier 1 (direct)** is always tried first.
-  - A command whose API call returns false, or whose read-back differs, moves to tier 2.
-  - Exception: on a timeline that isn't current, commands simply wait (§20.5).
-- **Tier 2 (rebuild clip):**
-  - read the item's full record;
-  - delete it;
-  - add it again with the new values (by `item.add` rules);
-  - restore properties, speed, fades, enabled, colour, name, link and text;
-  - map the new local ID to the same collab ID.
-  - If anything can't be restored, go to tier 3.
+- **Tier 1 (direct)** is always tried first. A command that fails or reads back wrong moves to tier 2. A change of media or of a transition's edge goes straight to tier 2.
+- **Tier 2 (rebuild):** delete the item, add it again with every value from the session (by `item.add` rules), and map the new local ID to the same collab ID. If that fails, go to tier 3.
 - **Tier 3 (timeline swap):**
-  1. this PC asks a peer that has applied the timeline up to the current sequence (the host, or the change's author) for a `.drt` export of it, sent as chunks over the peer link;
-  2. this PC imports it;
-  3. it gives the copy the timeline's `rcId`, deletes the old timeline, gives the new one the old name and makes it current again if it was;
-  4. it restores the playhead, rebuilds the item map (§20.3) and re-applies fades.
-  - Grouped to at most once every 2 s per timeline.
-- **Test switch:** `--force-tier 2|3` on the companion (and the same option in the fake bridge) makes every eligible command use that tier. The pipeline tests and the real-Resolve check run all three.
+  1. this PC asks the peer that last changed the timeline (who has it open and up to date) for a `.drt` export of it, sent in chunks over the peer link (at most 200 chunks of 256 KB);
+  2. the bridge imports it, deletes the old timeline, gives the copy its name and `rcId`, and keeps the user's current timeline and playhead;
+  3. the companion maps the new items by position (§20.3), and fades come back as in §20.5.
+  - Also used when a track was inserted between others, which Resolve can't do by script.
+  - Not built: grouping swaps to at most once every 2 s.
+- **Test switch:** `--force-tier 2|3` makes every eligible change use that tier.
 
 ### 20.7 Confirmed before building (probe, 2026-11-03)
 - **In/Out marks set the length** of an inserted Text+, basic Text title and Solid Color generator, including longer than the 120-frame default (300 frames tested).
@@ -614,8 +613,34 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
 - `DeleteTrack` on a track with items deletes the items too.
 
 ### 20.8 Verification
-- **Unit tests:** model and operations, track index shifts, reconciler per field including volatile fades and waiting timelines, batch ordering, transition edges, item map rebuild.
-- **Pipeline test:** two companions with fake timeline bridges over a local testnet: live edits both ways, a timeline that isn't open, offline merge, and each forced tier.
-- **Real Resolve on one PC:** a check script with a fake member, as in M3, covering every command and each forced tier.
+- **Unit tests:** model and operations, cascades and track shifts, the reconciler per field (volatile fades, ripple order, delete coverage, catch-up questions), identification (middle track delete, first join, duplicate `rcId`, links, transition edges, items with new IDs), the Lua bridge's timecode and item-kind helpers.
+- **Pipeline test:** two companions with fake bridges over a local testnet:
+  - join with linked audio;
+  - live edits both ways;
+  - a new track and a Text+ title with its words;
+  - a timeline that isn't open;
+  - a fade Resolve forgot;
+  - a middle track delete;
+  - a project switch that reports the timeline list before the media pool;
+  - forced tiers 2 and 3.
+  - The fake reports timeline lists at the real bridge's pace, so races between a command's result and the next list are caught.
+- **Real Resolve on one PC:** `tools/m4-resolve-check.ts` runs Resolve as host with a fake member.
+  - **Result, 2026-11-03, Free 21.1.2: all checks passed** (project "RC M4 Check 6"). That covers:
+    - every command;
+    - edits made by hand in Resolve (clip colour, a delete);
+    - a timeline that wasn't open, applied when opened;
+    - a project switch taken as a pause only;
+    - a fade put back after reopening;
+    - the bridge's export and swap;
+    - a final comparison.
+  - With `--force-tier 2` (automatic steps): all checks passed.
+  - Bugs it found, all fixed:
+    - a scan read the other project during a switch (M3 media pool bug: this project's clips were deleted);
+    - a project switch looked like deleting every timeline;
+    - a restarted bridge ignored the companion's commands;
+    - a just-created timeline looked deleted before Resolve's next list;
+    - the unreliable transition alignment;
+    - audio clips' missing properties.
+  - Not covered here: a tier-3 swap between two real Resolves (the check exports and swaps on one PC); an offline merge of timeline edits (unit-tested; in the two-PC checklist).
 - **Two PCs:** the user's checklist in `docs/m4-two-pc-test.md`.
 - **Free ↔ Studio** can only be checked by a user with genuine Studio. Until then it is untested.
