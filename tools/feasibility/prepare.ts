@@ -62,7 +62,7 @@ if (!installOnly) {
 }
 
 mkdirSync(SCRIPTS_UTILITY, { recursive: true });
-for (const probe of ["ResolveCollab_Feasibility.lua", "ResolveCollab_MediaPoolProbe.lua"]) {
+for (const probe of ["ResolveCollab_Feasibility.lua", "ResolveCollab_MediaPoolProbe.lua", "ResolveCollab_TimelineProbe.lua", "ResolveCollab_TimelineAltProbe.lua"]) {
   const lua = readFileSync(join(HERE, probe), "utf8");
   writeFileSync(join(SCRIPTS_UTILITY, probe), stampStateDir(lua, STATE_DIR));
 }

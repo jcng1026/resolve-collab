@@ -1,0 +1,1280 @@
+{
+  "collectedAt": "2026-11-03T05:04:27.393Z",
+  "roundTripMs": null,
+  "requestsSent": 0,
+  "echoesSeen": 0,
+  "stages": [
+    {
+      "stage": "started",
+      "at": 22233
+    },
+    {
+      "stage": "product",
+      "at": 22233
+    },
+    {
+      "stage": "saveOriginal",
+      "at": 22233
+    },
+    {
+      "stage": "createScratchProject",
+      "at": 22265
+    },
+    {
+      "stage": "fadeViaTransitions",
+      "at": 24052
+    },
+    {
+      "stage": "fadesThroughDrt",
+      "at": 24083
+    },
+    {
+      "stage": "basicTitleProperties",
+      "at": 25060
+    },
+    {
+      "stage": "textPlusTextViaFusion",
+      "at": 25123
+    },
+    {
+      "stage": "textPlusLonger",
+      "at": 25599
+    },
+    {
+      "stage": "lengthFromInOutMarks",
+      "at": 25599
+    },
+    {
+      "stage": "aafIntoExistingTimeline",
+      "at": 27074
+    },
+    {
+      "stage": "enableOnOtherTimeline",
+      "at": 28457
+    },
+    {
+      "stage": "saveScratch",
+      "at": 28991
+    },
+    {
+      "stage": "reopenOriginal",
+      "at": 28991
+    },
+    {
+      "stage": "reopenScratch",
+      "at": 29716
+    },
+    {
+      "stage": "reopenOriginal",
+      "at": 30502
+    },
+    {
+      "stage": "done",
+      "at": 31289
+    }
+  ],
+  "probe": {
+    "probes": {
+      "1": {
+        "id": "ENV",
+        "label": "product",
+        "extra": "21.1.2.10",
+        "value": "DaVinci Resolve",
+        "dt": 0.00019270000007054477,
+        "ok": true
+      },
+      "2": {
+        "id": "SAFE",
+        "label": "saveOriginal",
+        "extra": true,
+        "value": "RC M3 Check 2",
+        "dt": 0.006932199999937438,
+        "ok": true
+      },
+      "3": {
+        "id": "SAFE",
+        "label": "createScratchProject",
+        "value": "<userdata>",
+        "dt": 0.25692419999995764,
+        "ok": true
+      },
+      "4": {
+        "id": "ALT",
+        "label": "fadeViaTransitions",
+        "value": {
+          "after": {
+            "1": {
+              "id": "0f4dfe3b-876f-48d3-90a5-18734dbfe916",
+              "track": {
+                "1": "video",
+                "2": 1,
+                "__flags": 4194304
+              },
+              "type": "transition",
+              "name": "Cross Dissolve",
+              "start": 86400,
+              "end": 86412,
+              "comps": 0
+            },
+            "2": {
+              "id": "a4eefd71-02fc-4fe7-ad31-5a5bb4d649fa",
+              "type": "video",
+              "media": "spare.mp4",
+              "right": 0,
+              "left": 0,
+              "track": {
+                "1": "video",
+                "2": 1,
+                "__flags": 4194304
+              },
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "name": "spare.mp4",
+              "start": 86400,
+              "end": 86640,
+              "comps": 0
+            },
+            "3": {
+              "id": "d5b357bd-88bc-4cc1-bd3e-d8abecabc665",
+              "track": {
+                "1": "video",
+                "2": 1,
+                "__flags": 4194304
+              },
+              "type": "transition",
+              "name": "Cross Dissolve",
+              "start": 86628,
+              "end": 86640,
+              "comps": 0
+            },
+            "4": {
+              "id": "e3c2e35c-72b1-4e48-8bc2-30f13cb37e8d",
+              "type": "video",
+              "media": "alt.mp4",
+              "right": 0,
+              "left": 0,
+              "track": {
+                "1": "video",
+                "2": 1,
+                "__flags": 4194304
+              },
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "name": "alt.mp4",
+              "start": 86880,
+              "end": 87120,
+              "comps": 0
+            },
+            "5": {
+              "id": "b4226e08-0f69-4453-ba03-a93c07f653a7",
+              "type": "video",
+              "media": "original.mp4",
+              "right": 0,
+              "left": 0,
+              "track": {
+                "1": "video",
+                "2": 1,
+                "__flags": 4194304
+              },
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "name": "original.mp4",
+              "start": 87360,
+              "end": 87600,
+              "comps": 0
+            }
+          },
+          "head_right": "<userdata>",
+          "tail_left": "<userdata>"
+        },
+        "dt": 0.029747400000132984,
+        "ok": true
+      },
+      "5": {
+        "id": "ALT",
+        "label": "fadesThroughDrt",
+        "value": {
+          "read": {
+            "FadeOut": 14,
+            "FadeIn": 10
+          },
+          "importedName": "m4-alt-fades",
+          "exported": true,
+          "copyFades": {
+            "FadeOut": 0,
+            "FadeIn": 0
+          },
+          "set": true
+        },
+        "dt": 0.9509614999999485,
+        "ok": true
+      },
+      "6": {
+        "id": "ALT",
+        "label": "basicTitleProperties",
+        "value": {
+          "sets": {
+            "RichText": false,
+            "Text": false,
+            "StyledText": false
+          },
+          "guesses": {
+            "TextContent": false,
+            "Font": false,
+            "StyledText": false,
+            "Title": false,
+            "RichText": false,
+            "Text": false,
+            "Color": false,
+            "Size": false
+          },
+          "record": {
+            "id": "f90c70f0-f2ce-45fe-9e2e-2eaa9dae6636",
+            "type": "generator",
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "start": 86700,
+            "name": "Text",
+            "track": {
+              "1": "video",
+              "2": 2,
+              "__flags": 4194304
+            },
+            "end": 86820,
+            "comps": 0
+          },
+          "properties": {},
+          "afterSets": false
+        },
+        "dt": 0.06947630000013305,
+        "ok": true
+      },
+      "7": {
+        "id": "ALT",
+        "label": "textPlusTextViaFusion",
+        "value": {
+          "after": {
+            "font": "Open Sans",
+            "size": 0.12,
+            "tool": true,
+            "text": "RC Text+ ü 1",
+            "comp": true,
+            "text0": "RC Text+ ü 1"
+          },
+          "before": {
+            "font": "Open Sans",
+            "size": 0.09,
+            "tool": true,
+            "text": "Custom Title",
+            "comp": true,
+            "text0": "Custom Title"
+          },
+          "record": {
+            "id": "93bb8631-7533-464b-8f6a-c1ee1ccc4a24",
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "start": 87100,
+            "left": 0,
+            "track": {
+              "1": "video",
+              "2": 2,
+              "__flags": 4194304
+            },
+            "type": "video",
+            "name": "Text+",
+            "right": 0,
+            "end": 87220,
+            "comps": 1
+          },
+          "set": true
+        },
+        "dt": 0.4878064000001814,
+        "ok": true
+      },
+      "8": {
+        "id": "ALT",
+        "label": "textPlusLonger",
+        "value": {
+          "before": {
+            "id": "93bb8631-7533-464b-8f6a-c1ee1ccc4a24",
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "start": 87100,
+            "left": 0,
+            "track": {
+              "1": "video",
+              "2": 2,
+              "__flags": 4194304
+            },
+            "type": "video",
+            "name": "Text+",
+            "right": 0,
+            "end": 87220,
+            "comps": 1
+          },
+          "afterRight": {
+            "id": "93bb8631-7533-464b-8f6a-c1ee1ccc4a24",
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "start": 87100,
+            "left": 0,
+            "track": {
+              "1": "video",
+              "2": 2,
+              "__flags": 4194304
+            },
+            "type": "video",
+            "name": "Text+",
+            "right": 0,
+            "end": 87220,
+            "comps": 1
+          },
+          "after": {
+            "id": "93bb8631-7533-464b-8f6a-c1ee1ccc4a24",
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "start": 87100,
+            "left": 0,
+            "track": {
+              "1": "video",
+              "2": 2,
+              "__flags": 4194304
+            },
+            "type": "video",
+            "name": "Text+",
+            "right": 0,
+            "end": 87220,
+            "comps": 1
+          },
+          "setRightNegative": false,
+          "setLeftNegative": false
+        },
+        "dt": 0.002877699999999095,
+        "ok": true
+      },
+      "9": {
+        "id": "ALT",
+        "label": "lengthFromInOutMarks",
+        "value": {
+          "generatorRelative": {
+            "marks": {
+              "video": {},
+              "audio": {}
+            },
+            "gen": {
+              "id": "0a7bc6c1-c3eb-4e13-85a8-70ef9a2a3d55",
+              "type": "generator",
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "start": 88108,
+              "name": "Solid Color",
+              "track": {
+                "1": "video",
+                "2": 1,
+                "__flags": 4194304
+              },
+              "end": 88144,
+              "comps": 0
+            }
+          },
+          "relative": {
+            "set": true,
+            "marks": {
+              "video": {
+                "in": 1248,
+                "out": 1307
+              },
+              "audio": {
+                "in": 1248,
+                "out": 1307
+              }
+            },
+            "title": {
+              "id": "fa31b45a-45a5-4338-a7ed-2955796285bb",
+              "type": "generator",
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "start": 87648,
+              "name": "Text",
+              "track": {
+                "1": "video",
+                "2": 1,
+                "__flags": 4194304
+              },
+              "end": 87708,
+              "comps": 0
+            }
+          },
+          "absolute": {
+            "set": true,
+            "marks": {
+              "video": {
+                "in": 87908,
+                "out": 87967
+              },
+              "audio": {
+                "in": 87908,
+                "out": 87967
+              }
+            },
+            "title": {
+              "id": "1c351cef-0210-4383-a6ec-ba72f612b61e",
+              "type": "generator",
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "start": 174308,
+              "name": "Text",
+              "track": {
+                "1": "video",
+                "2": 1,
+                "__flags": 4194304
+              },
+              "end": 174368,
+              "comps": 0
+            }
+          }
+        },
+        "dt": 1.4677698000000419,
+        "ok": true
+      },
+      "10": {
+        "id": "ALT",
+        "label": "aafIntoExistingTimeline",
+        "value": {
+          "otherItems": {
+            "1": {
+              "id": "52acf949-e7de-4e69-8949-39628fa37f47",
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "start": 88800,
+              "left": 0,
+              "track": {
+                "1": "video",
+                "2": 2,
+                "__flags": 4194304
+              },
+              "type": "video",
+              "name": "original",
+              "right": 0,
+              "end": 89040,
+              "comps": 0
+            },
+            "2": {
+              "id": "fa27d2de-3d93-4e42-a9a2-58d29948e8bd",
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "start": 89064,
+              "left": 0,
+              "track": {
+                "1": "video",
+                "2": 2,
+                "__flags": 4194304
+              },
+              "type": "video",
+              "name": "",
+              "right": 0,
+              "end": 89184,
+              "comps": 0
+            }
+          },
+          "poolCount": 7,
+          "source": {
+            "1": {
+              "id": "b34aff38-06dd-41db-8ffd-d44d5e7eba43",
+              "type": "video",
+              "media": "original.mp4",
+              "right": 0,
+              "left": 0,
+              "track": {
+                "1": "video",
+                "2": 1,
+                "__flags": 4194304
+              },
+              "fades": {
+                "FadeOut": 8,
+                "FadeIn": 8
+              },
+              "name": "original.mp4",
+              "start": 88800,
+              "end": 89040,
+              "comps": 0
+            },
+            "2": {
+              "id": "e364456c-d086-429a-8a45-84066754a5c2",
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "start": 89064,
+              "left": 0,
+              "track": {
+                "1": "video",
+                "2": 1,
+                "__flags": 4194304
+              },
+              "type": "video",
+              "name": "Text+",
+              "right": 0,
+              "end": 89184,
+              "comps": 1
+            }
+          },
+          "beforeA": 10,
+          "intoCurrent": true,
+          "afterA": {
+            "1": {
+              "id": "0f4dfe3b-876f-48d3-90a5-18734dbfe916",
+              "track": {
+                "1": "video",
+                "2": 1,
+                "__flags": 4194304
+              },
+              "type": "transition",
+              "name": "Cross Dissolve",
+              "start": 86400,
+              "end": 86412,
+              "comps": 0
+            },
+            "2": {
+              "id": "a4eefd71-02fc-4fe7-ad31-5a5bb4d649fa",
+              "type": "video",
+              "media": "spare.mp4",
+              "right": 0,
+              "left": 0,
+              "track": {
+                "1": "video",
+                "2": 1,
+                "__flags": 4194304
+              },
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "name": "spare.mp4",
+              "start": 86400,
+              "end": 86640,
+              "comps": 0
+            },
+            "3": {
+              "id": "d5b357bd-88bc-4cc1-bd3e-d8abecabc665",
+              "track": {
+                "1": "video",
+                "2": 1,
+                "__flags": 4194304
+              },
+              "type": "transition",
+              "name": "Cross Dissolve",
+              "start": 86628,
+              "end": 86640,
+              "comps": 0
+            },
+            "4": {
+              "id": "e3c2e35c-72b1-4e48-8bc2-30f13cb37e8d",
+              "type": "video",
+              "media": "alt.mp4",
+              "right": 0,
+              "left": 0,
+              "track": {
+                "1": "video",
+                "2": 1,
+                "__flags": 4194304
+              },
+              "fades": {
+                "FadeOut": 14,
+                "FadeIn": 10
+              },
+              "name": "alt.mp4",
+              "start": 86880,
+              "end": 87120,
+              "comps": 0
+            },
+            "5": {
+              "id": "b4226e08-0f69-4453-ba03-a93c07f653a7",
+              "type": "video",
+              "media": "original.mp4",
+              "right": 0,
+              "left": 0,
+              "track": {
+                "1": "video",
+                "2": 1,
+                "__flags": 4194304
+              },
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "name": "original.mp4",
+              "start": 87360,
+              "end": 87600,
+              "comps": 0
+            },
+            "6": {
+              "id": "f90c70f0-f2ce-45fe-9e2e-2eaa9dae6636",
+              "type": "generator",
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "start": 86700,
+              "name": "Text",
+              "track": {
+                "1": "video",
+                "2": 2,
+                "__flags": 4194304
+              },
+              "end": 86820,
+              "comps": 0
+            },
+            "7": {
+              "id": "93bb8631-7533-464b-8f6a-c1ee1ccc4a24",
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "start": 87100,
+              "left": 0,
+              "track": {
+                "1": "video",
+                "2": 2,
+                "__flags": 4194304
+              },
+              "type": "video",
+              "name": "Text+",
+              "right": 0,
+              "end": 87220,
+              "comps": 1
+            },
+            "8": {
+              "id": "fa31b45a-45a5-4338-a7ed-2955796285bb",
+              "type": "generator",
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "start": 87800,
+              "name": "Text",
+              "track": {
+                "1": "video",
+                "2": 2,
+                "__flags": 4194304
+              },
+              "end": 87860,
+              "comps": 0
+            },
+            "9": {
+              "id": "1c351cef-0210-4383-a6ec-ba72f612b61e",
+              "type": "generator",
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "start": 88000,
+              "name": "Text",
+              "track": {
+                "1": "video",
+                "2": 2,
+                "__flags": 4194304
+              },
+              "end": 88060,
+              "comps": 0
+            },
+            "10": {
+              "id": "0a7bc6c1-c3eb-4e13-85a8-70ef9a2a3d55",
+              "type": "generator",
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "start": 88200,
+              "name": "Solid Color",
+              "track": {
+                "1": "video",
+                "2": 2,
+                "__flags": 4194304
+              },
+              "end": 88236,
+              "comps": 0
+            },
+            "11": {
+              "id": "120aa8ea-8635-49b3-afc4-e2ccf1d13ee5",
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "start": 88800,
+              "left": 0,
+              "track": {
+                "1": "video",
+                "2": 3,
+                "__flags": 4194304
+              },
+              "type": "video",
+              "name": "original",
+              "right": 0,
+              "end": 89040,
+              "comps": 0
+            },
+            "12": {
+              "id": "90ceaae2-4729-41f1-bf2c-017496725c88",
+              "fades": {
+                "FadeOut": 0,
+                "FadeIn": 0
+              },
+              "start": 89064,
+              "left": 0,
+              "track": {
+                "1": "video",
+                "2": 3,
+                "__flags": 4194304
+              },
+              "type": "video",
+              "name": "",
+              "right": 0,
+              "end": 89184,
+              "comps": 0
+            }
+          },
+          "exported": true,
+          "intoOther": true,
+          "currentAfter": "RC Alt Target"
+        },
+        "dt": 1.3611530000000585,
+        "ok": true
+      },
+      "11": {
+        "id": "ALT",
+        "label": "enableOnOtherTimeline",
+        "value": {
+          "final": true,
+          "deleteRipple": false,
+          "set_ClipEnabled": false,
+          "get_ClipEnabled": false,
+          "set_Enabled": false,
+          "get_Enabled": false,
+          "set_VideoEnabled": false,
+          "get_VideoEnabled": false,
+          "after1": true,
+          "left": 1,
+          "setClipEnabled": false
+        },
+        "dt": 0.5166065999999319,
+        "ok": true
+      },
+      "12": {
+        "id": "ALT",
+        "label": "saveScratch",
+        "value": true,
+        "dt": 0.0055893000001105975,
+        "ok": true
+      },
+      "13": {
+        "id": "SAFE",
+        "label": "reopenOriginal",
+        "value": true,
+        "dt": 0.715988599999946,
+        "ok": true
+      },
+      "14": {
+        "id": "ALT",
+        "label": "reopenScratch",
+        "value": "<userdata>",
+        "dt": 0.7373202999999648,
+        "ok": true
+      },
+      "15": {
+        "id": "SAFE",
+        "label": "reopenOriginal",
+        "value": true,
+        "dt": 0.753593599999931,
+        "ok": true
+      }
+    },
+    "persist": {
+      "reopened": {
+        "textPlus": {
+          "1": {
+            "start": 87100,
+            "text": {
+              "font": "Open Sans",
+              "size": 0.12,
+              "tool": true,
+              "text": "RC Text+ ü 1",
+              "comp": true,
+              "text0": "RC Text+ ü 1"
+            }
+          }
+        },
+        "altFadesByTimeline": {
+          "m4-alt-fades": {
+            "FadeOut": 0,
+            "FadeIn": 0
+          },
+          "RC Alt Other": {
+            "FadeOut": 0,
+            "FadeIn": 0
+          },
+          "RC Alt": {
+            "FadeOut": 0,
+            "FadeIn": 0
+          }
+        },
+        "a": {
+          "1": {
+            "id": "0f4dfe3b-876f-48d3-90a5-18734dbfe916",
+            "type": "transition",
+            "start": 86400,
+            "track": {
+              "1": "video",
+              "2": 1,
+              "__flags": 4194304
+            },
+            "name": "Cross Dissolve",
+            "end": 86412,
+            "comps": 0
+          },
+          "2": {
+            "id": "a4eefd71-02fc-4fe7-ad31-5a5bb4d649fa",
+            "type": "video",
+            "media": "spare.mp4",
+            "start": 86400,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 1,
+              "__flags": 4194304
+            },
+            "right": 0,
+            "name": "spare.mp4",
+            "end": 86640,
+            "left": 0,
+            "comps": 0
+          },
+          "3": {
+            "id": "d5b357bd-88bc-4cc1-bd3e-d8abecabc665",
+            "type": "transition",
+            "start": 86628,
+            "track": {
+              "1": "video",
+              "2": 1,
+              "__flags": 4194304
+            },
+            "name": "Cross Dissolve",
+            "end": 86640,
+            "comps": 0
+          },
+          "4": {
+            "id": "e3c2e35c-72b1-4e48-8bc2-30f13cb37e8d",
+            "type": "video",
+            "media": "alt.mp4",
+            "start": 86880,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 1,
+              "__flags": 4194304
+            },
+            "right": 0,
+            "name": "alt.mp4",
+            "end": 87120,
+            "left": 0,
+            "comps": 0
+          },
+          "5": {
+            "id": "b4226e08-0f69-4453-ba03-a93c07f653a7",
+            "type": "video",
+            "media": "original.mp4",
+            "start": 87360,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 1,
+              "__flags": 4194304
+            },
+            "right": 0,
+            "name": "original.mp4",
+            "end": 87600,
+            "left": 0,
+            "comps": 0
+          },
+          "6": {
+            "id": "f90c70f0-f2ce-45fe-9e2e-2eaa9dae6636",
+            "type": "generator",
+            "start": 86700,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 2,
+              "__flags": 4194304
+            },
+            "name": "Text",
+            "end": 86820,
+            "comps": 0
+          },
+          "7": {
+            "id": "93bb8631-7533-464b-8f6a-c1ee1ccc4a24",
+            "type": "video",
+            "start": 87100,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 2,
+              "__flags": 4194304
+            },
+            "right": 0,
+            "name": "Text+",
+            "end": 87220,
+            "left": 0,
+            "comps": 1
+          },
+          "8": {
+            "id": "fa31b45a-45a5-4338-a7ed-2955796285bb",
+            "type": "generator",
+            "start": 87800,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 2,
+              "__flags": 4194304
+            },
+            "name": "Text",
+            "end": 87860,
+            "comps": 0
+          },
+          "9": {
+            "id": "1c351cef-0210-4383-a6ec-ba72f612b61e",
+            "type": "generator",
+            "start": 88000,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 2,
+              "__flags": 4194304
+            },
+            "name": "Text",
+            "end": 88060,
+            "comps": 0
+          },
+          "10": {
+            "id": "0a7bc6c1-c3eb-4e13-85a8-70ef9a2a3d55",
+            "type": "generator",
+            "start": 88200,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 2,
+              "__flags": 4194304
+            },
+            "name": "Solid Color",
+            "end": 88236,
+            "comps": 0
+          },
+          "11": {
+            "id": "120aa8ea-8635-49b3-afc4-e2ccf1d13ee5",
+            "type": "video",
+            "start": 88800,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 3,
+              "__flags": 4194304
+            },
+            "right": 0,
+            "name": "original",
+            "end": 89040,
+            "left": 0,
+            "comps": 0
+          },
+          "12": {
+            "id": "90ceaae2-4729-41f1-bf2c-017496725c88",
+            "type": "video",
+            "start": 89064,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 3,
+              "__flags": 4194304
+            },
+            "right": 0,
+            "name": "",
+            "end": 89184,
+            "left": 0,
+            "comps": 0
+          }
+        }
+      },
+      "before": {
+        "a": {
+          "1": {
+            "id": "0f4dfe3b-876f-48d3-90a5-18734dbfe916",
+            "type": "transition",
+            "start": 86400,
+            "track": {
+              "1": "video",
+              "2": 1,
+              "__flags": 4194304
+            },
+            "name": "Cross Dissolve",
+            "end": 86412,
+            "comps": 0
+          },
+          "2": {
+            "id": "a4eefd71-02fc-4fe7-ad31-5a5bb4d649fa",
+            "type": "video",
+            "media": "spare.mp4",
+            "start": 86400,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 1,
+              "__flags": 4194304
+            },
+            "right": 0,
+            "name": "spare.mp4",
+            "end": 86640,
+            "left": 0,
+            "comps": 0
+          },
+          "3": {
+            "id": "d5b357bd-88bc-4cc1-bd3e-d8abecabc665",
+            "type": "transition",
+            "start": 86628,
+            "track": {
+              "1": "video",
+              "2": 1,
+              "__flags": 4194304
+            },
+            "name": "Cross Dissolve",
+            "end": 86640,
+            "comps": 0
+          },
+          "4": {
+            "id": "e3c2e35c-72b1-4e48-8bc2-30f13cb37e8d",
+            "type": "video",
+            "media": "alt.mp4",
+            "start": 86880,
+            "fades": {
+              "FadeOut": 14,
+              "FadeIn": 10
+            },
+            "track": {
+              "1": "video",
+              "2": 1,
+              "__flags": 4194304
+            },
+            "right": 0,
+            "name": "alt.mp4",
+            "end": 87120,
+            "left": 0,
+            "comps": 0
+          },
+          "5": {
+            "id": "b4226e08-0f69-4453-ba03-a93c07f653a7",
+            "type": "video",
+            "media": "original.mp4",
+            "start": 87360,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 1,
+              "__flags": 4194304
+            },
+            "right": 0,
+            "name": "original.mp4",
+            "end": 87600,
+            "left": 0,
+            "comps": 0
+          },
+          "6": {
+            "id": "f90c70f0-f2ce-45fe-9e2e-2eaa9dae6636",
+            "type": "generator",
+            "start": 86700,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 2,
+              "__flags": 4194304
+            },
+            "name": "Text",
+            "end": 86820,
+            "comps": 0
+          },
+          "7": {
+            "id": "93bb8631-7533-464b-8f6a-c1ee1ccc4a24",
+            "type": "video",
+            "start": 87100,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 2,
+              "__flags": 4194304
+            },
+            "right": 0,
+            "name": "Text+",
+            "end": 87220,
+            "left": 0,
+            "comps": 1
+          },
+          "8": {
+            "id": "fa31b45a-45a5-4338-a7ed-2955796285bb",
+            "type": "generator",
+            "start": 87800,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 2,
+              "__flags": 4194304
+            },
+            "name": "Text",
+            "end": 87860,
+            "comps": 0
+          },
+          "9": {
+            "id": "1c351cef-0210-4383-a6ec-ba72f612b61e",
+            "type": "generator",
+            "start": 88000,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 2,
+              "__flags": 4194304
+            },
+            "name": "Text",
+            "end": 88060,
+            "comps": 0
+          },
+          "10": {
+            "id": "0a7bc6c1-c3eb-4e13-85a8-70ef9a2a3d55",
+            "type": "generator",
+            "start": 88200,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 2,
+              "__flags": 4194304
+            },
+            "name": "Solid Color",
+            "end": 88236,
+            "comps": 0
+          },
+          "11": {
+            "id": "120aa8ea-8635-49b3-afc4-e2ccf1d13ee5",
+            "type": "video",
+            "start": 88800,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 3,
+              "__flags": 4194304
+            },
+            "right": 0,
+            "name": "original",
+            "end": 89040,
+            "left": 0,
+            "comps": 0
+          },
+          "12": {
+            "id": "90ceaae2-4729-41f1-bf2c-017496725c88",
+            "type": "video",
+            "start": 89064,
+            "fades": {
+              "FadeOut": 0,
+              "FadeIn": 0
+            },
+            "track": {
+              "1": "video",
+              "2": 3,
+              "__flags": 4194304
+            },
+            "right": 0,
+            "name": "",
+            "end": 89184,
+            "left": 0,
+            "comps": 0
+          }
+        }
+      }
+    },
+    "note": "Completed.",
+    "scratchName": "ResolveCollab M4 Alt Probe 09c3064d"
+  }
+}
