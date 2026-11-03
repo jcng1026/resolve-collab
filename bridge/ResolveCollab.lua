@@ -1373,6 +1373,47 @@ local function markerAt(owner, frame)
   end
 end
 
+-- A marker the per-frame calls can't reach. Resolve copies a pool clip's
+-- markers onto every item made from it; on an item whose frame rate differs
+-- from the timeline's, a copy can land between frames. GetMarkers lists it
+-- at the frame below, where the per-frame calls (and DeleteMarkerByCustomData)
+-- don't find it (M5 copy probe, 2026-11-04).
+local function stuck(owner, frame)
+  return owner:GetMarkerCustomData(frame) == nil
+end
+
+-- Puts every marker of the owner on the frame GetMarkers lists, so each can
+-- be reached: "delete all" does clear in-between markers, and they're added
+-- back with every value and tag, then read back (SPEC §21.4). An owner that
+-- couldn't be snapped isn't tried again in this run.
+local snapFailed = {}
+local function snapMarkers(owner)
+  local uid = owner:GetUniqueId()
+  if snapFailed[uid] then return "unreachable" end
+  local list = M.markerList(owner:GetMarkers())
+  owner:DeleteMarkersByColor("All")
+  for _, m in ipairs(list) do owner:AddMarker(m.frame, m.color, m.name, m.note, m.duration, m.tag) end
+  for _, m in ipairs(list) do
+    local n = markerAt(owner, m.frame)
+    if not (n and n.color == m.color and n.name == m.name and n.note == m.note and n.duration == m.duration and n.tag == m.tag)
+      or stuck(owner, m.frame) then
+      snapFailed[uid] = true
+      return "snap-failed"
+    end
+  end
+end
+
+-- The marker at frame, snapped first if it's out of reach. Returns it, or
+-- nil and why.
+local function reachableAt(owner, frame)
+  local m = markerAt(owner, frame)
+  if not m then return nil, "unknown-marker" end
+  if not stuck(owner, frame) then return m end
+  local err = snapMarkers(owner)
+  if err then return nil, err end
+  return markerAt(owner, frame)
+end
+
 -- The marker's owner: the current timeline, an item on it, or a pool clip.
 -- Returns the owner, or nil and why; then the timeline (for timeline
 -- markers) and how to read the owner's record back (items and clips).
@@ -1428,8 +1469,10 @@ local function markerDone(owner, tl, keep, err, frames, cleared)
   local now, id = {}, tl:GetUniqueId()
   for _, m in ipairs(M.markerList(owner:GetMarkers())) do now[m.frame] = m end
   r.records, r.markerGone = {}, {}
+  local done = {}
   for _, f in ipairs(frames) do
-    if now[f] then
+    if now[f] and not done[f] then
+      done[f] = true
       local rec = markerRecord(id, now[f])
       tlMarkers[f] = M.jencode(rec)
       r.records[#r.records + 1] = rec
@@ -1459,9 +1502,12 @@ handlers["marker.set"] = function(cmd)
   local bad = badMarker(cmd)
   if bad then return { ok = false, error = bad } end
   local at = tonumber(cmd.at)
-  local old = at and markerAt(owner, at)
-  if not old then return { ok = false, error = "unknown-marker" } end
+  if not at then return { ok = false, error = "bad-frame" } end
+  local old, why = reachableAt(owner, at)
+  if not old then return markerDone(owner, tl, keep, why, { at }, {}) end
   owner:DeleteMarkerAtFrame(at)
+  -- Never add while the old one is still there: that would make two.
+  if markerAt(owner, at) then return markerDone(owner, tl, keep, "unreachable", { at }, {}) end
   local failed = addMarker(owner, cmd)
   -- Couldn't place the new values: put the old marker back.
   if failed then owner:AddMarker(old.frame, old.color, old.name, old.note, old.duration, old.tag) end
@@ -1473,7 +1519,11 @@ handlers["marker.delete"] = function(cmd)
   if not owner then return { ok = false, error = err } end
   local frame = tonumber(cmd.frame)
   if not frame then return { ok = false, error = "bad-frame" } end
-  if markerAt(owner, frame) then owner:DeleteMarkerAtFrame(frame) end
+  if markerAt(owner, frame) then
+    local m, why = reachableAt(owner, frame)
+    if not m then return markerDone(owner, tl, keep, why, { frame }, {}) end
+    owner:DeleteMarkerAtFrame(frame)
+  end
   return markerDone(owner, tl, keep, markerAt(owner, frame) and "delete-failed" or nil, {}, { frame })
 end
 
@@ -1482,7 +1532,8 @@ handlers["marker.tag"] = function(cmd)
   if not owner then return { ok = false, error = err } end
   local frame = tonumber(cmd.frame)
   if not frame or type(cmd.tag) ~= "string" then return { ok = false, error = "bad-marker" } end
-  if not markerAt(owner, frame) then return { ok = false, error = "unknown-marker" } end
+  local found, why = reachableAt(owner, frame)
+  if not found then return markerDone(owner, tl, keep, why, { frame }, {}) end
   owner:UpdateMarkerCustomData(frame, cmd.tag)
   local m = markerAt(owner, frame)
   return markerDone(owner, tl, keep, not (m and m.tag == cmd.tag) and "readback" or nil, { frame }, {})

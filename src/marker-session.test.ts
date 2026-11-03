@@ -199,9 +199,10 @@ describe("marker sync between two companions", () => {
     host.fake.timelines.current = original.id;
     await sleep(300);
     expect(tags(original)).toEqual(before);
-    // The copy's timeline marker and its two clips' markers, as markers of their own.
+    // The copy's timeline marker, a.mp4's marker, and the pool marker's copies
+    // on the second use's video and audio, as markers of their own.
     const copyId = Object.values(hostModel(host).timelines.timelines).find((t) => t.name === "Edit copy")!.id;
-    expect(Object.values(hostModel(host).timelines.markers).filter((m) => m.timeline === copyId)).toHaveLength(3);
+    expect(Object.values(hostModel(host).timelines.markers).filter((m) => m.timeline === copyId)).toHaveLength(4);
   }, 30_000);
 
   it("merges offline marker edits: different fields automatically", async () => {

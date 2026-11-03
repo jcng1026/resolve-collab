@@ -25,7 +25,7 @@ Wait 2–3 seconds after each change before checking the other PC.
    - import A and B, make a timeline `Edit`, and drag A onto it, then B after it (both clips side by side);
    - **ruler markers:** click the ruler at two places with no clip edge, pressing **M** each time;
    - double-click one of them, give it a name and a note with a new line in it, and pick a colour;
-   - **clip marker:** click clip A on the timeline, put the playhead over it and press **M**;
+   - **clip marker:** move the playhead over clip A first (clicking the ruler deselects clips), then click clip A itself to select it, and press **M**. The marker shows on the clip, and on its linked audio too;
    - **media pool marker:** double-click B in the media pool (it opens in the source viewer on the left), and press **M** there.
 
    On PC 2: the same two ruler markers (name, note, colour), the marker on A, and B's marker in its source viewer.
@@ -42,7 +42,7 @@ Wait 2–3 seconds after each change before checking the other PC.
 ### A clip added again
 5. PC 1: drag B from the media pool onto the timeline again, after the others. Resolve copies B's media pool marker onto the new clip.
 
-   On PC 2: the new clip has **one** marker, not two.
+   On PC 2: the new clip has **one** marker, not two. If B's frame rate differs from the timeline's, Resolve puts the copy between frames; the bridge moves it onto a whole frame so it can be synced (SPEC §21.4). Then on PC 2, change that marker's note: PC 1 shows the new note, still with one marker.
 
 ### A timeline that isn't open
 6. PC 2: make a new timeline `Second`, drag A onto it, and press **M** on the ruler.

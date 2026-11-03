@@ -1,0 +1,456 @@
+{
+  "collectedAt": "2026-11-03T18:57:04.661Z",
+  "roundTripMs": null,
+  "requestsSent": 0,
+  "echoesSeen": 0,
+  "stages": [
+    {
+      "stage": "started",
+      "at": 10294
+    },
+    {
+      "stage": "product",
+      "at": 10294
+    },
+    {
+      "stage": "saveOriginal",
+      "at": 10294
+    },
+    {
+      "stage": "createScratchProject",
+      "at": 10294
+    },
+    {
+      "stage": "import",
+      "at": 10642
+    },
+    {
+      "stage": "poolMarkers",
+      "at": 11492
+    },
+    {
+      "stage": "copiesOnItems",
+      "at": 11871
+    },
+    {
+      "stage": "perFrameCalls",
+      "at": 11871
+    },
+    {
+      "stage": "deleteAtKeyThenByData",
+      "at": 11871
+    },
+    {
+      "stage": "snap",
+      "at": 11904
+    },
+    {
+      "stage": "deleteAfterSnap",
+      "at": 11936
+    },
+    {
+      "stage": "scriptAddOn30",
+      "at": 11936
+    },
+    {
+      "stage": "saveScratch",
+      "at": 11967
+    },
+    {
+      "stage": "reopenOriginal",
+      "at": 12157
+    },
+    {
+      "stage": "done",
+      "at": 13133
+    }
+  ],
+  "probe": {
+    "probes": {
+      "1": {
+        "id": "ENV",
+        "dt": 0.00013839999883202836,
+        "value": "DaVinci Resolve",
+        "extra": "21.1.2.10",
+        "ok": true,
+        "label": "product"
+      },
+      "2": {
+        "id": "SAFE",
+        "dt": 0.00477110000065295,
+        "value": "Test7",
+        "extra": true,
+        "ok": true,
+        "label": "saveOriginal"
+      },
+      "3": {
+        "id": "SAFE",
+        "dt": 0.27153280000493396,
+        "value": "<userdata>",
+        "ok": true,
+        "label": "createScratchProject"
+      },
+      "4": {
+        "id": "COPY",
+        "dt": 0.014735199998540338,
+        "value": 2,
+        "ok": true,
+        "label": "import"
+      },
+      "5": {
+        "id": "COPY",
+        "dt": 0.047541300002194475,
+        "value": {
+          "b": true,
+          "fps30": 30,
+          "fps24": 24,
+          "pool30": {
+            "1": {
+              "frame": 7,
+              "customData": "rc:p:aaaa",
+              "getAtFrame": "rc:p:aaaa",
+              "color": "Cyan",
+              "duration": 1,
+              "name": "at 7",
+              "note": "note 7"
+            },
+            "2": {
+              "frame": 20,
+              "customData": "",
+              "getAtFrame": "",
+              "color": "Mint",
+              "duration": 3,
+              "name": "at 20",
+              "note": ""
+            }
+          },
+          "pool24": {
+            "1": {
+              "frame": 9,
+              "customData": "rc:p:cccc",
+              "getAtFrame": "rc:p:cccc",
+              "color": "Red",
+              "duration": 1,
+              "name": "at 9",
+              "note": ""
+            }
+          },
+          "c": true,
+          "a": true
+        },
+        "ok": true,
+        "label": "poolMarkers"
+      },
+      "6": {
+        "id": "COPY",
+        "dt": 0.001007200000458397,
+        "value": {
+          "audio": {
+            "1": {
+              "frame": 5,
+              "customData": "rc:p:aaaa",
+              "color": "Cyan",
+              "duration": 1,
+              "name": "at 7",
+              "note": "note 7"
+            },
+            "2": {
+              "frame": 16,
+              "customData": "",
+              "getAtFrame": "",
+              "color": "Mint",
+              "duration": 2,
+              "name": "at 20",
+              "note": ""
+            }
+          },
+          "thirty": {
+            "1": {
+              "frame": 5,
+              "customData": "rc:p:aaaa",
+              "color": "Cyan",
+              "duration": 1,
+              "name": "at 7",
+              "note": "note 7"
+            },
+            "2": {
+              "frame": 16,
+              "customData": "",
+              "getAtFrame": "",
+              "color": "Mint",
+              "duration": 2,
+              "name": "at 20",
+              "note": ""
+            }
+          },
+          "same": {
+            "1": {
+              "frame": 9,
+              "customData": "rc:p:cccc",
+              "getAtFrame": "rc:p:cccc",
+              "color": "Red",
+              "duration": 1,
+              "name": "at 9",
+              "note": ""
+            }
+          }
+        },
+        "ok": true,
+        "label": "copiesOnItems"
+      },
+      "7": {
+        "id": "COPY",
+        "dt": 0.0011254000055487268,
+        "value": {
+          "updExact": false,
+          "byData": {
+            "duration": 1,
+            "customData": "rc:p:aaaa",
+            "color": "Cyan",
+            "name": "at 7",
+            "note": "note 7"
+          },
+          "after": {
+            "1": {
+              "frame": 5,
+              "customData": "rc:p:aaaa",
+              "color": "Cyan",
+              "duration": 1,
+              "name": "at 7",
+              "note": "note 7"
+            },
+            "2": {
+              "frame": 16,
+              "customData": "",
+              "getAtFrame": "",
+              "color": "Mint",
+              "duration": 2,
+              "name": "at 20",
+              "note": ""
+            }
+          },
+          "updKey": false,
+          "key": 5
+        },
+        "ok": true,
+        "label": "perFrameCalls"
+      },
+      "8": {
+        "id": "COPY",
+        "dt": 0.034345599997323006,
+        "value": {
+          "delKey": false,
+          "afterKey": {
+            "1": {
+              "frame": 5,
+              "customData": "rc:p:aaaa",
+              "color": "Cyan",
+              "duration": 1,
+              "name": "at 7",
+              "note": "note 7"
+            },
+            "2": {
+              "frame": 16,
+              "customData": "",
+              "getAtFrame": "",
+              "color": "Mint",
+              "duration": 2,
+              "name": "at 20",
+              "note": ""
+            }
+          },
+          "delData": false,
+          "afterData": {
+            "1": {
+              "frame": 5,
+              "customData": "rc:p:aaaa",
+              "color": "Cyan",
+              "duration": 1,
+              "name": "at 7",
+              "note": "note 7"
+            },
+            "2": {
+              "frame": 16,
+              "customData": "",
+              "getAtFrame": "",
+              "color": "Mint",
+              "duration": 2,
+              "name": "at 20",
+              "note": ""
+            }
+          },
+          "before": {
+            "1": {
+              "frame": 5,
+              "customData": "rc:p:aaaa",
+              "color": "Cyan",
+              "duration": 1,
+              "name": "at 7",
+              "note": "note 7"
+            },
+            "2": {
+              "frame": 16,
+              "customData": "",
+              "getAtFrame": "",
+              "color": "Mint",
+              "duration": 2,
+              "name": "at 20",
+              "note": ""
+            }
+          }
+        },
+        "ok": true,
+        "label": "deleteAtKeyThenByData"
+      },
+      "9": {
+        "id": "COPY",
+        "dt": 0.03646940000180621,
+        "value": {
+          "before": {
+            "1": {
+              "frame": 5,
+              "customData": "rc:p:aaaa",
+              "color": "Cyan",
+              "duration": 1,
+              "name": "at 7",
+              "note": "note 7"
+            },
+            "2": {
+              "frame": 16,
+              "customData": "",
+              "getAtFrame": "",
+              "color": "Mint",
+              "duration": 2,
+              "name": "at 20",
+              "note": ""
+            }
+          },
+          "left": {},
+          "added": {
+            "1": true,
+            "2": true
+          },
+          "tagged": {
+            "1": true,
+            "2": true
+          },
+          "after": {
+            "1": {
+              "frame": 5,
+              "customData": "rc:p:aaaa",
+              "getAtFrame": "rc:p:aaaa",
+              "color": "Cyan",
+              "duration": 1,
+              "name": "at 7",
+              "note": "note 7"
+            },
+            "2": {
+              "frame": 16,
+              "customData": "",
+              "getAtFrame": "",
+              "color": "Mint",
+              "duration": 2,
+              "name": "at 20",
+              "note": ""
+            }
+          },
+          "final": {
+            "1": {
+              "frame": 5,
+              "customData": "rc:snapped5",
+              "getAtFrame": "rc:snapped5",
+              "color": "Cyan",
+              "duration": 1,
+              "name": "at 7",
+              "note": "note 7"
+            },
+            "2": {
+              "frame": 16,
+              "customData": "rc:snapped16",
+              "getAtFrame": "rc:snapped16",
+              "color": "Mint",
+              "duration": 2,
+              "name": "at 20",
+              "note": ""
+            }
+          },
+          "cleared": true
+        },
+        "ok": true,
+        "label": "snap"
+      },
+      "10": {
+        "id": "COPY",
+        "dt": 0.011451299993495923,
+        "value": {
+          "frame": 5,
+          "deleted": true,
+          "left": {
+            "1": {
+              "frame": 16,
+              "customData": "rc:snapped16",
+              "getAtFrame": "rc:snapped16",
+              "color": "Mint",
+              "duration": 2,
+              "name": "at 20",
+              "note": ""
+            }
+          }
+        },
+        "ok": true,
+        "label": "deleteAfterSnap"
+      },
+      "11": {
+        "id": "COPY",
+        "dt": 0.011792600002081599,
+        "value": {
+          "list": {
+            "1": {
+              "frame": 16,
+              "customData": "rc:snapped16",
+              "getAtFrame": "rc:snapped16",
+              "color": "Mint",
+              "duration": 2,
+              "name": "at 20",
+              "note": ""
+            },
+            "2": {
+              "frame": 40,
+              "customData": "rc:s",
+              "getAtFrame": "rc:s",
+              "color": "Lemon",
+              "duration": 1,
+              "name": "script",
+              "note": ""
+            }
+          },
+          "add": true
+        },
+        "ok": true,
+        "label": "scriptAddOn30"
+      },
+      "12": {
+        "id": "COPY",
+        "dt": 0.18937539999751607,
+        "value": true,
+        "ok": true,
+        "label": "saveScratch"
+      },
+      "13": {
+        "id": "SAFE",
+        "dt": 0.916689600002428,
+        "value": true,
+        "ok": true,
+        "label": "reopenOriginal"
+      }
+    },
+    "persist": {},
+    "scratchName": "ResolveCollab M5 Copy Probe a1e6cb62",
+    "setup": {
+      "b": "original.mp4",
+      "timelineFps": 24,
+      "a": "fps30.mp4"
+    },
+    "note": "Completed."
+  }
+}

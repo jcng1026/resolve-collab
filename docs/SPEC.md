@@ -675,7 +675,8 @@ Goal (§16): §6.1 markers sync both ways, live and after offline or bridge-off 
 - **No call changes a marker.** Colour, name, note, duration and frame change by deleting it and adding it again.
 - **One marker per frame per owner.** Timeline markers count frames from the timeline's start; item and clip markers count frames in the source media, so they stay put when an item is moved or trimmed.
 - `customData` is hidden from users, can be set on an existing marker, and survives renaming, recolouring and dragging in Resolve's interface and save + reopen.
-- **Copies:** adding a clip to a timeline copies the pool clip's markers onto the new item, and `DuplicateTimeline` copies timeline and item markers, both with their `customData`.
+- **Copies:** adding a clip to a timeline copies the pool clip's markers onto the new item and its linked audio, and `DuplicateTimeline` copies timeline and item markers, both with their `customData`.
+- **Copies can land between frames** (second probe, 2026-11-04, after the two-PC test found one): on an item whose frame rate differs from the timeline's, a pool marker's copy keeps its exact time (frame 7 of a 30 fps clip lands at 5.6 on a 24 fps timeline; its length 3 becomes 2). `GetMarkers` lists it at the frame below, where `GetMarkerCustomData`, `UpdateMarkerCustomData` and `DeleteMarkerAtFrame` don't find it, nor do the exact frame or `DeleteMarkerByCustomData`. `DeleteMarkersByColor("All")` does clear it, and markers added back on the listed frames work normally.
 - Markers on a timeline that isn't current can be read and written, but its items aren't scanned (§20.4), so the open-timeline rule stays.
 - Reading is cheap: 0.74 ms per 100 timeline markers, under 0.1 ms per item or clip.
 
@@ -709,6 +710,8 @@ Goal (§16): §6.1 markers sync both ways, live and after offline or bridge-off 
   - `marker.tag` `{owner, frame, tag}`.
   - `owner` is `{kind: "timeline" | "item" | "clip", id}` with the local unique ID. Timeline and item markers need their timeline to be current (`not-current` otherwise); clip markers don't.
   - A marker that reads back wrong is removed again (`readback`); one on an occupied frame answers `occupied`.
+  - **Snapping:** when `marker.tag`, `marker.set` or `marker.delete` meets a marker the per-frame calls can't reach (§21.1, between frames), the bridge first puts all of that owner's markers on their listed frames: delete all, add each back with every value and tag, read back. It moves a copy by less than a frame. An owner that fails to snap answers `snap-failed`, then `unreachable`, and isn't tried again in that run. The companion tags copies on first sight, so they're snapped as soon as they appear.
+  - `marker.set` never adds the new values while the old marker is still there (`unreachable`), so it can't make two.
   - Commands on item markers answer the item's record, on clip markers the clip's; on timeline markers the changed markers' records and `markerGone` (frames left empty).
   - `item.add` removes the new clip's markers before answering (§21.3).
 

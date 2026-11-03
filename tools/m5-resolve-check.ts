@@ -55,7 +55,7 @@ async function waitFor(what: string, check: () => boolean, ms = 20_000): Promise
 
 const byHand = (minutes = 5) => minutes * 60_000;
 
-const CLIPS = ["original.mp4", "spare.mp4"];
+const CLIPS = ["original.mp4", "spare.mp4", "fps30.mp4"];
 for (const name of CLIPS) {
   if (!existsSync(join(SOURCE_MEDIA, name))) throw new Error(`missing ${name}: run node tools/feasibility/prepare.ts first`);
 }
@@ -128,6 +128,8 @@ await waitFor("member joined", () => memberLogs.some((l) => l.startsWith("joined
 say("STEP 1  member imports two clips and puts a marker on spare.mp4 in the media pool");
 const pool = Object.fromEntries(CLIPS.map((n) => [n, fake.importClip(join(media, n)).id]));
 fake.poolClips.get(pool["spare.mp4"]!)!.markers.push(marker(30, { color: "Cyan", name: "pool" }));
+// On the 30 fps clip, frame 7 lands between frames on the 24 fps timeline (5.6).
+fake.poolClips.get(pool["fps30.mp4"]!)!.markers.push(marker(7, { color: "Sky", name: "between" }));
 await waitFor("clips in Resolve's media pool", () => CLIPS.every((n) => [...host.sync.local.clips.values()].some((c) => c.name === n)));
 await waitFor("pool marker on spare.mp4 in Resolve, tagged rc:p:", () => {
   const [m] = resolvePoolMarkers("spare.mp4");
@@ -185,7 +187,23 @@ if (FORCE === 2) {
 }
 
 if (!AUTO) {
-  say("STEP 6  In Resolve: on RC M5 Edit, put the playhead somewhere without a marker and press M (add a marker)");
+  say("STEP 5b In Resolve: drag fps30.mp4 from the media pool onto Video 1, after the other clips");
+  // Resolve copies its pool marker onto the new clip between frames; the
+  // bridge snaps it so it can be tagged and edited (SPEC §21.4).
+  const fps30 = () => [...host.timelines.items.values()].find((i) => i.trackKind === "video" && i.name === "fps30.mp4");
+  await waitFor("the copied marker on the dragged clip tagged in Resolve", () => {
+    const ms = fps30()?.markers ?? [];
+    return ms.length === 1 && isTag(ms[0]!.tag);
+  }, byHand());
+  const at = fps30()!.start;
+  await waitFor("the member got it", () => memberItemAt(at)?.markers.length === 1, 30_000);
+  memberItemAt(at)!.markers[0]!.note = "edited on the member";
+  await waitFor("the member's edit of the copy in Resolve, still one marker", () => {
+    const ms = fps30()?.markers ?? [];
+    return ms.length === 1 && ms[0]!.note === "edited on the member";
+  }, 30_000);
+
+  say("STEP 6 In Resolve: on RC M5 Edit, put the playhead somewhere without a marker and press M (add a marker)");
   const before = new Set(resolveMarkers().map((m) => m.frame));
   await waitFor("the member got it", () => edit.markers.length === 3, byHand());
   const added = resolveMarkers().find((m) => !before.has(m.frame));

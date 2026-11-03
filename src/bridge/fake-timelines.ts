@@ -166,10 +166,10 @@ export class FakeTimelines {
   }
 
   // A clip with linked audio, as dragging footage onto the timeline makes.
-  // The video gets copies of the pool clip's markers.
+  // Both get copies of the pool clip's markers.
   addClip(t: FakeTimeline, media: string, name: string, start: number, duration = 48, trackIndex = 1): FakeItem {
     const v = this.item({ kind: "clip", trackKind: "video", trackIndex, start, duration, name, media, markers: structuredClone(this.poolMarkers(media)) });
-    const a = this.item({ kind: "clip", trackKind: "audio", trackIndex, start, duration, name, media });
+    const a = this.item({ kind: "clip", trackKind: "audio", trackIndex, start, duration, name, media, markers: structuredClone(this.poolMarkers(media)) });
     v.linked = [a.id];
     a.linked = [v.id];
     t.items.set(v.id, v);
