@@ -603,6 +603,7 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
   3. the companion maps the new items by position (§20.3), and fades come back as in §20.5.
   - Also used when a track was inserted between others, which Resolve can't do by script.
   - Not built: grouping swaps to at most once every 2 s.
+  - **Security (open, review 2026-11-03):** this is the one path where a file made on another PC is imported into Resolve. A `.drt` can hold Fusion compositions (every Text+ title is one), and Fusion comps can carry scripts that Resolve runs. So a tampered `.drt` could make this PC run code, against §13's rule that peers send data, never code. Every other path sends JSON values that the bridge applies with specific API calls. To be decided by the user.
 - **Test switch:** `--force-tier 2|3` makes every eligible change use that tier.
 
 ### 20.7 Confirmed before building (probe, 2026-11-03)
