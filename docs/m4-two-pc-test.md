@@ -24,6 +24,7 @@ Checks SPEC §16/§20: timelines sync both ways, live and after time offline, in
    - make a timeline called `Edit` (File → New Timeline);
    - drag A onto it, then B after it.
    - while dragging B, hold it over the timeline for about 5 seconds before letting go (this crashed Resolve before the fix). Nothing should reach PC 2 until you let go.
+   - check PC 1 has **both** clips side by side. If B landed on A, it replaced it: press Ctrl+Z and drop B after A.
 
    Within a few seconds PC 2 has a timeline `Edit` with A and B at the same places, video and audio linked. If PC 2 already had another timeline open, its companion says the changes will be applied when you open `Edit`: open it.
 
@@ -41,7 +42,9 @@ Checks SPEC §16/§20: timelines sync both ways, live and after time offline, in
    - add a video track;
    - drag a **Text+** title onto it (Effects → Titles → Fusion Titles) and change its words in the Inspector;
    - drag a basic **Text** title next to it;
-   - put a **Cross Dissolve** between A and B.
+   - drag B back against the end of A, then put a **Cross Dissolve** on the cut between them.
+
+   PC 1's companion shows no `bridge error` lines while you drop them.
 
    On PC 2:
    - the Text+ shows **your words**;
@@ -50,10 +53,10 @@ Checks SPEC §16/§20: timelines sync both ways, live and after time offline, in
    - the dissolve is there.
 
 ### Deletes and enable
-6. PC 2: select B and press Delete, then disable A (right-click → Enable/Disable Clip). Both show on PC 1.
+6. PC 2: select B and press Delete, then disable A (right-click → Enable/Disable Clip). Both show on PC 1, and the dissolve goes with B without an "isn't supported" warning.
 
 ### Fades
-7. PC 1: drag the fade-in handle at the top-left corner of A. The fade shows on PC 2.
+7. PC 1: drag the fade-in handle at the top-left corner of A, slowly, for a few seconds. The fade shows on PC 2, and neither companion says "Sync paused".
 8. PC 2: open another project, then open this one again. Resolve forgets fades set by scripts, so the companion puts it back within a few seconds. Check A still fades in on PC 2.
 
 ### A timeline that isn't open
@@ -69,7 +72,7 @@ Checks SPEC §16/§20: timelines sync both ways, live and after time offline, in
     - PC 2 moves A a little later;
     - PC 1 changes A's clip colour;
     - **both** trim the end of A, to different lengths.
-13. PC 2: start the companion again with the same `join` command. It saves a backup, then asks **only about the length** (both changed it). Answer `m`. On both PCs, A has PC 2's position and length and PC 1's colour.
+13. PC 2: start the companion again with the same `join` command. It saves a backup, then asks **only about the length** (both changed it), once for A's video and audio together. Answer `m`. On both PCs, A has PC 2's position and length and PC 1's colour.
 
 ### Deleting a timeline
 14. PC 1: in the media pool, delete the timeline `Second`. PC 1's companion asks "Delete it for everyone?": answer `y`. PC 2 saves a backup, then `Second` disappears there.
@@ -83,4 +86,5 @@ Send me both companions' output if anything fails.
 - When two people change the same thing at the same moment, the later change wins and the overwritten person sees a notice (first-to-host-wins with undo is M7).
 - A track inserted between two others can't be synced (Resolve can't do it by script, and replacing the whole timeline with another PC's file was switched off for safety). The other PC's companion says so; add the track there by hand, or add new tracks at the top.
 - Timeline changes from other PCs wait while you hold the left mouse button (anywhere, in any app) and for 1 s after your last timeline edit, so they never land in the middle of a drag.
+- **Undo (Ctrl+Z) takes back other people's changes too.** Each PC's Resolve has its own undo list, and it holds the changes the companion made for other PCs as well as yours. Undoing on one PC syncs like any other edit, so it can take back a teammate's change for everyone (found in the second two-PC test, 2026-11-04). Undoing only your own changes is M7 (SPEC §7).
 - Anyone with the invite code can join (host approval is M6).

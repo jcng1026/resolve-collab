@@ -214,6 +214,23 @@ describe("forced tiers", () => {
     expect(member.fake.commands.some((c) => c.type === "item.set")).toBe(false);
   }, 30_000);
 
+  it("a change Resolve can't make directly is rebuilt without saying it couldn't", async () => {
+    const host = makePc("trimhost");
+    const member = makePc("trimmember");
+    const code = newInviteCode();
+    const media = footage(host, [member], "t.mp4");
+    host.fake.timelines.addClip(host.fake.timelines.addTimeline("Edit"), media, "t.mp4", 0, 48);
+    await connect(host, "host", code);
+    await connect(member, "member", code);
+    await waitFor("t.mp4 on member", () => !!clip(member, "t.mp4"));
+    // Like a transition's length, which only a rebuild can change.
+    member.fake.timelines.failing.add("item.set");
+    clip(host, "t.mp4")!.duration = 30;
+    await waitFor("trimmed on member", () => clip(member, "t.mp4")?.duration === 30);
+    expect(member.fake.commands.some((c) => c.type === "item.set")).toBe(true); // tried directly first
+    expect(member.logs.filter((l) => l.includes("couldn't"))).toEqual([]);
+  }, 30_000);
+
   it("without forcing, never swaps in another PC's timeline file: a track inserted between others is reported", async () => {
     const host = makePc("noswaphost");
     const member = makePc("noswapmember");

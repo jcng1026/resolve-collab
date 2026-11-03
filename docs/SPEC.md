@@ -603,7 +603,7 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
   - receivers save a backup `.drp` before applying a remote timeline delete.
 
 ### 20.6 Apply tiers (§3.5)
-- **Tier 1 (direct)** is always tried first. A command that fails or reads back wrong moves to tier 2. A change of media or of a transition's edge goes straight to tier 2.
+- **Tier 1 (direct)** is always tried first. A command that fails or reads back wrong moves to tier 2, without a message (a transition's length, for one, can only be changed this way); the terminal only hears about it if tier 2 fails too. A change of media or of a transition's edge goes straight to tier 2.
 - **Tier 2 (rebuild):** delete the item, add it again with every value from the session (by `item.add` rules), and map the new local ID to the same collab ID. If that fails, go to tier 3.
 - **`not-current`, `user-editing` and `unreadable` only mean "not now":** no rebuild, no warning; the change is tried again a second later.
 - **A failed add is tried once per session value.** It's tried again only when someone changes that item, so a failing add or rebuild can't loop. An item a failed rebuild removed counts as still to add, never as deleted on this PC.
@@ -659,4 +659,6 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
     - audio clips' missing properties.
   - Not covered here: a tier-3 swap between two real Resolves (the check exports and swaps on one PC); an offline merge of timeline edits (unit-tested; in the two-PC checklist).
 - **Two PCs:** the user's checklist in `docs/m4-two-pc-test.md`.
+  - First run, 2026-11-03: PC 1's Resolve crashed while a clip was held mid-drag (fixed in §20.4/§20.5).
+  - **Second run, 2026-11-04, Free 21.1.2 on both PCs: every step passed** after the fixes in `docs/feasibility/findings-2026-11-02.md` ("second M4 two-PC test"): live edits both ways including zoom, a held drag, Text+ and basic titles, a dissolve, deletes and disable, a fade and its return after reopening, a timeline that wasn't open, an offline merge with one length question, and deleting a timeline for everyone. Undo on PC 1 also synced, taking back PC 2's change too (a known limit until M7, §7).
 - **Free ↔ Studio** can only be checked by a user with genuine Studio. Until then it is untested.

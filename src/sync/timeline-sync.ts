@@ -476,7 +476,8 @@ export class TimelineSync {
         if (this.options.forceTier === 2 || op.media !== undefined || op.edge !== undefined) return this.rebuild(item, local, localTimeline, timeline!);
         const command = this.setCommand(op, item, local, localTimeline, timeline!);
         if (!command) return this.rebuild(item, local, localTimeline, timeline!);
-        const result = await this.run(key, command);
+        // A refusal here isn't reported: the rebuild says so if it fails too.
+        const result = await this.run(key, command, true);
         if (result.ok) return true;
         if (TRANSIENT.has(String(result.error))) return false;
         return this.rebuild(item, local, localTimeline, timeline!);
@@ -624,7 +625,7 @@ export class TimelineSync {
     else applyTimelineOp(this.base, op);
   }
 
-  private async run(key: string, command: Command): Promise<BridgeResult> {
+  private async run(key: string, command: Command, quiet = false): Promise<BridgeResult> {
     if (command.type === "noop") return { ok: true };
     if (this.options.userBusy?.()) {
       this.retrySoon = true;
@@ -649,7 +650,7 @@ export class TimelineSync {
       // read the item back yet: try again shortly.
       if (result.error === "user-editing" || result.error === "unreadable") this.retrySoon = true;
       const failure = `${command.type}:${key}:${result.error}`;
-      if (!result.ok && !TRANSIENT.has(String(result.error)) && !this.failures.has(failure)) {
+      if (!result.ok && !quiet && !TRANSIENT.has(String(result.error)) && !this.failures.has(failure)) {
         this.failures.add(failure);
         this.options.log(`Resolve couldn't ${command.type} for ${key.split(":")[0]} ${key.slice(-8)} (${result.error})`);
       }
