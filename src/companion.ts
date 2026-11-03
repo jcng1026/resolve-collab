@@ -24,6 +24,7 @@ import { BridgeClient } from "./bridge/bridge-client.ts";
 import { FakeBridge } from "./bridge/fake-bridge.ts";
 import { findFile, fingerprint, userFolders } from "./media/fingerprint.ts";
 import { PeerLink, newInviteCode, topicFor } from "./peer/peer-link.ts";
+import { MouseWatch } from "./bridge/mouse-watch.ts";
 import { Session } from "./session.ts";
 import type { Answer, Conflict } from "./sync/reconcile.ts";
 
@@ -125,6 +126,9 @@ async function confirm(question: string): Promise<boolean> {
   }
 }
 
+const mouse = new MouseWatch(log);
+mouse.start();
+
 const session = new Session({
   role: mode === "host" ? "host" : "member",
   bridge,
@@ -137,6 +141,7 @@ const session = new Session({
   findFile: (file, dirs) => findFile(file, [...dirs, ...userFolders()]),
   log,
   ...(forceTier ? { forceTier: forceTier as 2 | 3 } : {}),
+  userBusy: () => mouse.held,
 });
 
 let fake: FakeBridge | undefined;
@@ -173,6 +178,7 @@ log(`bridge inbox: ${inboxDir}`);
 
 const shutdown = async () => {
   session.stop();
+  mouse.stop();
   bridge.stop();
   fake?.stop();
   await peers.stop();

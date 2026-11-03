@@ -8,6 +8,7 @@
 //   node tools/m4-resolve-check.ts                 every step, some by hand in Resolve
 //   node tools/m4-resolve-check.ts --auto          only the steps that need no hands
 //   node tools/m4-resolve-check.ts --force-tier 2  Resolve applies changes by rebuilding items
+//   node tools/m4-resolve-check.ts --auto --drag   automatic steps plus the held-drag step
 //
 // The member's edits are checked against what the bridge reads back from
 // Resolve. Steps marked "In Resolve" wait for you to make the edit there.
@@ -18,6 +19,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import createTestnet from "hyperdht/testnet.js";
 import { BridgeClient } from "../src/bridge/bridge-client.ts";
+import { MouseWatch } from "../src/bridge/mouse-watch.ts";
 import { FakeBridge } from "../src/bridge/fake-bridge.ts";
 import type { FakeItem } from "../src/bridge/fake-timelines.ts";
 import { findFile, fingerprint } from "../src/media/fingerprint.ts";
@@ -31,6 +33,7 @@ const RESOLVE_LOG = join(process.env.APPDATA ?? join(homedir(), "AppData", "Roam
   "Blackmagic Design", "DaVinci Resolve", "Support", "logs", "ResolveDebug.txt");
 const DEFAULT_INBOX = join(homedir(), "ResolveCollab", "inbox"); // as installed by tools/install-bridge.ts
 const AUTO = process.argv.includes("--auto");
+const DRAG = !AUTO || process.argv.includes("--drag");
 const tierAt = process.argv.indexOf("--force-tier");
 const FORCE = tierAt > 0 ? (Number(process.argv[tierAt + 1]) as 2 | 3) : undefined;
 
@@ -53,14 +56,15 @@ async function waitFor(what: string, check: () => boolean, ms = 20_000): Promise
 
 const byHand = (minutes = 5) => minutes * 60_000;
 
-for (const name of ["spare.mp4", "alt.mp4", "original.mp4"]) {
+const CLIPS = ["spare.mp4", "alt.mp4", "original.mp4", "fps30.mp4"];
+for (const name of CLIPS) {
   if (!existsSync(join(SOURCE_MEDIA, name))) throw new Error(`missing ${name}: run node tools/feasibility/prepare.ts first`);
 }
 const dir = mkdtempSync(join(tmpdir(), "rc-m4check-"));
 const media = join(dir, "media");
 mkdirSync(media);
 mkdirSync(join(dir, "inbox"));
-for (const name of ["spare.mp4", "alt.mp4", "original.mp4"]) copyFileSync(join(SOURCE_MEDIA, name), join(media, name));
+for (const name of CLIPS) copyFileSync(join(SOURCE_MEDIA, name), join(media, name));
 writeFileSync(join(dir, "ResolveDebug.txt"), "");
 
 const testnet = await createTestnet(3);
@@ -71,6 +75,8 @@ const home = dirname(DEFAULT_INBOX);
 const hostLogs: string[] = [];
 const hostBridge = new BridgeClient({ logPath: RESOLVE_LOG, inboxDir: DEFAULT_INBOX });
 const hostPeers = new PeerLink(code, { bootstrap: testnet.bootstrap });
+const mouse = new MouseWatch((m) => say(`host    ${m}`));
+mouse.start();
 const host = new Session({
   role: "host", bridge: hostBridge, peers: hostPeers,
   // Under the ResolveCollab folder: the bridge only reads swap files there.
@@ -80,6 +86,7 @@ const host = new Session({
   fingerprint, findFile: (file, dirs) => findFile(file, [...dirs, media]),
   log: (m) => { hostLogs.push(m); say(`host    ${m}`); },
   ...(FORCE ? { forceTier: FORCE } : {}),
+  userBusy: () => mouse.held,
 });
 
 // --- member: fake bridge ----------------------------------------------------------
@@ -118,8 +125,8 @@ await waitFor("bridge connected", () => hostBridge.connected, 120_000);
 await waitFor("member joined", () => memberLogs.some((l) => l.startsWith("joined the session")));
 
 say("STEP 1  member imports three clips into the media pool");
-const pool = Object.fromEntries(["spare.mp4", "alt.mp4", "original.mp4"].map((n) => [n, fake.importClip(join(media, n)).id]));
-await waitFor("clips in Resolve's media pool", () => ["spare.mp4", "alt.mp4", "original.mp4"].every((n) => [...host.sync.local.clips.values()].some((c) => c.name === n)));
+const pool = Object.fromEntries(CLIPS.map((n) => [n, fake.importClip(join(media, n)).id]));
+await waitFor("clips in Resolve's media pool", () => CLIPS.every((n) => [...host.sync.local.clips.values()].some((c) => c.name === n)));
 
 say("STEP 2  member makes timeline RC M4 Edit with two clips (video + linked audio)");
 const edit = ft.addTimeline("RC M4 Edit");
@@ -167,6 +174,48 @@ await waitFor("transition in Resolve", () => resolveKind("transition").length ==
 say("STEP 7  member fades in alt.mp4 over 10 frames");
 memberItem("alt.mp4")!.fadeIn = 10;
 await waitFor("fade in Resolve", () => resolveItem("alt.mp4")?.fadeIn === 10);
+
+// Resolve counts a clip's source in its own frames, and trims in the
+// timeline's: a 30 fps clip on this 24 fps timeline must still come out right.
+say("STEP 7b member adds a 30 fps clip (48 frames from frame 24), then trims it to 36");
+const thirty = ft.addClip(edit, pool["fps30.mp4"]!, "fps30.mp4", 900, 48);
+thirty.srcStart = 24;
+ft.itemByName(edit, "fps30.mp4", "audio")!.srcStart = 24;
+await waitFor("30 fps clip in Resolve at its length", () => {
+  const c = resolveItem("fps30.mp4");
+  return c?.start === 900 && c.duration === 48 && c.srcStart === 24 && resolveItem("fps30.mp4", "audio")?.duration === 48;
+}, 30_000);
+memberItem("fps30.mp4")!.duration = 36;
+memberItem("fps30.mp4", "audio")!.duration = 36;
+await waitFor("30 fps clip trimmed in Resolve", () =>
+  resolveItem("fps30.mp4")?.duration === 36 && resolveItem("fps30.mp4")?.srcStart === 24 && resolveItem("fps30.mp4", "audio")?.duration === 36);
+
+// What crashed Resolve in the two-PC test: a clip held mid-drag over the
+// timeline while another PC's edits arrived.
+if (DRAG) {
+  say("STEP 7c In Resolve: drag original.mp4 from the media pool onto Video 1 after the last clip, HOLD it there about 5 s, then drop it.");
+  say("        Meanwhile the member keeps moving alt.mp4 and changing its colour.");
+  const colours = ["Blue", "Pink", "Teal"];
+  let n = 0;
+  const altItem = memberItem("alt.mp4")!;
+  const altAudio = memberItem("alt.mp4", "audio")!;
+  const nudge = setInterval(() => {
+    n++;
+    altItem.color = colours[n % colours.length]!;
+    altItem.start = altAudio.start = n % 2 ? 160 : 150;
+  }, 700);
+  let wasHeld = false;
+  const watchHeld = setInterval(() => { wasHeld ||= mouse.held; }, 50);
+  await waitFor("the member got the dropped clip", () => !!memberItem("original.mp4") && !mouse.held, byHand());
+  clearInterval(nudge);
+  clearInterval(watchHeld);
+  await waitFor("the mouse was seen held during the drag", () => wasHeld, 1000);
+  await waitFor("Resolve still answering, with the member's last move and colour", () =>
+    resolveItem("alt.mp4")?.start === altItem.start && resolveItem("alt.mp4")?.color === altItem.color, 30_000);
+  const dropped = resolveItem("original.mp4")!;
+  await waitFor("the dropped clip's place and length on the member", () =>
+    memberItem("original.mp4")?.start === dropped.start && memberItem("original.mp4")?.duration === dropped.duration, 10_000);
+}
 
 if (!AUTO) {
   say("STEP 8  In Resolve: on the RC M4 Edit timeline, set the clip colour of spare.mp4 to Green");
@@ -227,6 +276,7 @@ if (errors.length) say(`log lines to look at:\n  ${errors.join("\n  ")}`);
 say(failures ? `${failures} check(s) FAILED` : "all checks passed");
 
 host.stop();
+mouse.stop();
 hostBridge.stop();
 member.stop();
 memberBridge.stop();

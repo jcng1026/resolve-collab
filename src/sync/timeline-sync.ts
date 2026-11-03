@@ -47,6 +47,9 @@ export interface TimelineSyncOptions {
   // Tier 3: replace this PC's copy of a timeline with a peer's (SPEC §20.6).
   // Resolves to true when the swap was made.
   swap?: (timeline: string, local: string) => Promise<boolean>;
+  // True while the user holds the mouse button: they may be dragging in
+  // Resolve, so nothing is compared or applied (SPEC §20.5).
+  userBusy?: () => boolean;
 }
 
 interface Pending {
@@ -56,9 +59,12 @@ interface Pending {
 }
 
 const PENDING_EXPIRE_MS = 10_000;
-// Items waiting for their media pool clip are retried this often: the clip
-// may be imported by a command, which the bridge doesn't report as an event.
-const MEDIA_RETRY_MS = 1000;
+// Items waiting for their media pool clip, or for the user to finish an edit
+// in Resolve, are retried this often: the clip may be imported by a command,
+// which the bridge doesn't report as an event.
+const RETRY_MS = 1000;
+// Errors that only mean "not now": no rebuild, no warning.
+const TRANSIENT = new Set(["not-current", "user-editing"]);
 
 type Command = { type: string } & Record<string, JsonValue>;
 
@@ -83,11 +89,16 @@ export class TimelineSync {
   private readonly warned = new Set<string>();
   private readonly waiting = new Set<string>(); // timelines with changes waiting to be opened
   private readonly failures = new Set<string>(); // failed commands already logged
+  // Items that couldn't be added, by collab ID, with the session value tried.
+  // They aren't tried again until that value changes, so a failing add can't
+  // pile up copies in Resolve.
+  private readonly gaveUp = new Map<string, string>();
   private running = false;
   private again = false;
   private timer: NodeJS.Timeout | undefined;
   private retry: NodeJS.Timeout | undefined;
-  private waitingForMedia = false;
+  private retrySoon = false;
+  private lastError: JsonValue | undefined; // of the last command run
   private readonly options: TimelineSyncOptions;
 
   constructor(options: TimelineSyncOptions) {
@@ -214,6 +225,7 @@ export class TimelineSync {
 
   private async passOnce(): Promise<void> {
     if (!this.session || !this.listed || !this.options.media.ready) return;
+    if (this.options.userBusy?.()) return this.retryLater();
     // Another project's timelines are never compared: switching projects
     // must not look like deleting every timeline (SPEC §9.2). The timeline
     // list can report the switch before the media pool does.
@@ -292,16 +304,19 @@ export class TimelineSync {
     this.catchUp = false;
 
     for (const op of propose) this.sendProposal(op);
+    this.retrySoon = false;
     for (const op of keep) await this.applyOp(op, session, timeline);
-    this.waitingForMedia = false;
     await this.applyBatch(apply, session, timeline);
     this.save();
-    if (this.waitingForMedia && !this.retry) {
-      this.retry = setTimeout(() => {
-        this.retry = undefined;
-        this.schedule();
-      }, MEDIA_RETRY_MS);
-    }
+    if (this.retrySoon) this.retryLater();
+  }
+
+  private retryLater(): void {
+    if (this.retry) return;
+    this.retry = setTimeout(() => {
+      this.retry = undefined;
+      this.schedule();
+    }, RETRY_MS);
   }
 
   private warnUnsupported(unsupported: LocalItem[], model: Timelines): void {
@@ -458,7 +473,7 @@ export class TimelineSync {
         if (!command) return this.rebuild(item, local, localTimeline, timeline!);
         const result = await this.run(key, command);
         if (result.ok) return true;
-        if (result.error === "not-current") return false;
+        if (TRANSIENT.has(String(result.error))) return false;
         return this.rebuild(item, local, localTimeline, timeline!);
       }
       case "item.delete": {
@@ -512,25 +527,38 @@ export class TimelineSync {
   private async addItem(item: Item, localTimeline: string, timeline: string): Promise<boolean> {
     const command = this.addCommand(item, localTimeline, timeline);
     if ("error" in command) {
-      if (command.error === "media-missing") this.waitingForMedia = true;
+      if (command.error === "media-missing") this.retrySoon = true;
       if (command.error === "media-missing" && !this.warned.has(`media:${item.id}`)) {
         this.warned.add(`media:${item.id}`);
         this.options.log(`"${item.name}" is waiting for its media before it can be added to the timeline`);
       }
       return false;
     }
+    const tried = JSON.stringify(item);
+    if (this.gaveUp.get(item.id) === tried) return false;
     const result = await this.run(itemKey("item", item.id), command);
-    if (result.ok && typeof result.id === "string") this.itemMap.set(result.id, item.id);
+    if (result.ok && typeof result.id === "string") {
+      this.itemMap.set(result.id, item.id);
+      this.gaveUp.delete(item.id);
+    } else if (!result.ok && !TRANSIENT.has(String(result.error))) {
+      this.gaveUp.set(item.id, tried);
+    }
     return result.ok;
   }
 
   // Tier 2 (SPEC §20.6): delete the item and add it again with every value.
   private async rebuild(item: Item, local: string, localTimeline: string, timeline: string): Promise<boolean> {
+    if (this.gaveUp.get(item.id) === JSON.stringify(item)) return false;
     const deleted = await this.run(itemKey("item", item.id), { type: "item.delete", timeline: localTimeline, id: local });
+    if (TRANSIENT.has(String(deleted.error))) return false;
     if (!deleted.ok) return this.escalate(timeline, `couldn't rebuild "${item.name}"`);
     this.itemMap.delete(local);
     this.items.delete(local);
     if (await this.addItem(item, localTimeline, timeline)) return true;
+    // It's gone from Resolve now: in the base too, so the next pass sees an
+    // item still to add rather than one this PC deleted.
+    if (this.base) applyTimelineOp(this.base, { type: "item.delete", id: item.id });
+    if (TRANSIENT.has(String(this.lastError))) return false;
     return this.escalate(timeline, `couldn't rebuild "${item.name}"`);
   }
 
@@ -593,6 +621,10 @@ export class TimelineSync {
 
   private async run(key: string, command: Command): Promise<BridgeResult> {
     if (command.type === "noop") return { ok: true };
+    if (this.options.userBusy?.()) {
+      this.retrySoon = true;
+      return { ok: false, error: "user-editing" };
+    }
     this.busy.add(key);
     try {
       const result = await this.options.send(command);
@@ -607,8 +639,11 @@ export class TimelineSync {
       if (tracks && typeof tracks === "object" && tracks.timeline === this.current) {
         this.tracks = { video: (tracks.video ?? []) as unknown as LocalTrack[], audio: (tracks.audio ?? []) as unknown as LocalTrack[] };
       }
+      this.lastError = result.ok ? undefined : result.error;
+      // The user is still changing the timeline in Resolve: try again shortly.
+      if (result.error === "user-editing") this.retrySoon = true;
       const failure = `${command.type}:${key}:${result.error}`;
-      if (!result.ok && result.error !== "not-current" && !this.failures.has(failure)) {
+      if (!result.ok && !TRANSIENT.has(String(result.error)) && !this.failures.has(failure)) {
         this.failures.add(failure);
         this.options.log(`Resolve couldn't ${command.type} for ${key.split(":")[0]} ${key.slice(-8)} (${result.error})`);
       }

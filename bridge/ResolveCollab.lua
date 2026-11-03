@@ -628,6 +628,12 @@ for _, k in ipairs({ "AnchorPointX", "AnchorPointY", "CompositeEnabled", "Compos
 local tlListSig, tlCurrent, tlTracksSig = nil, nil, nil
 local tlItems, tlOrder, tlCursor = {}, {}, 1 -- current timeline: uid → { obj, light, sig }
 local tlSettings = {} -- timeline uid → { at, fps, width, height }
+local SETTLE = 1.0 -- seconds the user's timeline edits must be still before they're reported
+local tlLastChange, tlHeld, tlHeldGone, tlHeldTracks = 0, {}, {}, false
+-- Items this bridge's own commands just changed (and their linked items):
+-- their changes are reported like any other but aren't the user editing.
+local OWN = 2.0
+local tlOwn = {}
 
 local function project() return pm:GetCurrentProject() end
 
@@ -730,12 +736,20 @@ end
 local function keepItem(tl, item, kind, index)
   local rec = itemRecord(tl, item, kind, index)
   local light = rec.start .. ":" .. rec.duration .. ":" .. kind .. index
-  tlItems[rec.id] = { obj = item, light = light, sig = M.jencode(rec), kind = kind, index = index }
+  local sig = M.jencode(rec)
+  tlItems[rec.id] = { obj = item, light = light, sig = sig, seen = sig, kind = kind, index = index }
+  tlHeld[rec.id] = nil
   return rec
 end
 
 -- Like the media pool scan: held back, and dropped if the project changed
 -- during the scan.
+--
+-- The user's own changes are reported once the timeline has been still for
+-- SETTLE seconds: a clip being dragged already shows on the timeline before
+-- it is dropped, and reporting (and then editing around) that half-made
+-- change crashed Resolve. Until then, commands that edit the open timeline
+-- answer "user-editing" and the companion tries again shortly.
 local function scanTimelines(full)
   local p0 = project()
   local before = p0 and p0:GetUniqueId() or ""
@@ -764,13 +778,17 @@ local function scanTimelines(full)
   local id = tl:GetUniqueId()
   if id ~= tlCurrent or full then
     tlCurrent, tlTracksSig, tlItems, tlOrder, tlCursor, full = id, nil, {}, {}, 1, true
+    tlHeld, tlHeldGone, tlHeldTracks = {}, {}, false
     found({ type = "tl.reset", timeline = id })
   end
+  local now = bmd.gettime()
+  local changed = false
+  local function mine(uid) return tlOwn[uid] and now - tlOwn[uid] < OWN end
   local tracks = trackRecord(tl)
   local tsig = M.jencode(tracks)
   if tsig ~= tlTracksSig then
     tlTracksSig = tsig
-    found(tracks)
+    if full then found(tracks) else tlHeldTracks, changed = true, true end
   end
   local base = tl:GetStartFrame()
   local seen, order = {}, {}
@@ -780,11 +798,15 @@ local function scanTimelines(full)
         local uid = item:GetUniqueId()
         local light = (item:GetStart() - base) .. ":" .. item:GetDuration() .. ":" .. kind .. index
         local known = tlItems[uid]
-        if not known or known.light ~= light then
+        if full and (not known or known.light ~= light) then
           local rec = itemRecord(tl, item, kind, index)
           local s = M.jencode(rec)
           if not known or known.sig ~= s then found(rec) end
-          tlItems[uid] = { obj = item, light = light, sig = s, kind = kind, index = index }
+          tlItems[uid] = { obj = item, light = light, sig = s, seen = s, kind = kind, index = index }
+        elseif not known or known.light ~= light then
+          tlItems[uid] = { obj = item, light = light, sig = known and known.sig or "", kind = kind, index = index }
+          tlHeld[uid], tlHeldGone[uid] = true, nil
+          if not mine(uid) then changed = true end
         else
           known.obj = item
         end
@@ -795,22 +817,56 @@ local function scanTimelines(full)
   end
   for uid in pairs(tlItems) do
     if not seen[uid] then
-      tlItems[uid] = nil
-      found({ type = "tl.gone", timeline = id, id = uid })
+      tlItems[uid], tlHeld[uid] = nil, nil
+      if full then found({ type = "tl.gone", timeline = id, id = uid })
+      else
+        tlHeldGone[uid] = true
+        if not mine(uid) then changed = true end
+      end
     end
+  end
+  -- What our own commands changed is read again now rather than waiting for
+  -- its turn below, which would count it as the user's.
+  for uid, at in pairs(tlOwn) do
+    local k = tlItems[uid]
+    if k and not tlHeld[uid] and now - at < OWN then
+      local s = M.jencode(itemRecord(tl, k.obj, k.kind, k.index))
+      if s ~= (k.seen or k.sig) then k.seen, tlHeld[uid] = s, true end
+    end
+    if now - at >= OWN or k then tlOwn[uid] = nil end
   end
   -- Names, colours, properties, fades and text: a rotating share of items.
   tlOrder = order
   for _ = 1, math.min(TL_BUDGET, #tlOrder) do
     if tlCursor > #tlOrder then tlCursor = 1 end
-    local k = tlItems[tlOrder[tlCursor]]
+    local uid = tlOrder[tlCursor]
+    local k = tlItems[uid]
     tlCursor = tlCursor + 1
-    local rec = itemRecord(tl, k.obj, k.kind, k.index)
-    local s = M.jencode(rec)
-    if s ~= k.sig then
-      k.sig = s
-      found(rec)
+    if not tlHeld[uid] then
+      local s = M.jencode(itemRecord(tl, k.obj, k.kind, k.index))
+      if s ~= (k.seen or k.sig) then
+        k.seen = s
+        tlHeld[uid], changed = true, true
+      end
     end
+  end
+  if changed then tlLastChange = now end
+  if not full and now - tlLastChange >= SETTLE then
+    if tlHeldTracks then found(tracks) end
+    for uid in pairs(tlHeldGone) do found({ type = "tl.gone", timeline = id, id = uid }) end
+    for uid in pairs(tlHeld) do
+      local k = tlItems[uid]
+      if k then
+        local rec = itemRecord(tl, k.obj, k.kind, k.index)
+        local s = M.jencode(rec)
+        k.seen = s
+        if s ~= k.sig then
+          k.sig = s
+          found(rec)
+        end
+      end
+    end
+    tlHeld, tlHeldGone, tlHeldTracks = {}, {}, false
   end
   if full then found({ type = "tl.synced", timeline = id }) end
   flush()
@@ -823,12 +879,33 @@ local function currentFor(cmd)
   local tl = p and p:GetCurrentTimeline()
   if not tl then return nil, "no-timeline" end
   if tl:GetUniqueId() ~= cmd.timeline then return nil, "not-current" end
+  -- Never edit the timeline while the user's own change is still moving.
+  if bmd.gettime() - tlLastChange < SETTLE then return nil, "user-editing" end
   return tl
 end
 
+-- An item Resolve has removed since the last scan reads as nil.
 local function itemOf(id)
   local k = type(id) == "string" and tlItems[id]
-  return k and k.obj
+  if not k then return nil end
+  local ok, start = pcall(function() return k.obj:GetStart() end)
+  if not ok or start == nil then
+    tlItems[id] = nil
+    return nil
+  end
+  return k.obj
+end
+
+-- True if anything but a transition sits in [start, start + duration).
+local function occupied(tl, kind, index, start, duration)
+  local base = tl:GetStartFrame()
+  for _, it in ipairs(tl:GetItemListInTrack(kind, index) or {}) do
+    if it:GetType() ~= "transition" then
+      local s = it:GetStart() - base
+      if s < start + duration and start < s + it:GetDuration() then return true end
+    end
+  end
+  return false
 end
 
 -- Files for timeline swaps live under the ResolveCollab folder only.
@@ -1044,16 +1121,26 @@ handlers["item.add"] = function(cmd)
   local start, duration = tonumber(cmd.start), tonumber(cmd.duration)
   if not start or not duration or duration < 1 then return { ok = false, error = "bad-range" } end
   local base = tl:GetStartFrame()
+  -- Adding onto occupied space is never right here (and adding onto a clip
+  -- the user was dragging crashed Resolve).
+  if cmd.kind ~= "transition" and occupied(tl, kind, index, start, duration) then return { ok = false, error = "occupied" } end
   local item
   if cmd.kind == "clip" then
     local mpi = clipOf(cmd.media)
     if not mpi then return { ok = false, error = "media-missing" } end
+    -- Offsets and lengths are in timeline frames; AppendToTimeline takes
+    -- source frames, which differ when the clip's frame rate does.
+    local ratio = (tonumber(mpi:GetClipProperty("FPS")) or settingsOf(tl).fps) / settingsOf(tl).fps
     local src = tonumber(cmd.srcStart) or 0
     local items = withPlayhead(tl, function()
-      return mediaPool():AppendToTimeline({ { mediaPoolItem = mpi, startFrame = src, endFrame = src + duration,
-        mediaType = kind == "video" and 1 or 2, trackIndex = index, recordFrame = base + start } })
+      return mediaPool():AppendToTimeline({ { mediaPoolItem = mpi, startFrame = math.floor(src * ratio + 0.5),
+        endFrame = math.floor((src + duration) * ratio + 0.5), mediaType = kind == "video" and 1 or 2, trackIndex = index, recordFrame = base + start } })
     end) or {}
     item = items[1]
+    -- Rounding between frame rates can leave it a frame off.
+    if item and item:GetDuration() ~= duration and item:GetRightOffset() ~= nil then
+      item:SetRightOffset(item:GetRightOffset() + item:GetDuration() - duration)
+    end
   elseif cmd.kind == "transition" then
     local edge = type(cmd.edge) == "table" and itemOf(cmd.edge.item)
     if not edge then return { ok = false, error = "edge-missing" } end
@@ -1069,9 +1156,12 @@ handlers["item.add"] = function(cmd)
   if not item then return { ok = false, error = "add-failed" } end
   if cmd.kind ~= "transition" then setCommon(item, cmd) end
   local rec = keepItem(tl, item, kind, index)
-  -- Read back: an append never overwrites, so a taken space shows up here.
+  -- Read back. What came out wrong is removed again, so a retry can't pile
+  -- up copies.
   if cmd.kind ~= "transition" and (rec.start ~= start or rec.duration ~= duration) then
-    return { ok = false, error = "readback", id = rec.id, records = { rec } }
+    tl:DeleteClips({ item }, false)
+    tlItems[rec.id] = nil
+    return { ok = false, error = "readback", detail = rec.start .. "+" .. rec.duration }
   end
   return { ok = true, id = rec.id, records = { rec } }
 end
@@ -1091,9 +1181,8 @@ handlers["item.set"] = function(cmd)
   if cmd.duration ~= nil and item:GetDuration() ~= tonumber(cmd.duration) then
     local right = item:GetRightOffset()
     if right == nil then return { ok = false, error = "cannot-trim" } end
-    local speed = item:GetSpeed()
-    local factor = (type(speed) == "table" and speed.Percentage or 100) / 100
-    item:SetRightOffset(right + (item:GetDuration() - tonumber(cmd.duration)) * factor)
+    -- Offsets are in timeline frames, at whatever speed the clip plays.
+    item:SetRightOffset(right + item:GetDuration() - tonumber(cmd.duration))
   end
   if cmd.start ~= nil or cmd.trackIndex ~= nil then
     local target = { startFrame = base + (tonumber(cmd.start) or (item:GetStart() - base)), trackIndex = index }
@@ -1165,11 +1254,39 @@ function handlers.stop()
   return { ok = true, stopping = true }
 end
 
+-- Marks the items a timeline command touches, and the items linked to
+-- them, as changed by us (see tlOwn).
+local function markOwn(ids)
+  local now = bmd.gettime()
+  for _, uid in ipairs(ids) do
+    if type(uid) == "string" then
+      tlOwn[uid] = now
+      local k = tlItems[uid]
+      local ok, linked = pcall(function() return k and k.obj:GetLinkedItems() end)
+      for _, l in ipairs(ok and linked or {}) do tlOwn[l:GetUniqueId()] = now end
+    end
+  end
+end
+
+local function touched(message, result)
+  local ids = { message.id }
+  for _, id in ipairs(type(message.ids) == "table" and message.ids or {}) do ids[#ids + 1] = id end
+  if type(message.edge) == "table" then ids[#ids + 1] = message.edge.item end
+  for _, rec in ipairs(type(result) == "table" and type(result.records) == "table" and result.records or {}) do
+    ids[#ids + 1] = rec.id
+    for _, l in ipairs(rec.linked or {}) do ids[#ids + 1] = l end
+  end
+  return ids
+end
+
 local function handle(message)
   local handler = type(message) == "table" and handlers[message.type]
   if not handler then return { ok = false, error = "unknown-command" } end
+  local edits = type(message.type) == "string" and message.type:match("^item%.") ~= nil
+  if edits then markOwn(touched(message)) end -- before: a delete takes the links with it
   local ok, result = pcall(handler, message)
   if not ok then return { ok = false, error = "exception", detail = tostring(result) } end
+  if edits then markOwn(touched(message, result)) end
   return result
 end
 

@@ -35,9 +35,9 @@ function ffmpeg(args: string[]): void {
 }
 
 // 10 s, 24 fps, H.264 + AAC: a realistic stand-in for camera footage.
-function testClip(out: string, video: string, toneHz: number): void {
+function testClip(out: string, video: string, toneHz: number, rate = 24): void {
   ffmpeg([
-    "-f", "lavfi", "-i", `${video}=size=1920x1080:rate=24:duration=10`,
+    "-f", "lavfi", "-i", `${video}=size=1920x1080:rate=${rate}:duration=10`,
     "-f", "lavfi", "-i", `sine=frequency=${toneHz}:sample_rate=48000:duration=10`,
     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
     "-c:a", "aac", "-shortest", out,
@@ -52,6 +52,7 @@ if (!installOnly) {
   testClip(join(MEDIA, "original.mp4"), "testsrc2", 440);
   testClip(join(MEDIA, "spare.mp4"), "smptehdbars", 660);
   testClip(join(MEDIA, "alt.mp4"), "rgbtestsrc", 880);
+  testClip(join(MEDIA, "fps30.mp4"), "testsrc", 330, 30); // a frame rate other than the timeline's
   ffmpeg(["-i", join(MEDIA, "original.mp4"), "-vf", "scale=960:540", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", join(MEDIA, "proxy.mp4")]);
   copyFileSync(join(MEDIA, "spare.mp4"), join(MEDIA, "moved", "spare.mp4"));
 

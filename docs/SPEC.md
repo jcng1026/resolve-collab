@@ -562,16 +562,20 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
   - The timeline list, with its project's ID, every 0.3 s.
   - Only the current timeline can be edited by the user, so only its tracks and items are scanned. Positions of every item every scan (~0.5 ms per item); full records for new or moved items and a rotating share of the rest (like §19.4).
   - Switching timelines reports the new one in full: `tl.reset`, tracks, items, `tl.synced`.
+  - **The user's changes are reported once they have been still for 1 s.** While the user drags a clip, Resolve shows it to scripts as an item. Editing around it crashed Resolve in the two-PC test (2026-11-03). Changed, new and gone items and track changes are held back until nothing has changed for 1 s. Changes made by the bridge's own commands (to the items they touch and the items linked to them) are reported the same way but don't count as the user editing. A drag held still for longer is caught by the companion's mouse check (§20.5).
   - **Both the media pool scan and the timeline scan hold their findings back**, and drop them if the project changed during the scan. Resolve keeps the bridge running while it loads another project; once, a pool walk read the other project, and its bins were reported as new and this project's clips as deleted.
 - **Commands**, each reading the result back:
+  - Commands that edit the open timeline answer `user-editing` while the user's own changes are less than 1 s old, and change nothing.
   - `tl.create/link/set/delete/export/swap`. A created timeline becomes current in Resolve, so the bridge puts the user's timeline back.
   - `track.add/set/delete`. Each returns the new track list, since the bridge doesn't report its own changes as events.
   - `item.add`:
-    - clips: `AppendToTimeline` with `recordFrame`, `trackIndex`, `startFrame`/`endFrame` and `mediaType`;
+    - nothing (other than a transition) is ever added onto occupied space: the answer is `occupied`;
+    - clips: `AppendToTimeline` with `recordFrame`, `trackIndex`, `startFrame`/`endFrame` and `mediaType`. **`startFrame`/`endFrame` count the clip's own frames**, while item offsets and lengths count the timeline's, so they're converted by the clip's FPS over the timeline's; a frame lost to rounding is trimmed back;
+    - an add that reads back wrong is deleted again and answers `readback`, so retries can't pile up copies;
     - titles and generators: save the user's In/Out marks, mark the length past the end of the timeline, insert, restore the marks, then move into place;
     - Text+: also sets its Fusion inputs;
     - transitions: `AddTransition` on the edge item, trying the categories in turn.
-  - `item.set` (source start, length, position and track, properties, speed, fades, enabled, colour, name, text). A basic title or generator can't be trimmed, so a length change answers `cannot-trim` and is rebuilt (tier 2).
+  - `item.set` (source start, length, position and track, properties, speed, fades, enabled, colour, name, text). Trims are in timeline frames, whatever the clip's speed. A basic title or generator can't be trimmed, so a length change answers `cannot-trim` and is rebuilt (tier 2).
   - `item.delete`, `item.link`.
 - **The playhead is put back** after every append and insert.
 - `HELLO` carries `handled` (0): a bridge started again counts inbox messages from its own start, and the companion follows (§18.1).
@@ -589,6 +593,7 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
   - removing one while the bridge is off is undone at the next start;
   - a PC that opens or renders the project without the bridge has no API-set fades.
 - **Media:** a clip whose media pool clip isn't linked yet is retried every second; one whose file is missing waits on the missing list (§19.6).
+- **Nothing is compared or sent to Resolve while the left mouse button is held** (anywhere), then for 1 s after the bridge last saw a change (§20.4). A clip being dragged onto the timeline is already a real item to scripts, with the ID it keeps after the drop, and it has already overwritten what lies under it; nothing in the API tells it apart. Resolve's Lua has no `ffi`, so the companion reads that one button's state through a small PowerShell process (`GetAsyncKeyState`). Where that can't run, it says so and relies on the 1 s wait.
 - **Warnings**, each shown once per item: basic title words not synced; generator settings not synced; items of unsupported kinds not synced.
 - **Timeline delete:**
   - when the bridge sees a local timeline deletion, the companion asks the deleter in the terminal: "Delete '<name>' for everyone?";
@@ -598,6 +603,8 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
 ### 20.6 Apply tiers (§3.5)
 - **Tier 1 (direct)** is always tried first. A command that fails or reads back wrong moves to tier 2. A change of media or of a transition's edge goes straight to tier 2.
 - **Tier 2 (rebuild):** delete the item, add it again with every value from the session (by `item.add` rules), and map the new local ID to the same collab ID. If that fails, go to tier 3.
+- **`not-current` and `user-editing` only mean "not now":** no rebuild, no warning; the change is tried again a second later.
+- **A failed add is tried once per session value.** It's tried again only when someone changes that item, so a failing add or rebuild can't loop. An item a failed rebuild removed counts as still to add, never as deleted on this PC.
 - **Tier 3 (timeline swap):**
   1. this PC asks the peer that last changed the timeline (who has it open and up to date) for a `.drt` export of it, sent in chunks over the peer link (at most 200 chunks of 256 KB);
   2. the bridge imports it, deletes the old timeline, gives the copy its name and `rcId`, and keeps the user's current timeline and playhead;
@@ -637,6 +644,9 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
     - the bridge's export and swap;
     - a final comparison.
   - With `--force-tier 2` (automatic steps): all checks passed.
+  - **Rerun after the two-PC crash fix, 2026-11-03** (projects "RC M4 Check 8" to "12"): all checks passed, at tier 1 and forced tier 2. New steps:
+    - 7b: a 30 fps clip on the 24 fps timeline, added from frame 24 and trimmed;
+    - 7c (`--drag`, and in the full run): a clip held mid-drag over the timeline for 5 s while the member keeps moving and recolouring another clip. Resolve didn't crash, nothing was applied while the button was held, and both sides matched afterwards.
   - Bugs it found, all fixed:
     - a scan read the other project during a switch (M3 media pool bug: this project's clips were deleted);
     - a project switch looked like deleting every timeline;

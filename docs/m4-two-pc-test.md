@@ -10,7 +10,7 @@ Checks SPEC §16/§20: timelines sync both ways, live and after time offline, in
    node tools/install-bridge.ts
    ```
    (On PC 2 use `npm.cmd` if PowerShell blocks `npm`.)
-2. Use the same video files A and B as for M3 (identical copies in Downloads or Videos on both PCs).
+2. Use the same video files A and B as for M3 (identical copies in Downloads or Videos on both PCs). If one of them has a different frame rate from the timeline (for example a 30 fps phone clip on a 24 fps timeline), even better.
 3. In Resolve on each PC, make a **new empty project** (File → New Project). Don't use a project you care about.
 4. Start the bridge: **Workspace → Scripts → ResolveCollab**. If it was already running, start it again; the new run takes over.
 
@@ -23,6 +23,7 @@ Checks SPEC §16/§20: timelines sync both ways, live and after time offline, in
    - import A and B into the media pool;
    - make a timeline called `Edit` (File → New Timeline);
    - drag A onto it, then B after it.
+   - while dragging B, hold it over the timeline for about 5 seconds before letting go (this crashed Resolve before the fix). Nothing should reach PC 2 until you let go.
 
    Within a few seconds PC 2 has a timeline `Edit` with A and B at the same places, video and audio linked. If PC 2 already had another timeline open, its companion says the changes will be applied when you open `Edit`: open it.
 
@@ -81,4 +82,5 @@ Send me both companions' output if anything fails.
 - Fades are put back only while the bridge runs. A PC that opens or renders the project without ResolveCollab running won't have fades made on other PCs.
 - When two people change the same thing at the same moment, the later change wins and the overwritten person sees a notice (first-to-host-wins with undo is M7).
 - A track inserted between two others can't be synced (Resolve can't do it by script, and replacing the whole timeline with another PC's file was switched off for safety). The other PC's companion says so; add the track there by hand, or add new tracks at the top.
+- Timeline changes from other PCs wait while you hold the left mouse button (anywhere, in any app) and for 1 s after your last timeline edit, so they never land in the middle of a drag.
 - Anyone with the invite code can join (host approval is M6).

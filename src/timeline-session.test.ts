@@ -28,6 +28,7 @@ interface Pc {
   session?: Session;
   logs: string[];
   forceTier?: 2 | 3;
+  busy?: boolean; // the user holds the mouse button
 }
 
 async function waitFor(what: string, check: () => boolean, ms = 15_000): Promise<void> {
@@ -63,6 +64,7 @@ async function connect(pc: Pc, role: "host" | "member", code: string): Promise<v
     findFile: (file, dirs) => findFile(file, [...dirs, pc.media]),
     log: (m) => pc.logs.push(m),
     ...(pc.forceTier ? { forceTier: pc.forceTier } : {}),
+    userBusy: () => !!pc.busy,
   });
   pc.bridge.start();
   pc.fake.start();
@@ -246,4 +248,79 @@ describe("forced tiers", () => {
     await new Promise((r) => setTimeout(r, 500));
     expect(clip(host, "d.mp4")!.start).toBe(120);
   }, 40_000);
+});
+
+describe("the user editing in Resolve, and adds that fail", () => {
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const count = (pc: Pc, type: string) => pc.fake.commands.filter((c) => c.type === type).length;
+
+  it("waits while the user is mid-edit, without rebuilding, then applies", async () => {
+    const host = makePc("edithost");
+    const member = makePc("editmember", 2); // tier 2: a move is a rebuild, which must wait too
+    const code = newInviteCode();
+    const media = footage(host, [member], "f.mp4");
+    host.fake.timelines.addClip(host.fake.timelines.addTimeline("Edit"), media, "f.mp4", 0, 48);
+    await connect(host, "host", code);
+    await connect(member, "member", code);
+    await waitFor("f.mp4 on member", () => !!clip(member, "f.mp4"));
+    const before = clip(member, "f.mp4")!.id;
+    member.fake.timelines.editing = true;
+    clip(host, "f.mp4")!.start = 96;
+    await sleep(1500);
+    expect(clip(member, "f.mp4")!.start).toBe(0);
+    expect(count(member, "item.delete")).toBeGreaterThan(0); // it did try
+    expect(clip(member, "f.mp4")!.id).toBe(before); // asked, refused, nothing removed
+    expect(member.logs.some((l) => l.includes("couldn't"))).toBe(false);
+    member.fake.timelines.editing = false;
+    await waitFor("moved on member", () => clip(member, "f.mp4")?.start === 96);
+  }, 30_000);
+
+  it("sends Resolve nothing while the mouse button is held, then applies", async () => {
+    const host = makePc("mousehost");
+    const member = makePc("mousemember");
+    const code = newInviteCode();
+    const media = footage(host, [member], "h.mp4");
+    host.fake.timelines.addClip(host.fake.timelines.addTimeline("Edit"), media, "h.mp4", 0, 48);
+    await connect(host, "host", code);
+    await connect(member, "member", code);
+    await waitFor("h.mp4 on member", () => !!clip(member, "h.mp4"));
+    await sleep(500);
+    member.busy = true;
+    const sent = member.fake.commands.filter((c) => /^(item|track|tl)\./.test(String(c.type))).length;
+    clip(host, "h.mp4")!.start = 96;
+    await sleep(1500);
+    expect(clip(member, "h.mp4")!.start).toBe(0);
+    expect(member.fake.commands.filter((c) => /^(item|track|tl)\./.test(String(c.type))).length).toBe(sent);
+    member.busy = false;
+    await waitFor("moved on member", () => clip(member, "h.mp4")?.start === 96);
+  }, 30_000);
+
+  it("tries a failing add once, not over and over, and again when the item changes", async () => {
+    const host = makePc("failhost");
+    const member = makePc("failmember", 2);
+    const code = newInviteCode();
+    const media = footage(host, [member], "g.mp4");
+    const edit = host.fake.timelines.addTimeline("Edit");
+    host.fake.timelines.addClip(edit, media, "g.mp4", 0, 48);
+    await connect(host, "host", code);
+    await connect(member, "member", code);
+    await waitFor("g.mp4 on member", () => !!clip(member, "g.mp4"));
+    member.fake.timelines.failing.add("item.add");
+    // A move is a rebuild at tier 2: the delete works, the add fails.
+    clip(host, "g.mp4")!.start = 96;
+    await waitFor("the member tried", () => count(member, "item.add") > 2);
+    await sleep(1500);
+    const tries = count(member, "item.add");
+    // Other changes in Resolve start more passes; none tries the add again.
+    for (let i = 0; i < 10; i++) {
+      member.session!.timelines.schedule();
+      await sleep(150);
+    }
+    expect(count(member, "item.add")).toBe(tries);
+    // The item the rebuild removed isn't taken for a delete by this PC.
+    expect(clip(host, "g.mp4")).toBeDefined();
+    member.fake.timelines.failing.delete("item.add");
+    clip(host, "g.mp4")!.start = 120;
+    await waitFor("added on member once the item changed", () => clip(member, "g.mp4")?.start === 120);
+  }, 30_000);
 });

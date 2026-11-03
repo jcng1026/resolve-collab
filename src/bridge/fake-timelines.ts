@@ -64,6 +64,8 @@ export class FakeTimelines {
   current = "";
   // Command types made to fail, to exercise tiers 2 and 3.
   readonly failing = new Set<string>();
+  // The user is mid-edit in Resolve: edits to the current timeline are refused.
+  editing = false;
   private seen = new Map<string, string>();
   private reported = ""; // the timeline last fully reported
   private scans = 0;
@@ -248,6 +250,7 @@ export class FakeTimelines {
     }
     if (!t) return { ok: false, error: "unknown-timeline" };
     const current = t.id === this.current;
+    if (current && this.editing) return { ok: false, error: "user-editing" };
     switch (type) {
       case "track.add": {
         if (!current) return { ok: false, error: "not-current" };

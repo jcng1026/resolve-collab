@@ -35,6 +35,7 @@ export interface SessionOptions {
   findFile: (file: Fingerprint, dirs: string[]) => Promise<string | null>;
   log: (message: string) => void;
   forceTier?: 1 | 2 | 3;
+  userBusy?: () => boolean; // see TimelineSyncOptions
 }
 
 type Message = Record<string, JsonValue>;
@@ -100,6 +101,7 @@ export class Session {
       store: join(options.storeDir, `${role}-timelines.json`),
       ...(options.forceTier ? { forceTier: options.forceTier } : {}),
       swap: (timeline, local) => this.swap(timeline, local),
+      ...(options.userBusy ? { userBusy: options.userBusy } : {}),
     });
     if (this.host) this.reset(this.host.model);
 
