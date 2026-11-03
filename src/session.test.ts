@@ -58,6 +58,7 @@ async function connect(pc: Pc, role: "host" | "member", code: string, keepBridge
   pc.peers = new PeerLink(code, { bootstrap: testnet.bootstrap });
   pc.session = new Session({
     role, bridge: pc.bridge, peers: pc.peers, storeDir: join(pc.dir, "store"), backupsDir: join(pc.dir, "backups"),
+    confirm: async () => true,
     ask: async (conflicts) => {
       pc.questions.push(conflicts);
       return new Map(conflicts.map((c) => [c.key, pc.answer]));

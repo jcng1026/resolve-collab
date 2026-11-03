@@ -69,6 +69,7 @@ const host = new Session({
   role: "host", bridge: hostBridge, peers: hostPeers,
   storeDir: join(dir, "host-store"), backupsDir: join(home, "backups"),
   ask: async () => new Map(), // the host is never asked in this check
+  confirm: async () => true,
   fingerprint, findFile: (file, dirs) => findFile(file, [...dirs, media]),
   log: (m) => { hostLogs.push(m); say(`host    ${m}`); },
 });
@@ -82,6 +83,7 @@ const member = new Session({
   role: "member", bridge: memberBridge, peers: memberPeers,
   storeDir: join(dir, "member-store"), backupsDir: join(dir, "backups"),
   ask: async (conflicts) => new Map(conflicts.map((c) => [c.key, "theirs"])),
+  confirm: async () => true,
   fingerprint, findFile: (file, dirs) => findFile(file, [...dirs, media]),
   log: (m) => { memberLogs.push(m); say(`member  ${m}`); },
 });

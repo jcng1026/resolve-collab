@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { type JsonValue, decodeInbox, readyFolder } from "../bridge-protocol/wire.ts";
+import { FakeTimelines } from "./fake-timelines.ts";
 
 export interface FakeClip {
   timeline: string;
@@ -50,6 +51,7 @@ export class FakeBridge {
   readonly rootId = localId();
   readonly commands: Record<string, JsonValue>[] = [];
   project = { id: "fake-project", name: "Fake Project" };
+  readonly timelines = new FakeTimelines((id) => this.poolClips.has(id));
   private readonly seen = new Map<string, string>(); // "bin:<id>" → last reported encoding
   private lastHandled = 0;
   private timer: NodeJS.Timeout | undefined;
@@ -117,6 +119,7 @@ export class FakeBridge {
     this.emit("EVT", { type: "mp.reset", project: this.project });
     this.scan();
     this.emit("EVT", { type: "mp.synced", bins: this.bins.size, clips: this.poolClips.size, project: this.project });
+    this.timelines.scan((payload) => this.emit("EVT", payload), true);
   }
 
   private binRecord(bin: FakeBin): Record<string, JsonValue> {
@@ -151,6 +154,7 @@ export class FakeBridge {
       const [kind, id] = key.split(":");
       this.emit("EVT", { type: "mp.gone", kind: kind!, id: id! });
     }
+    this.timelines.scan((payload) => this.emit("EVT", payload));
   }
 
   private tick(): void {
@@ -175,6 +179,8 @@ export class FakeBridge {
   }
 
   private apply(command: Record<string, JsonValue>): Record<string, JsonValue> {
+    const timeline = this.timelines.apply(command);
+    if (timeline) return timeline;
     const c = command as Command;
     switch (command.type) {
       case "clip.append": {

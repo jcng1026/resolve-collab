@@ -1,5 +1,5 @@
-// ResolveCollab companion, M3 command line (SPEC §18, §19): connects the
-// local bridge to the session and keeps the media pool in sync.
+// ResolveCollab companion command line (SPEC §18–§20): connects the local
+// bridge to the session and keeps the media pool and timelines in sync.
 //
 //   node src/companion.ts host [--code <invite-code>]   start a session (or resume one with its code)
 //   node src/companion.ts join <invite-code>            join a session
@@ -8,12 +8,12 @@
 //   --inbox <dir>        bridge inbox (default: %USERPROFILE%\ResolveCollab\inbox)
 //   --log <file>         Resolve's ResolveDebug.txt (default: the standard location)
 //   --fake               use an in-process fake bridge instead of Resolve
-//   --fake-media <name>  media file name the fake bridge has (repeatable)
+//   --force-tier <2|3>   apply timeline changes by rebuilding items (2) or
+//                        swapping whole timelines (3), to test those paths
 //
 // Type while it runs:
 //   missing                    list clips whose media this PC lacks
 //   locate <clip> <path>       use your own copy of a missing clip's file
-//   add <media name> <start>   (--fake only) simulate a local timeline edit
 
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -38,7 +38,7 @@ const { positionals, values } = parseArgs({
     inbox: { type: "string" },
     log: { type: "string" },
     fake: { type: "boolean", default: false },
-    "fake-media": { type: "string", multiple: true, default: [] },
+    "force-tier": { type: "string" },
   },
 });
 
@@ -54,6 +54,12 @@ if (!/^[0-9a-f]{32}$/.test(inviteCode)) {
 }
 
 const log = (message: string) => console.log(`${new Date().toISOString().slice(11, 23)}  ${message}`);
+
+const forceTier = values["force-tier"] === undefined ? undefined : Number(values["force-tier"]);
+if (forceTier !== undefined && forceTier !== 2 && forceTier !== 3) {
+  console.error("--force-tier is 2 or 3");
+  process.exit(2);
+}
 
 let logPath = values.log ?? RESOLVE_LOG;
 let inboxDir = values.inbox ?? DEFAULT_INBOX;
@@ -110,6 +116,15 @@ async function ask(conflicts: Conflict[]): Promise<Map<string, Answer>> {
   return answers;
 }
 
+// A yes/no question (SPEC §20.5: deleting a timeline for everyone).
+async function confirm(question: string): Promise<boolean> {
+  for (;;) {
+    console.log(`  ${question}  y = yes, n = no`);
+    const line = (await nextLine()).trim().toLowerCase();
+    if (line === "y" || line === "n") return line === "y";
+  }
+}
+
 const session = new Session({
   role: mode === "host" ? "host" : "member",
   bridge,
@@ -117,9 +132,11 @@ const session = new Session({
   storeDir: join(home, "sessions", topic),
   backupsDir: join(home, "backups"),
   ask,
+  confirm,
   fingerprint,
   findFile: (file, dirs) => findFile(file, [...dirs, ...userFolders()]),
   log,
+  ...(forceTier ? { forceTier: forceTier as 2 | 3 } : {}),
 });
 
 let fake: FakeBridge | undefined;
@@ -138,11 +155,6 @@ terminal.on("line", async (line) => {
   } else if (command === "locate" && rest.length >= 2) {
     // The path may contain spaces; quotes from Explorer's "Copy as path" are dropped.
     log(await session.sync.locate(rest[0]!, rest.slice(1).join(" ").replace(/^"(.*)"$/, "$1")));
-  } else if (command === "add" && fake && rest.length === 2) {
-    const [name, start] = rest as [string, string];
-    fake.media.add(name);
-    fake.addLocalClip({ timeline: "Timeline 1", track: 1, start: Number(start), end: Number(start) + 48,
-      srcStart: 0, srcEnd: 48, media: { name, path: `C:\\fake\\${name}`, frames: 240 } });
   } else if (command) {
     log("commands: missing | locate <clip> <path>");
   }
@@ -151,7 +163,6 @@ terminal.on("line", async (line) => {
 bridge.start();
 if (values.fake) {
   fake = new FakeBridge(logPath, inboxDir);
-  for (const name of values["fake-media"]) fake.media.add(name);
   fake.start();
 }
 
