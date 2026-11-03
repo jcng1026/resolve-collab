@@ -7,9 +7,10 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname } from "node:path";
 import type { JsonValue } from "../bridge-protocol/wire.ts";
 import type { Commit } from "./host-log.ts";
-import { type LocalBin, type LocalClip, type LocalState, identify } from "./identify.ts";
-import { type Bin, type Clip, type Fingerprint, type MediaPool, type Op, ROOT, applyOp, newId } from "./media-pool.ts";
-import { type Answer, type Conflict, EXISTS, fieldKey, itemKey, reconcile, resolveConflicts } from "./reconcile.ts";
+import { type LocalBin, type LocalClip, type LocalState, type MarkerSpot, identify } from "./identify.ts";
+import { POOL_TAG, localMarkers, markerFailure, markerValues, tagOf } from "./marker.ts";
+import { type Clip, type Fingerprint, type MediaPool, type Op, ROOT, applyOp, newId } from "./media-pool.ts";
+import { type Answer, type Conflict, EXISTS, fieldKey, itemKey, mediaPoolDomain, reconcile, resolveConflicts } from "./reconcile.ts";
 
 export interface BridgeResult {
   ok: boolean;
@@ -45,6 +46,7 @@ export interface MissingClip {
 
 const PENDING_EXPIRE_MS = 10_000;
 
+
 export class MediaPoolSync {
   readonly local: LocalState = { bins: new Map(), clips: new Map() };
   readonly missing = new Map<string, MissingClip>();
@@ -53,6 +55,8 @@ export class MediaPoolSync {
   projectId: string | undefined; // the Resolve project this session syncs
   paused = false; // another project is open (SPEC §9.2)
   private session: MediaPool | null = null;
+  private markerSpots = new Map<string, MarkerSpot>();
+  private readonly gaveUp = new Map<string, string>(); // markers that couldn't be placed, with the value tried
   private bridgeSynced = false;
   private catchUp = true;
   private readonly pending = new Map<string, Pending>();
@@ -196,11 +200,15 @@ export class MediaPoolSync {
     for (const link of ids.links) await this.run(`clip:${link.rcId}`, { type: "mp.clip.link", id: link.local, rcId: link.rcId });
     // Linked clips are reconciled on the next pass, once Resolve holds the ID.
     if (ids.links.length) this.again = true;
+    this.markerSpots = ids.markerSpots;
+    for (const t of ids.markerTags) await this.run(`tag:${t.owner}:${t.frame}`, { type: "marker.tag", owner: { kind: "clip", id: t.owner }, frame: t.frame, tag: t.tag });
 
     for (const id of Object.keys(ids.model.clips)) this.missing.delete(id);
     const busy = new Set(this.busy);
-    // A clip's fingerprint is only needed to propose creating it.
+    // A clip's fingerprint is only needed to propose creating it, and its
+    // markers wait for it.
     for (const id of ids.notReady) if (!session.clips[id]) busy.add(itemKey("clip", id));
+    for (const m of Object.values(ids.model.markers)) if (busy.has(itemKey("clip", m.clip))) busy.add(itemKey("poolmarker", m.id));
     const pendingValues = new Map([...this.pending].map(([k, p]) => [k, p.value]));
     const mode = this.catchUp ? "catch-up" : "live";
     const plan = reconcile({ base: this.base, local: ids.model, session, mode, pending: pendingValues, busy });
@@ -240,7 +248,7 @@ export class MediaPoolSync {
   private sendProposal(op: Op): void {
     const proposal = newId();
     const at = Date.now();
-    const item = op.type.startsWith("bin") ? "bin" : "clip";
+    const item = op.type.split(".")[0]!;
     if (op.type.endsWith(".set")) {
       for (const [field, value] of Object.entries(op)) {
         if (field === "type" || field === "id") continue;
@@ -277,7 +285,7 @@ export class MediaPoolSync {
   // Brings one session change into Resolve. Returns true when Resolve now
   // matches the session for it.
   private async applyOp(op: Op, session: MediaPool): Promise<boolean> {
-    const key = itemKey(op.type.startsWith("bin") ? "bin" : "clip", op.id);
+    const key = itemKey(op.type.split(".")[0]!, op.id);
     switch (op.type) {
       case "bin.create": {
         const parent = this.localBin(op.parent);
@@ -335,15 +343,43 @@ export class MediaPoolSync {
         const local = this.localClip(op.id);
         return !local || (await this.run(key, { type: "mp.clip.delete", id: local })).ok;
       }
+      // Clip markers (SPEC §21.4): a change is the marker added again.
+      case "poolmarker.create":
+      case "poolmarker.set": {
+        const marker = session.markers[op.id];
+        const owner = marker && this.localClip(marker.clip);
+        if (!marker || !owner) return false;
+        const values = { ...markerValues(marker), tag: tagOf(op.id, POOL_TAG) };
+        const spot = this.markerSpots.get(op.id);
+        if (op.type === "poolmarker.set" && !spot) return false;
+        // Not tried again until someone changes it (one per frame: SPEC §21.2).
+        const tried = JSON.stringify(marker);
+        if (this.gaveUp.get(op.id) === tried) return false;
+        const command = spot
+          ? { type: "marker.set", owner: { kind: "clip", id: owner }, at: spot.frame, ...values }
+          : { type: "marker.add", owner: { kind: "clip", id: owner }, ...values };
+        const result = await this.run(key, command, true);
+        if (result.ok) this.gaveUp.delete(op.id);
+        else {
+          this.gaveUp.set(op.id, tried);
+          this.options.log(markerFailure(marker, String(result.error)));
+        }
+        return result.ok;
+      }
+      case "poolmarker.delete": {
+        const spot = this.markerSpots.get(op.id);
+        return !spot || (await this.run(key, { type: "marker.delete", owner: { kind: "clip", id: spot.owner }, frame: spot.frame })).ok;
+      }
     }
   }
 
   // Resolve now holds the session's value: that is the new agreed base, so a
   // local edit made right after is seen as a local edit.
   private agree(op: Op, session: MediaPool): void {
-    this.base ??= { bins: {}, clips: {} };
-    const table = (op.type.startsWith("bin") ? this.base.bins : this.base.clips) as Record<string, Bin | Clip>;
-    const current = (op.type.startsWith("bin") ? session.bins : session.clips)[op.id];
+    this.base ??= mediaPoolDomain.empty();
+    const kind = op.type.split(".")[0]!;
+    const table = mediaPoolDomain.table(this.base, kind);
+    const current = mediaPoolDomain.table(session, kind)[op.id];
     if (op.type.endsWith(".delete") || !current) delete table[op.id];
     else if (op.type.endsWith(".create") || !table[op.id]) table[op.id] = structuredClone(current);
     else applyOp(this.base, op);
@@ -365,7 +401,7 @@ export class MediaPoolSync {
     return [...dirs];
   }
 
-  private async run(key: string, command: { type: string } & Record<string, JsonValue>): Promise<BridgeResult> {
+  private async run(key: string, command: { type: string } & Record<string, JsonValue>, quiet = false): Promise<BridgeResult> {
     this.busy.add(key);
     try {
       const result = await this.options.send(command);
@@ -375,7 +411,7 @@ export class MediaPoolSync {
         const g = gone as { kind: string; id: string };
         (g.kind === "bin" ? this.local.bins : this.local.clips).delete(g.id);
       }
-      if (!result.ok) this.options.log(`Resolve couldn't ${command.type} (${result.error})`);
+      if (!result.ok && !quiet) this.options.log(`Resolve couldn't ${command.type} (${result.error})`);
       return result;
     } finally {
       this.busy.delete(key);
@@ -390,7 +426,7 @@ export class MediaPoolSync {
       for (const [k, v] of Object.entries((r.meta ?? {}) as Record<string, JsonValue>)) if (typeof v === "string" && v !== "") meta[k] = v;
       const clip: LocalClip = {
         id: String(r.id), rcId: String(r.rcId ?? ""), name: String(r.name), bin: String(r.bin), color: String(r.color ?? ""),
-        flags: Array.isArray(r.flags) ? r.flags.map(String) : [], meta, path: String(r.path ?? ""),
+        flags: Array.isArray(r.flags) ? r.flags.map(String) : [], meta, path: String(r.path ?? ""), markers: localMarkers(r.markers),
       };
       this.local.clips.set(clip.id, clip);
     }
@@ -420,6 +456,7 @@ export class MediaPoolSync {
       base: MediaPool | null; binMap: [string, string][]; missing: MissingClip[]; projectId?: string;
     };
     this.base = saved.base;
+    if (this.base) this.base.markers ??= {}; // saved before M5
     this.projectId = saved.projectId;
     this.binMap = new Map(saved.binMap);
     for (const m of saved.missing) this.missing.set(m.id, m);

@@ -20,7 +20,9 @@ export function cloneModel(model: SessionModel): SessionModel {
   return { pool: clonePool(model.pool), timelines: structuredClone(model.timelines) };
 }
 
-const isTimelineOp = (type: unknown) => typeof type === "string" && /^(timeline|track|item)\./.test(type);
+// Timeline and item markers are part of the timelines; pool clip markers
+// ("poolmarker.*") of the media pool.
+const isTimelineOp = (type: unknown) => typeof type === "string" && /^(timeline|track|item|marker)\./.test(type);
 
 export function validateSessionOp(model: SessionModel, op: unknown): string | null {
   if (typeof op !== "object" || op === null) return "not an object";

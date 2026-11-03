@@ -8,6 +8,7 @@
 // mistaken for deleting another one. A track's `order` is its 1-based index.
 
 import type { MediaPool } from "./media-pool.ts";
+import { MAX_MARKERS_PER_OWNER, type MarkerFields, type MarkerValues, checkMarker, checkMarkerFields } from "./marker.ts";
 
 export type TrackKind = "video" | "audio";
 export type ItemKind = "clip" | "textplus" | "title" | "generator" | "transition";
@@ -63,10 +64,18 @@ export interface Item {
   edge?: { item: string; side: "start" | "end" | "cut"; alignment: "left" | "center" | "right" };
 }
 
+// A timeline marker (item "") or a marker on an item (SPEC §21.2).
+export interface Marker extends MarkerValues {
+  id: string;
+  timeline: string;
+  item: string;
+}
+
 export interface Timelines {
   timelines: Record<string, TimelineInfo>;
   tracks: Record<string, Track>;
   items: Record<string, Item>;
+  markers: Record<string, Marker>;
 }
 
 export type TimelineFields = Partial<Pick<TimelineInfo, "name" | "fps" | "width" | "height">>;
@@ -82,10 +91,13 @@ export type TimelineOp =
   | { type: "track.delete"; id: string }
   | ({ type: "item.create" } & Item)
   | ({ type: "item.set"; id: string } & ItemFields)
-  | { type: "item.delete"; id: string };
+  | { type: "item.delete"; id: string }
+  | ({ type: "marker.create" } & Marker)
+  | ({ type: "marker.set"; id: string } & MarkerFields)
+  | { type: "marker.delete"; id: string };
 
 export function emptyTimelines(): Timelines {
-  return { timelines: {}, tracks: {}, items: {} };
+  return { timelines: {}, tracks: {}, items: {}, markers: {} };
 }
 
 // The 32 transform/crop/composite/retime keys GetProperties returns (§20.1).
@@ -222,6 +234,19 @@ export function validateTimelineOp(model: Timelines, pool: MediaPool, op: unknow
     }
     case "item.delete":
       return isId(o.id) ? null : "bad item id";
+    case "marker.create": {
+      if (!isId(o.id) || model.markers[o.id]) return "bad or existing marker id";
+      if (!model.timelines[o.timeline]) return "unknown timeline";
+      if (o.item !== "" && model.items[o.item]?.timeline !== o.timeline) return "unknown item";
+      const count = Object.values(model.markers).filter((m) => m.timeline === o.timeline && m.item === o.item).length;
+      if (count >= MAX_MARKERS_PER_OWNER) return "too many markers";
+      return checkMarker(o);
+    }
+    case "marker.set":
+      if (!isId(o.id) || !model.markers[o.id]) return "unknown marker";
+      return checkMarkerFields(o);
+    case "marker.delete":
+      return isId(o.id) ? null : "bad marker id";
     default:
       return "unknown op";
   }
@@ -229,8 +254,9 @@ export function validateTimelineOp(model: Timelines, pool: MediaPool, op: unknow
 
 function deleteItem(model: Timelines, id: string): void {
   delete model.items[id];
+  for (const m of Object.values(model.markers)) if (m.item === id) delete model.markers[m.id];
   // Transitions sit on an item edge and go with it.
-  for (const it of Object.values(model.items)) if (it.edge?.item === id) delete model.items[it.id];
+  for (const it of Object.values(model.items)) if (it.edge?.item === id) deleteItem(model, it.id);
 }
 
 // Applies a valid op in place.
@@ -251,6 +277,7 @@ export function applyTimelineOp(model: Timelines, op: TimelineOp): void {
       delete model.timelines[op.id];
       for (const t of Object.values(model.tracks)) if (t.timeline === op.id) delete model.tracks[t.id];
       for (const it of Object.values(model.items)) if (it.timeline === op.id) delete model.items[it.id];
+      for (const m of Object.values(model.markers)) if (m.timeline === op.id) delete model.markers[m.id];
       return;
     case "track.create": {
       const { type: _, ...track } = op;
@@ -289,6 +316,19 @@ export function applyTimelineOp(model: Timelines, op: TimelineOp): void {
     case "item.delete":
       deleteItem(model, op.id);
       return;
+    case "marker.create": {
+      const { type: _, ...marker } = op;
+      model.markers[op.id] = structuredClone(marker);
+      return;
+    }
+    case "marker.set": {
+      const { type: _, id: __, ...fields } = op;
+      Object.assign(model.markers[op.id]!, fields);
+      return;
+    }
+    case "marker.delete":
+      delete model.markers[op.id];
+      return;
   }
 }
 
@@ -310,5 +350,7 @@ export function validateTimelines(input: unknown, pool: MediaPool): Timelines | 
   for (const it of [...items.filter((i) => i?.kind !== "transition"), ...items.filter((i) => i?.kind === "transition")]) {
     if (!add({ ...it, type: "item.create" } as TimelineOp)) return null;
   }
+  // Saved before M5: no markers.
+  for (const m of Object.values(raw.markers ?? {})) if (!add({ ...m, type: "marker.create" })) return null;
   return model;
 }

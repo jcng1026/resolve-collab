@@ -2,6 +2,7 @@
 // collab IDs (SPEC §3.4, §19.5), matching unlinked bins by path and unlinked
 // clips by file fingerprint.
 
+import { type LocalMarker, POOL_TAG, markerValues, matchMarkers, tagOf } from "./marker.ts";
 import { type Fingerprint, type MediaPool, ROOT, binPath, emptyPool, newId } from "./media-pool.ts";
 
 // As reported by the bridge (mp.bin / mp.clip events).
@@ -20,6 +21,13 @@ export interface LocalClip {
   flags: string[];
   meta: Record<string, string>;
   path: string;
+  markers: LocalMarker[];
+}
+
+// Where a collab marker is in Resolve: its owner's local ID and its frame.
+export interface MarkerSpot {
+  owner: string;
+  frame: number;
 }
 
 export interface LocalState {
@@ -42,6 +50,8 @@ export interface Identified {
   binIds: Map<string, string>; // collab ID → local bin ID
   links: { local: string; rcId: string }[]; // rcIds to write into Resolve
   notReady: string[]; // collab IDs of clips still being fingerprinted
+  markerSpots: Map<string, MarkerSpot>; // collab marker ID → where it is
+  markerTags: { owner: string; frame: number; tag: string }[]; // customData to write (SPEC §21.3)
 }
 
 const sameFile = (a: Fingerprint | null, b: Fingerprint | null) => !!a && !!b && a.name === b.name && a.size === b.size && a.hash === b.hash;
@@ -122,5 +132,20 @@ export function identify({ local, binMap, session, fingerprint }: IdentifyInput)
     notReady.push(id); // proposed or reconciled once the link is written
   }
 
-  return { model, clipIds, binIds, links, notReady };
+  // Clip markers (SPEC §21.3), for clips in the model.
+  const markerSpots = new Map<string, MarkerSpot>();
+  const markerTags: Identified["markerTags"] = [];
+  const sessionMarkers = Object.values(session.markers);
+  const ownerOf = (id: string) => session.markers[id]?.clip;
+  const claimed = new Set<string>();
+  for (const [clipId, localId] of clipIds) {
+    const clip = local.clips.get(localId)!;
+    for (const m of matchMarkers(clip.markers, clipId, sessionMarkers, ownerOf, claimed, newId, POOL_TAG)) {
+      model.markers[m.id] = { id: m.id, clip: clipId, ...markerValues(m.marker) };
+      markerSpots.set(m.id, { owner: localId, frame: m.marker.frame });
+      if (m.retag) markerTags.push({ owner: localId, frame: m.marker.frame, tag: tagOf(m.id, POOL_TAG) });
+    }
+  }
+
+  return { model, clipIds, binIds, links, notReady, markerSpots, markerTags };
 }

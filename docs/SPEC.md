@@ -688,7 +688,7 @@ Goal (§16): §6.1 markers sync both ways, live and after offline or bridge-off 
 - Two markers on the same owner and frame are allowed in the model (two people adding one at the same moment). The PC that can't place the second one says so once.
 
 ### 21.3 Identity
-- `customData` holds `rc:<collab ID>`.
+- `customData` holds `rc:<collab ID>` for timeline and item markers, and `rc:p:<collab ID>` for clip markers: adding a clip to a timeline copies the pool clip's markers onto the item, and those copies must not pass for the pool clip's own markers.
 - **A local marker is matched:**
   1. by its `rc:` ID, if the session doesn't have that ID on another owner (a copy made by `DuplicateTimeline` or by adding a clip to a timeline keeps the original's ID, and is a new marker);
   2. else to a session marker on the same owner at the same frame with the same colour, name, note and duration (first join, and copies another PC made);
@@ -704,19 +704,23 @@ Goal (§16): §6.1 markers sync both ways, live and after offline or bridge-off 
   - Marker changes count as the user editing (§20.4): they're held until the timeline has been still for 1 s.
 - **Commands**, each read back:
   - `marker.add` `{owner, frame, duration, color, name, note, tag}`;
-  - `marker.set` `{owner, frame, …}`: deletes the marker at `frame` and adds the new values (frame included), keeping its tag;
+  - `marker.set` `{owner, at, frame, duration, color, name, note, tag}`: deletes the marker at `at` and adds the new values; if they can't be placed, the old marker is put back;
   - `marker.delete` `{owner, frame}`;
   - `marker.tag` `{owner, frame, tag}`.
   - `owner` is `{kind: "timeline" | "item" | "clip", id}` with the local unique ID. Timeline and item markers need their timeline to be current (`not-current` otherwise); clip markers don't.
-  - `item.add` removes the new item's markers before answering (§21.3).
+  - A marker that reads back wrong is removed again (`readback`); one on an occupied frame answers `occupied`.
+  - Commands on item markers answer the item's record, on clip markers the clip's; on timeline markers the changed markers' records and `markerGone` (frames left empty).
+  - `item.add` removes the new clip's markers before answering (§21.3).
 
 ### 21.5 Companion side
 - **The same reconciler**, with markers as another kind in each domain. Within a batch, markers come after the items and clips they belong to are created, and before those are deleted.
 - **Timeline and item markers** follow the open-timeline rule (§20.5). **Clip markers** sync whenever the media pool does.
-- **Warnings**, once per marker: a marker that couldn't be placed (another marker on that frame); a marker on an item kind Resolve doesn't take markers on.
+- **A marker that couldn't be placed** (another marker on that frame, or Resolve refused it) is said once and not tried again until someone changes it.
+- **A rebuilt item's markers** (§20.6) are still to add, not deleted on this PC.
 
 ### 21.6 Verification
 - **Unit tests:** marker ops and their checks, cascades, the reconciler with markers (a moved marker is one change, not a delete and an add), identification (`rc:` IDs, copies keeping another owner's ID, matching by place, foreign `customData`).
-- **Pipeline test** (fake bridges): timeline, item and clip markers both ways; a moved and a recoloured marker; markers on a timeline that isn't open; a duplicated timeline; markers copied when a clip is added, by the user and by the companion; an offline merge of marker edits.
-- **Real Resolve on one PC:** marker steps in a check tool like `tools/m4-resolve-check.ts`.
-- **Two PCs:** marker steps in a checklist like `docs/m4-two-pc-test.md`.
+- **Pipeline test** (fake bridges): timeline, item and clip markers both ways; a moved and a recoloured marker; markers on a timeline that isn't open; a duplicated timeline; markers copied when a clip is added, by the user and by the companion; an offline merge of marker edits; two markers on one frame; a rebuilt item's markers. The fake also now reports the timeline list again on a full report, as the real bridge does (a companion restarting with the bridge running never saw it before).
+- **Real Resolve on one PC:** `tools/m5-resolve-check.ts`.
+  - **Result, 2026-11-04, Free 21.1.2: all checks passed** in "RC M5 Check 1" (`--auto`), "2" (`--auto --force-tier 2`) and "3" (every step). That covers timeline, item and pool clip markers sent to Resolve (all values, a 3,000-character note with emoji, a marker past the end), tags, a move and recolour keeping the tag, deletes, the pool marker's copy on a clip the companion added, a rebuilt item's marker, and by hand in Resolve: a marker added with M, dragged and recoloured, and one removed in its dialog.
+- **Two PCs:** the checklist in `docs/m5-two-pc-test.md`.

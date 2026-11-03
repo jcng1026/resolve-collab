@@ -18,6 +18,7 @@ function input(extra: Partial<TimelineIdentifyInput>): TimelineIdentifyInput {
     current: "T1",
     tracks: { video: [track(), track(), track()], audio: [] },
     items: [],
+    markers: [],
     session: emptyTimelines(),
     previous: null,
     itemMap: new Map(),

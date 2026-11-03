@@ -11,6 +11,7 @@
 // Only the current timeline's tracks and items are known; the others keep
 // whatever the session says until they are opened.
 
+import { type LocalMarker, markerValues, matchMarkers, tagOf } from "./marker.ts";
 import type { Item, ItemKind, TextPlus, Timelines, Track, TrackKind } from "./timeline.ts";
 import { emptyTimelines } from "./timeline.ts";
 
@@ -50,6 +51,15 @@ export interface LocalItem {
   template?: string;
   text?: TextPlus;
   alignment?: "left" | "center" | "right"; // transitions
+  markers?: LocalMarker[];
+}
+
+// Where a collab marker is in Resolve (SPEC §21.4): its owner's local ID
+// (the timeline's for a timeline marker) and its frame.
+export interface TimelineMarkerSpot {
+  kind: "timeline" | "item";
+  owner: string;
+  frame: number;
 }
 
 export interface TrackLists {
@@ -62,6 +72,7 @@ export interface TimelineIdentifyInput {
   current: string; // local ID of the current timeline, "" for none
   tracks: { video: LocalTrack[]; audio: LocalTrack[] } | null;
   items: LocalItem[];
+  markers: LocalMarker[]; // the current timeline's own markers
   session: Timelines;
   previous: Timelines | null; // the last identified local model, for where clips were
   itemMap: Map<string, string>; // local item ID → collab ID, updated in place
@@ -77,6 +88,8 @@ export interface TimelineIdentity {
   links: { local: string; rcId: string }[]; // timelines whose rcId must be written
   notReady: Set<string>; // collab IDs of items whose media isn't linked yet
   unsupported: LocalItem[];
+  markerSpots: Map<string, TimelineMarkerSpot>; // collab marker ID → where it is
+  markerTags: (TimelineMarkerSpot & { tag: string })[]; // customData to write (SPEC §21.3)
 }
 
 // Resolve's default track names ("Video 2") follow the position, so they are
@@ -184,7 +197,10 @@ function sameSpot(input: TimelineIdentifyInput, timeline: string, track: string,
 }
 
 export function identifyTimelineState(input: TimelineIdentifyInput): TimelineIdentity {
-  const out: TimelineIdentity = { model: emptyTimelines(), current: undefined, localTimelines: new Map(), links: [], notReady: new Set(), unsupported: [] };
+  const out: TimelineIdentity = {
+    model: emptyTimelines(), current: undefined, localTimelines: new Map(), links: [], notReady: new Set(), unsupported: [],
+    markerSpots: new Map(), markerTags: [],
+  };
   identifyTimelineList(input, out);
   const timeline = out.current;
   if (!timeline || !input.tracks) return out;
@@ -268,5 +284,32 @@ export function identifyTimelineState(input: TimelineIdentifyInput): TimelineIde
     }
     item.edge = edge;
   }
+  identifyMarkers(input, timeline, ids, out);
   return out;
+}
+
+// Timeline and item markers of the current timeline (SPEC §21.3). A session
+// marker's owner is "<timeline>/<item>", so a copy on another timeline (from
+// DuplicateTimeline) or on another item (from the pool clip) is a new marker.
+function identifyMarkers(input: TimelineIdentifyInput, timeline: string, ids: Map<string, string>, out: TimelineIdentity): void {
+  const session = Object.values(input.session.markers);
+  const ownerOf = (id: string) => {
+    const m = input.session.markers[id];
+    return m && `${m.timeline}/${m.item}`;
+  };
+  const claimed = new Set<string>();
+  const add = (kind: "timeline" | "item", owner: string, item: string, markers: LocalMarker[]) => {
+    for (const m of matchMarkers(markers, `${timeline}/${item}`, session, ownerOf, claimed, input.newId)) {
+      out.model.markers[m.id] = { id: m.id, timeline, item, ...markerValues(m.marker) };
+      const spot = { kind, owner, frame: m.marker.frame };
+      out.markerSpots.set(m.id, spot);
+      if (m.retag) out.markerTags.push({ ...spot, tag: tagOf(m.id) });
+    }
+  };
+  add("timeline", input.current, "", input.markers);
+  for (const it of input.items) {
+    const id = ids.get(it.id);
+    // Markers of an item that isn't in the model wait for it.
+    if (id && out.model.items[id] && it.markers?.length) add("item", it.id, id, it.markers);
+  }
 }

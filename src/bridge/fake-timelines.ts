@@ -5,6 +5,9 @@
 //   - a move onto occupied space overwrites what was there;
 //   - fades set by a command are forgotten by reopen();
 //   - creating a timeline makes it current (the command switches back).
+// And markers as the M5 probe found them (SPEC §21.1): one per frame per
+// owner, a change is a delete and an add, and a clip added by hand gets
+// copies of its pool clip's markers (customData included).
 // Edits made through the public methods are reported on the next scan, like
 // a user's edits; commands update state without being reported back.
 
@@ -40,6 +43,16 @@ export interface FakeItem {
   text?: { styled: string; font: string; style: string; size: number };
   alignment?: string;
   apiFades?: boolean; // fades set by a command: lost on reopen
+  markers: FakeMarker[];
+}
+
+export interface FakeMarker {
+  frame: number;
+  duration: number;
+  color: string;
+  name: string;
+  note: string;
+  tag: string; // customData
 }
 
 export interface FakeTimeline {
@@ -52,6 +65,44 @@ export interface FakeTimeline {
   video: FakeTrack[];
   audio: FakeTrack[];
   items: Map<string, FakeItem>;
+  markers: FakeMarker[];
+}
+
+// marker.add/set/delete/tag on one owner's markers, as Resolve would.
+export function applyMarkerCommand(markers: FakeMarker[], c: Record<string, JsonValue>): { ok: boolean; error?: string; markerGone?: number[] } {
+  const at = (frame: number) => markers.findIndex((m) => m.frame === frame);
+  const values = (): FakeMarker => ({ frame: Number(c.frame), duration: Number(c.duration), color: String(c.color), name: String(c.name),
+    note: String(c.note), tag: String(c.tag ?? "") });
+  switch (c.type) {
+    case "marker.add":
+      if (at(Number(c.frame)) >= 0) return { ok: false, error: "occupied" };
+      markers.push(values());
+      return { ok: true };
+    case "marker.set": {
+      const i = at(Number(c.at));
+      if (i < 0) return { ok: false, error: "unknown-marker" };
+      const [old] = markers.splice(i, 1);
+      if (at(Number(c.frame)) >= 0) {
+        markers.push(old!);
+        return { ok: false, error: "occupied" };
+      }
+      markers.push(values());
+      return { ok: true, markerGone: Number(c.at) === Number(c.frame) ? [] : [Number(c.at)] };
+    }
+    case "marker.delete": {
+      const i = at(Number(c.frame));
+      if (i >= 0) markers.splice(i, 1);
+      return { ok: true, markerGone: [Number(c.frame)] };
+    }
+    case "marker.tag": {
+      const m = markers[at(Number(c.frame))];
+      if (!m) return { ok: false, error: "unknown-marker" };
+      m.tag = String(c.tag);
+      return { ok: true };
+    }
+    default:
+      return { ok: false, error: "unknown-command" };
+  }
 }
 
 const localId = () => randomBytes(8).toString("hex");
@@ -72,12 +123,13 @@ export class FakeTimelines {
   private reported = ""; // the timeline last fully reported
   private scans = 0;
   private readonly hasMedia: (id: string) => boolean;
-
   private readonly project: () => string;
+  private readonly poolMarkers: (media: string) => FakeMarker[];
 
-  constructor(hasMedia: (id: string) => boolean, project: () => string) {
+  constructor(hasMedia: (id: string) => boolean, project: () => string, poolMarkers: (media: string) => FakeMarker[] = () => []) {
     this.hasMedia = hasMedia;
     this.project = project;
+    this.poolMarkers = poolMarkers;
   }
 
   // --- the user's edits ---------------------------------------------------------
@@ -85,10 +137,24 @@ export class FakeTimelines {
   addTimeline(name: string, makeCurrent = true): FakeTimeline {
     const t: FakeTimeline = { id: localId(), rcId: "", name, fps: 24, width: 1920, height: 1080,
       video: [{ name: "Video 1", enabled: true, locked: false, subType: "" }],
-      audio: [{ name: "Audio 1", enabled: true, locked: false, subType: "stereo" }], items: new Map() };
+      audio: [{ name: "Audio 1", enabled: true, locked: false, subType: "stereo" }], items: new Map(), markers: [] };
     this.timelines.set(t.id, t);
     if (makeCurrent || !this.current) this.current = t.id;
     return t;
+  }
+
+  // Like DuplicateTimeline: items get new IDs; markers are copied, customData included.
+  duplicateTimeline(t: FakeTimeline, name: string): FakeTimeline {
+    const copy = this.addTimeline(name, false);
+    const ids = new Map([...t.items.keys()].map((id) => [id, localId()]));
+    copy.items = new Map([...t.items.values()].map((it) => {
+      const fresh = { ...structuredClone(it), id: ids.get(it.id)!, linked: it.linked.map((l) => ids.get(l)!).filter(Boolean) };
+      return [fresh.id, fresh];
+    }));
+    copy.markers = structuredClone(t.markers);
+    copy.video = structuredClone(t.video);
+    copy.audio = structuredClone(t.audio);
+    return copy;
   }
 
   timelineByName(name: string): FakeTimeline | undefined {
@@ -100,8 +166,9 @@ export class FakeTimelines {
   }
 
   // A clip with linked audio, as dragging footage onto the timeline makes.
+  // The video gets copies of the pool clip's markers.
   addClip(t: FakeTimeline, media: string, name: string, start: number, duration = 48, trackIndex = 1): FakeItem {
-    const v = this.item({ kind: "clip", trackKind: "video", trackIndex, start, duration, name, media });
+    const v = this.item({ kind: "clip", trackKind: "video", trackIndex, start, duration, name, media, markers: structuredClone(this.poolMarkers(media)) });
     const a = this.item({ kind: "clip", trackKind: "audio", trackIndex, start, duration, name, media });
     v.linked = [a.id];
     a.linked = [v.id];
@@ -138,7 +205,11 @@ export class FakeTimelines {
       media: "", srcStart: 0, linked: [], speed: 100, fadeIn: 0, fadeOut: 0,
       // Resolve has transform properties for video clips and Text+ only.
       props: fields.trackKind === "audio" || ["title", "generator", "transition"].includes(fields.kind ?? "") ? {} : { ...DEFAULT_PROPS },
-      template: "", ...fields };
+      template: "", markers: [], ...fields };
+  }
+
+  private markerRecord(t: FakeTimeline, m: FakeMarker): C {
+    return { type: "tl.marker", timeline: t.id, ...m };
   }
 
   // --- reporting --------------------------------------------------------------
@@ -160,6 +231,8 @@ export class FakeTimelines {
     };
     // Like the real bridge, the timeline list is read about every 0.3 s (15
     // scans at the fake's 20 ms), so it can lag behind a command's result.
+    // A full report (a companion attaching) sends it again.
+    if (full) this.seen.delete("list");
     if (full || this.reported !== this.current || this.scans++ % 15 === 0) report("list", list);
     const t = this.open;
     if (!t) return;
@@ -173,10 +246,19 @@ export class FakeTimelines {
       present.add(`item:${it.id}`);
       report(`item:${it.id}`, this.record(t, it));
     }
+    for (const m of t.markers) {
+      present.add(`marker:${m.frame}`);
+      report(`marker:${m.frame}`, this.markerRecord(t, m));
+    }
     for (const key of [...this.seen.keys()]) {
-      if (!key.startsWith("item:") || present.has(key)) continue;
-      this.seen.delete(key);
-      emit({ type: "tl.gone", timeline: t.id, id: key.slice(5) });
+      if (present.has(key)) continue;
+      if (key.startsWith("item:")) {
+        this.seen.delete(key);
+        emit({ type: "tl.gone", timeline: t.id, id: key.slice(5) });
+      } else if (key.startsWith("marker:")) {
+        this.seen.delete(key);
+        emit({ type: "tl.marker.gone", timeline: t.id, frame: Number(key.slice(7)) });
+      }
     }
     if (full || this.reported !== t.id) {
       this.reported = t.id;
@@ -207,7 +289,8 @@ export class FakeTimelines {
   // Returns the result, or undefined for a command that isn't about timelines.
   apply(c: C): C | undefined {
     const type = String(c.type);
-    if (!/^(tl|track|item)\./.test(type)) return undefined;
+    // Clip marker commands are the media pool's.
+    if (!/^(tl|track|item|marker)\./.test(type) || (type.startsWith("marker.") && (c.owner as C | undefined)?.kind === "clip")) return undefined;
     if (this.failing.has(type)) return { ok: false, error: "refused" };
     const t = this.timelines.get(String(c.timeline ?? c.id));
     switch (type) {
@@ -246,6 +329,7 @@ export class FakeTimelines {
         }));
         t.video = copy.video;
         t.audio = copy.audio;
+        t.markers = copy.markers ?? [];
         if (this.current === t.id) this.reported = "";
         return { ok: true, id: t.id };
       }
@@ -305,6 +389,8 @@ export class FakeTimelines {
         if (c.props) it.props = { ...it.props, ...(c.props as Record<string, number | boolean>) };
         if (c.text) it.text = c.text as unknown as NonNullable<FakeItem["text"]>;
         if (kind === "transition") it.alignment = String((c.edge as C | undefined)?.alignment ?? "center");
+        // Resolve copies the pool clip's markers; the bridge removes them (SPEC §21.3).
+        it.markers = [];
         t.items.set(it.id, it);
         return { ok: true, id: it.id, records: [this.keep(t, it)] };
       }
@@ -350,6 +436,26 @@ export class FakeTimelines {
         const ids = (Array.isArray(c.ids) ? c.ids : []).map(String).filter((i) => t.items.has(i));
         for (const i of ids) t.items.get(i)!.linked = c.linked === false ? [] : ids.filter((o) => o !== i);
         return { ok: true, records: ids.map((i) => this.keep(t, t.items.get(i)!)) };
+      }
+      case "marker.add":
+      case "marker.set":
+      case "marker.delete":
+      case "marker.tag": {
+        if (!current) return { ok: false, error: "not-current" };
+        const owner = c.owner as C;
+        if (owner?.kind === "timeline") {
+          const result = applyMarkerCommand(t.markers, c);
+          // Marks the changed markers as reported, as commands do.
+          for (const frame of result.markerGone ?? []) this.seen.delete(`marker:${frame}`);
+          const m = t.markers.find((x) => x.frame === Number(c.frame));
+          const records = m && type !== "marker.delete" ? [this.markerRecord(t, m)] : [];
+          for (const r of records) this.seen.set(`marker:${(r as C).frame}`, JSON.stringify(r));
+          return { ...result, records } as C;
+        }
+        const it = t.items.get(String(owner?.id));
+        if (!it) return { ok: false, error: "unknown-item" };
+        const result = applyMarkerCommand(it.markers, c);
+        return { ...result, records: [this.keep(t, it)] } as C;
       }
       default:
         return { ok: false, error: "unknown-command" };

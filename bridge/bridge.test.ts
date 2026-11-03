@@ -138,6 +138,18 @@ describe.skipIf(!existsSync(FUSCRIPT))("Lua bridge codec (fuscript)", () => {
     expect(results.map((r) => r.value)).toEqual([{ ZoomX: 1.5, Opacity: 100 }, false, false, false]);
   });
 
+  it("lists markers by frame with their customData as the tag", () => {
+    const [result] = runLua([{
+      body: `return M.markerList({ [30] = { color = "Red", duration = 2, name = "b", note = "n", customData = "rc:x" },
+        [10] = { color = "Blue", duration = 1, name = "a", note = "" }, bad = 1 })`,
+      input: "",
+    }]);
+    expect(result!.value).toEqual([
+      { frame: 10, duration: 1, color: "Blue", name: "a", note: "", tag: "" },
+      { frame: 30, duration: 2, color: "Red", name: "b", note: "n", tag: "rc:x" },
+    ]);
+  });
+
   it("round-trips hex", () => {
     const [result] = runLua([{ body: "return M.unhex(M.hex(input))", input: "héllo|RC|\"x\"" }]);
     expect(result!.value).toBe('héllo|RC|"x"');

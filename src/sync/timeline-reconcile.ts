@@ -3,9 +3,10 @@
 // a batch is applied in.
 
 import { type Conflict, type Deleted, type Domain, type Fields, type Input, type PlanOf, reconcileWith } from "./reconcile.ts";
-import { type Item, type TimelineInfo, type TimelineOp, type Timelines, type Track, emptyTimelines } from "./timeline.ts";
+import { MARKER_FIELDS, markerValues } from "./marker.ts";
+import { type Item, type Marker, type TimelineInfo, type TimelineOp, type Timelines, type Track, emptyTimelines } from "./timeline.ts";
 
-type Kind = "timeline" | "track" | "item";
+type Kind = "timeline" | "track" | "item" | "marker";
 
 const ITEM_FIELDS = ["track", "start", "duration", "enabled", "color", "name", "media", "srcStart", "link", "speed", "fadeIn", "fadeOut", "template", "text", "edge"] as const;
 
@@ -30,7 +31,11 @@ function setOp(kind: string, id: string, changes: Fields): TimelineOp {
   return { type: "item.set", id, ...rest, ...(Object.keys(props).length ? { props } : {}) } as TimelineOp;
 }
 
-const RANK = ["timeline.create", "track.create", "item.delete", "item.set", "item.create", "transition.create", "track.set", "track.delete", "timeline.set", "timeline.delete"];
+// Markers come after the items they sit on are created and before those are
+// deleted. Marker deletes and moves go first: they free frames other markers
+// may move onto (one marker per frame, SPEC §21.1).
+const RANK = ["timeline.create", "track.create", "marker.delete", "item.delete", "item.set", "item.create", "transition.create",
+  "marker.set", "marker.create", "track.set", "track.delete", "timeline.set", "timeline.delete"];
 
 function rank(op: TimelineOp): number {
   if (op.type === "item.create" && op.kind === "transition") return RANK.indexOf("transition.create");
@@ -63,15 +68,24 @@ function covered(op: TimelineOp, where: Timelines, deleted: Deleted): boolean {
     const track = where.tracks[op.id];
     return track !== undefined && (deleted.timeline?.has(track.timeline) ?? false);
   }
+  if (op.type === "marker.delete") {
+    const marker = where.markers[op.id];
+    if (!marker) return false;
+    if (deleted.timeline?.has(marker.timeline)) return true;
+    const item = marker.item ? where.items[marker.item] : undefined;
+    return item !== undefined && ((deleted.item?.has(item.id) ?? false) || (deleted.track?.has(item.track) ?? false));
+  }
   return false;
 }
 
 export const timelineDomain: Domain<Timelines, TimelineOp> = {
-  kinds: ["timeline", "track", "item"],
+  kinds: ["timeline", "track", "item", "marker"],
   empty: emptyTimelines,
   clone: (m) => structuredClone(m),
-  table: (m, kind) => (kind === "timeline" ? m.timelines : kind === "track" ? m.tracks : m.items),
+  table: (m, kind) => (kind === "timeline" ? m.timelines : kind === "track" ? m.tracks : kind === "item" ? m.items : m.markers),
   fields(kind, entity) {
+    // A marker's owner never changes (Resolve can't move one between owners).
+    if (kind === "marker") return { ...markerValues(entity as Marker) };
     if (kind === "timeline") {
       const t = entity as TimelineInfo;
       return { name: t.name, fps: t.fps, width: t.width, height: t.height };
@@ -87,6 +101,10 @@ export const timelineDomain: Domain<Timelines, TimelineOp> = {
       const t = entity as Track;
       return t.name || `${t.kind === "video" ? "V" : "A"}${t.order}`;
     }
+    if (kind === "marker") {
+      const m = entity as Marker;
+      return m.name || `marker at frame ${m.frame}`;
+    }
     return (entity as TimelineInfo | Item).name;
   },
   create: (kind, entity) => ({ type: `${kind as Kind}.create`, ...structuredClone(entity) }) as TimelineOp,
@@ -94,6 +112,7 @@ export const timelineDomain: Domain<Timelines, TimelineOp> = {
   set: setOp,
   rebuild(kind, entity, fields) {
     const out = structuredClone(entity) as Record<string, unknown>;
+    if (kind === "marker") for (const k of MARKER_FIELDS) delete out[k];
     if (kind === "item") {
       for (const k of ITEM_FIELDS) delete out[k];
       out.props = {};

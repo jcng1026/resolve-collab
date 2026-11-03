@@ -3,6 +3,8 @@
 // Everything here may come from a peer, so validateOp checks shape and
 // references before anything is applied.
 
+import { MAX_MARKERS_PER_OWNER, type MarkerFields, type MarkerValues, checkMarker, checkMarkerFields } from "./marker.ts";
+
 export const ROOT = "root";
 
 export interface Bin {
@@ -27,9 +29,16 @@ export interface Clip {
   file: Fingerprint | null;
 }
 
+// A marker on a media pool clip (SPEC §21.2), at a source frame.
+export interface PoolMarker extends MarkerValues {
+  id: string;
+  clip: string;
+}
+
 export interface MediaPool {
   bins: Record<string, Bin>;
   clips: Record<string, Clip>;
+  markers: Record<string, PoolMarker>;
 }
 
 export type BinFields = Partial<Pick<Bin, "name" | "parent">>;
@@ -43,10 +52,13 @@ export type Op =
   | { type: "bin.delete"; id: string }
   | ({ type: "clip.create" } & Clip)
   | ({ type: "clip.set"; id: string } & ClipFields)
-  | { type: "clip.delete"; id: string };
+  | { type: "clip.delete"; id: string }
+  | ({ type: "poolmarker.create" } & PoolMarker)
+  | ({ type: "poolmarker.set"; id: string } & MarkerFields)
+  | { type: "poolmarker.delete"; id: string };
 
 export function emptyPool(): MediaPool {
-  return { bins: { [ROOT]: { id: ROOT, name: "Master", parent: "" } }, clips: {} };
+  return { bins: { [ROOT]: { id: ROOT, name: "Master", parent: "" } }, clips: {}, markers: {} };
 }
 
 export function clonePool(pool: MediaPool): MediaPool {
@@ -138,9 +150,26 @@ export function validateOp(pool: MediaPool, op: unknown): string | null {
       return null;
     case "clip.delete":
       return isId(o.id) ? null : "bad clip id";
+    case "poolmarker.create": {
+      if (!isId(o.id) || pool.markers[o.id]) return "bad or existing marker id";
+      if (!pool.clips[o.clip]) return "unknown clip";
+      const count = Object.values(pool.markers).filter((m) => m.clip === o.clip).length;
+      if (count >= MAX_MARKERS_PER_OWNER) return "too many markers";
+      return checkMarker(o);
+    }
+    case "poolmarker.set":
+      if (!isId(o.id) || !pool.markers[o.id]) return "unknown marker";
+      return checkMarkerFields(o);
+    case "poolmarker.delete":
+      return isId(o.id) ? null : "bad marker id";
     default:
       return "unknown op";
   }
+}
+
+function deleteClip(pool: MediaPool, id: string): void {
+  delete pool.clips[id];
+  for (const m of Object.values(pool.markers)) if (m.clip === id) delete pool.markers[m.id];
 }
 
 // Applies a valid op in place.
@@ -159,7 +188,7 @@ export function applyOp(pool: MediaPool, op: Op): void {
       if (!pool.bins[op.id] || op.id === ROOT) return;
       const doomed = new Set(Object.keys(pool.bins).filter((id) => isInside(pool, id, op.id)));
       for (const id of doomed) delete pool.bins[id];
-      for (const clip of Object.values(pool.clips)) if (doomed.has(clip.bin)) delete pool.clips[clip.id];
+      for (const clip of Object.values(pool.clips)) if (doomed.has(clip.bin)) deleteClip(pool, clip.id);
       return;
     }
     case "clip.create":
@@ -181,7 +210,20 @@ export function applyOp(pool: MediaPool, op: Op): void {
       return;
     }
     case "clip.delete":
-      delete pool.clips[op.id];
+      deleteClip(pool, op.id);
+      return;
+    case "poolmarker.create": {
+      const { type: _, ...marker } = op;
+      pool.markers[op.id] = { ...marker };
+      return;
+    }
+    case "poolmarker.set": {
+      const { type: _, id: __, ...fields } = op;
+      Object.assign(pool.markers[op.id]!, fields);
+      return;
+    }
+    case "poolmarker.delete":
+      delete pool.markers[op.id];
       return;
   }
 }
@@ -218,6 +260,12 @@ export function validatePool(input: unknown): MediaPool | null {
   if (bins.length) return null;
   for (const c of Object.values(raw.clips ?? {})) {
     const op = { type: "clip.create", id: c?.id, name: c?.name, bin: c?.bin, color: c?.color, flags: c?.flags, meta: c?.meta, file: c?.file } as Op;
+    if (validateOp(pool, op)) return null;
+    applyOp(pool, op);
+  }
+  // Saved before M5: no markers.
+  for (const m of Object.values(raw.markers ?? {})) {
+    const op = { type: "poolmarker.create", id: m?.id, clip: m?.clip, frame: m?.frame, duration: m?.duration, color: m?.color, name: m?.name, note: m?.note } as Op;
     if (validateOp(pool, op)) return null;
     applyOp(pool, op);
   }

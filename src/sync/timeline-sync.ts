@@ -20,9 +20,10 @@ import { dirname } from "node:path";
 import type { JsonValue } from "../bridge-protocol/wire.ts";
 import type { Commit } from "./host-log.ts";
 import { newId } from "./media-pool.ts";
+import { type LocalMarker, localMarkers, markerFailure, markerValues, tagOf } from "./marker.ts";
 import type { BridgeResult } from "./media-pool-sync.ts";
 import { type Answer, type Conflict, EXISTS, fieldKey, itemKey, resolveWith } from "./reconcile.ts";
-import { type LocalItem, type LocalTimeline, type LocalTrack, type TrackLists, identifyTimelineState } from "./timeline-identify.ts";
+import { type LocalItem, type LocalTimeline, type LocalTrack, type TimelineMarkerSpot, type TrackLists, identifyTimelineState } from "./timeline-identify.ts";
 import { groupLinked, reconcileTimelines, timelineDomain } from "./timeline-reconcile.ts";
 import { type Item, type TimelineOp, type Timelines, applyTimelineOp, emptyTimelines } from "./timeline.ts";
 
@@ -68,6 +69,7 @@ const TRANSIENT = new Set(["not-current", "user-editing", "unreadable"]);
 
 type Command = { type: string } & Record<string, JsonValue>;
 
+
 export class TimelineSync {
   base: Timelines | null = null;
   readonly itemMap = new Map<string, string>(); // local item ID → collab ID
@@ -77,6 +79,8 @@ export class TimelineSync {
   current = "";
   tracks: { video: LocalTrack[]; audio: LocalTrack[] } | null = null;
   readonly items = new Map<string, LocalItem>();
+  readonly markers = new Map<number, LocalMarker>(); // the current timeline's markers by frame
+  private markerSpots = new Map<string, TimelineMarkerSpot>(); // from the last pass
   private listed = false;
   private listProject = ""; // the Resolve project the timeline list came from
   private synced = ""; // local ID of the timeline last fully reported
@@ -119,6 +123,7 @@ export class TimelineSync {
           this.synced = "";
           this.tracks = null;
           this.items.clear();
+          this.markers.clear();
         }
         this.listed = true;
         break;
@@ -128,6 +133,7 @@ export class TimelineSync {
         this.synced = "";
         this.tracks = null;
         this.items.clear();
+        this.markers.clear();
         return;
       case "tl.tracks":
         if (event.timeline !== this.current) return;
@@ -140,6 +146,14 @@ export class TimelineSync {
       case "tl.gone":
         if (event.timeline !== this.current) return;
         this.items.delete(String(event.id));
+        break;
+      case "tl.marker":
+        if (event.timeline !== this.current) return;
+        this.record(event);
+        break;
+      case "tl.marker.gone":
+        if (event.timeline !== this.current) return;
+        this.markers.delete(Number(event.frame));
         break;
       case "tl.synced":
         if (event.timeline !== this.current) return;
@@ -186,7 +200,8 @@ export class TimelineSync {
   private noteWaiting(commit: Commit, model: Timelines): void {
     const op = commit.op as TimelineOp;
     const timeline = op.type.startsWith("item.") ? model.items[op.id]?.timeline ?? (op as Item).timeline
-      : op.type.startsWith("track.") ? model.tracks[op.id]?.timeline ?? (op as { timeline?: string }).timeline : undefined;
+      : op.type.startsWith("track.") ? model.tracks[op.id]?.timeline ?? (op as { timeline?: string }).timeline
+      : op.type.startsWith("marker.") ? model.markers[op.id]?.timeline ?? (op as { timeline?: string }).timeline : undefined;
     if (!timeline || timeline === this.collabOf(this.current) || this.waiting.has(timeline)) return;
     this.waiting.add(timeline);
     const name = model.timelines[timeline]?.name ?? "another timeline";
@@ -236,8 +251,8 @@ export class TimelineSync {
     for (const [key, p] of this.pending) if (now - p.at > PENDING_EXPIRE_MS) this.pending.delete(key);
 
     const ids = identifyTimelineState({
-      timelines: this.timelines, current: this.current, tracks: this.tracks, items: [...this.items.values()], session,
-      previous: this.previous, itemMap: this.itemMap, trackMap: this.trackMap, media: (l) => this.options.media.collab(l), newId,
+      timelines: this.timelines, current: this.current, tracks: this.tracks, items: [...this.items.values()], markers: [...this.markers.values()],
+      session, previous: this.previous, itemMap: this.itemMap, trackMap: this.trackMap, media: (l) => this.options.media.collab(l), newId,
     });
     this.localTimelines = ids.localTimelines;
     for (const link of ids.links) {
@@ -246,15 +261,22 @@ export class TimelineSync {
     }
     if (ids.links.length) this.again = true;
     this.warnUnsupported(ids.unsupported, ids.model);
+    this.markerSpots = ids.markerSpots;
+    for (const t of ids.markerTags) {
+      await this.run(`tag:${t.owner}:${t.frame}`, { type: "marker.tag", timeline: this.current, owner: { kind: t.kind, id: t.owner }, frame: t.frame, tag: t.tag });
+    }
 
     const timeline = ids.current;
     const scope = (m: Timelines): Timelines => ({
       timelines: m.timelines,
       tracks: Object.fromEntries(Object.entries(m.tracks).filter(([, t]) => t.timeline === timeline)),
       items: Object.fromEntries(Object.entries(m.items).filter(([, i]) => i.timeline === timeline)),
+      markers: Object.fromEntries(Object.entries(m.markers).filter(([, k]) => k.timeline === timeline)),
     });
     const busy = new Set(this.busy);
     for (const id of ids.notReady) busy.add(itemKey("item", id));
+    // Markers of an item that's waiting wait with it.
+    for (const m of Object.values(session.markers)) if (m.item && busy.has(itemKey("item", m.item))) busy.add(itemKey("marker", m.id));
     const pendingValues = new Map([...this.pending].map(([k, p]) => [k, p.value]));
     const mode = this.catchUp ? "catch-up" : "live";
     const plan = reconcileTimelines({ base: this.base && scope(this.base), local: ids.model, session: scope(session), mode, pending: pendingValues, busy });
@@ -301,9 +323,10 @@ export class TimelineSync {
 
     // The new base: this timeline's part from the plan, the others' kept.
     const old = this.base ?? emptyTimelines();
-    const merged: Timelines = { timelines: plan.base.timelines, tracks: { ...plan.base.tracks }, items: { ...plan.base.items } };
+    const merged: Timelines = { timelines: plan.base.timelines, tracks: { ...plan.base.tracks }, items: { ...plan.base.items }, markers: { ...plan.base.markers } };
     for (const t of Object.values(old.tracks)) if (t.timeline !== timeline && merged.timelines[t.timeline]) merged.tracks[t.id] = t;
     for (const i of Object.values(old.items)) if (i.timeline !== timeline && merged.timelines[i.timeline]) merged.items[i.id] = i;
+    for (const m of Object.values(old.markers)) if (m.timeline !== timeline && merged.timelines[m.timeline]) merged.markers[m.id] = m;
     this.base = merged;
     this.previous = ids.model;
     this.catchUp = false;
@@ -382,7 +405,7 @@ export class TimelineSync {
   }
 
   private async applyBatch(apply: TimelineOp[], session: Timelines, timeline: string | undefined): Promise<void> {
-    const onTimeline = (op: TimelineOp) => /^(track|item)\./.test(op.type);
+    const onTimeline = (op: TimelineOp) => /^(track|item|marker)\./.test(op.type);
     if (this.options.forceTier === 3 && timeline && apply.some(onTimeline)) {
       for (const op of apply.filter((o) => !onTimeline(o))) if (await this.applyOp(op, session, timeline)) this.agree(op, session);
       await this.swapTimeline(timeline);
@@ -487,6 +510,33 @@ export class TimelineSync {
         if (!local || !localTimeline) return true;
         return (await this.run(key, { type: "item.delete", timeline: localTimeline, id: local })).ok;
       }
+      // Markers (SPEC §21.4): a change is the marker added again. Only the
+      // current timeline's are in the plan.
+      case "marker.create":
+      case "marker.set": {
+        const marker = session.markers[op.id];
+        if (!marker || !localTimeline) return false;
+        const owner = marker.item ? this.localItem(marker.item) : localTimeline;
+        if (!owner) return false;
+        const spot = this.markerSpots.get(op.id);
+        if (op.type === "marker.set" && !spot) return false;
+        const tried = JSON.stringify(marker);
+        if (this.gaveUp.get(op.id) === tried) return false;
+        const target = { timeline: localTimeline, owner: { kind: marker.item ? "item" : "timeline", id: owner } };
+        const values = { ...markerValues(marker), tag: tagOf(op.id) };
+        const result = await this.run(key, spot ? { type: "marker.set", ...target, at: spot.frame, ...values } : { type: "marker.add", ...target, ...values }, true);
+        if (result.ok) this.gaveUp.delete(op.id);
+        else if (!TRANSIENT.has(String(result.error))) {
+          this.gaveUp.set(op.id, tried);
+          this.options.log(markerFailure(marker, String(result.error)));
+        }
+        return result.ok;
+      }
+      case "marker.delete": {
+        const spot = this.markerSpots.get(op.id);
+        if (!spot || !localTimeline) return true;
+        return (await this.run(key, { type: "marker.delete", timeline: localTimeline, owner: { kind: spot.kind, id: spot.owner }, frame: spot.frame })).ok;
+      }
     }
   }
 
@@ -560,6 +610,8 @@ export class TimelineSync {
     if (!deleted.ok) return this.escalate(timeline, `couldn't rebuild "${item.name}"`);
     this.itemMap.delete(local);
     this.items.delete(local);
+    // Its markers went with it: they're still to add, not deleted on this PC.
+    if (this.base) for (const m of Object.values(this.base.markers)) if (m.item === item.id) delete this.base.markers[m.id];
     if (await this.addItem(item, localTimeline, timeline)) return true;
     // It's gone from Resolve now: in the base too, so the next pass sees an
     // item still to add rather than one this PC deleted.
@@ -639,6 +691,8 @@ export class TimelineSync {
         if (r.timeline === this.current) this.record(r);
       }
       for (const gone of Array.isArray(result.gone) ? result.gone : []) this.items.delete(String(gone));
+      // Timeline marker commands say which frames they cleared.
+      for (const frame of Array.isArray(result.markerGone) ? result.markerGone : []) this.markers.delete(Number(frame));
       // Track commands return the new track list (the bridge doesn't report
       // its own changes as events).
       const tracks = result.tracks as Record<string, JsonValue> | undefined;
@@ -661,7 +715,12 @@ export class TimelineSync {
   }
 
   private record(r: Record<string, JsonValue>): void {
-    const item = { ...(r as unknown as LocalItem), linked: Array.isArray(r.linked) ? r.linked.map(String) : [] };
+    if (r.type === "tl.marker") {
+      const [marker] = localMarkers([r]);
+      this.markers.set(marker!.frame, marker!);
+      return;
+    }
+    const item = { ...(r as unknown as LocalItem), linked: Array.isArray(r.linked) ? r.linked.map(String) : [], markers: localMarkers(r.markers) };
     this.items.set(String(r.id), item);
   }
 
@@ -672,6 +731,7 @@ export class TimelineSync {
     if (!store || !existsSync(store)) return;
     const saved = JSON.parse(readFileSync(store, "utf8")) as { base: Timelines | null; itemMap: [string, string][]; trackMap: [string, TrackLists][] };
     this.base = saved.base;
+    if (this.base) this.base.markers ??= {}; // saved before M5
     for (const [k, v] of saved.itemMap ?? []) this.itemMap.set(k, v);
     for (const [k, v] of saved.trackMap ?? []) this.trackMap.set(k, v);
   }

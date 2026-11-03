@@ -264,6 +264,20 @@ function M.pickProps(raw, keys)
   return any and out or nil
 end
 
+-- GetMarkers() (frame → info) as a list sorted by frame; `tag` is the
+-- marker's customData (SPEC §21.4).
+function M.markerList(raw)
+  local out = {}
+  for frame, m in pairs(type(raw) == "table" and raw or {}) do
+    if type(frame) == "number" and type(m) == "table" then
+      out[#out + 1] = { frame = frame, duration = tonumber(m.duration) or 1, color = tostring(m.color or ""),
+        name = tostring(m.name or ""), note = tostring(m.note or ""), tag = tostring(m.customData or "") }
+    end
+  end
+  table.sort(out, function(a, b) return a.frame < b.frame end)
+  return out
+end
+
 if MODE == "test" then return M end
 
 -- Runtime -------------------------------------------------------------------------
@@ -335,7 +349,7 @@ local function clipRecord(clip, binId)
   local rcId = clip:GetThirdPartyMetadata("rcId")
   return { type = "mp.clip", id = clip:GetUniqueId(), rcId = type(rcId) == "string" and rcId or "",
     name = clip:GetName(), bin = binId, color = clip:GetClipColor() or "", flags = flagList(clip),
-    meta = metaOf(clip), path = clip:GetClipProperty("File Path") or "" }
+    meta = metaOf(clip), path = clip:GetClipProperty("File Path") or "", markers = M.markerList(clip:GetMarkers()) }
 end
 
 -- Store a record as last seen, so a change the bridge made isn't reported.
@@ -660,6 +674,10 @@ local tlUnread, tlUnsure = {}, nil
 -- their changes are reported like any other but aren't the user editing.
 local OWN = 2.0
 local tlOwn = {}
+-- The current timeline's own markers: frame → last reported encoding;
+-- frames changed or gone since, held like items; when a command last
+-- changed them.
+local tlMarkers, tlHeldMarkers, tlMarkersOwn = {}, {}, 0
 
 local function project() return pm:GetCurrentProject() end
 
@@ -755,8 +773,15 @@ local function itemRecord(tl, item, kind, index)
   if k == "transition" then
     rec.template = item:GetProperty("TransitionType") or item:GetName() or ""
     rec.alignment = string.lower(tostring(item:GetProperty("TransitionAlignment") or "center"))
+  else
+    local ok, raw = pcall(function() return item:GetMarkers() end)
+    rec.markers = M.markerList(ok and raw or nil)
   end
   return rec
+end
+
+local function markerRecord(timeline, m)
+  return { type = "tl.marker", timeline = timeline, frame = m.frame, duration = m.duration, color = m.color, name = m.name, note = m.note, tag = m.tag }
 end
 
 local function keepItem(tl, item, kind, index)
@@ -806,6 +831,7 @@ local function scanTimelines(full)
   if id ~= tlCurrent or full then
     tlCurrent, tlTracksSig, tlItems, tlOrder, tlCursor, full = id, nil, {}, {}, 1, true
     tlHeld, tlHeldGone, tlHeldTracks, tlUnread, tlUnsure = {}, {}, false, {}, nil
+    tlMarkers, tlHeldMarkers = {}, {}
     found({ type = "tl.reset", timeline = id })
   end
   local now = bmd.gettime()
@@ -914,10 +940,43 @@ local function scanTimelines(full)
       end
     end
   end
+  -- The timeline's own markers, every scan (cheap: SPEC §21.1). Like items,
+  -- the user's changes are held until the timeline is still; the bridge's
+  -- own (tlMarkersOwn) are reported the same way but aren't the user editing.
+  local markersNow = {}
+  for _, m in ipairs(M.markerList(tl:GetMarkers())) do
+    local rec = markerRecord(id, m)
+    markersNow[m.frame] = { rec = rec, sig = M.jencode(rec) }
+  end
+  local ownMarkers = now - tlMarkersOwn < OWN
+  for frame, m in pairs(markersNow) do
+    if tlMarkers[frame] ~= m.sig then
+      tlMarkers[frame] = m.sig
+      if full then found(m.rec)
+      else
+        tlHeldMarkers[frame] = true
+        if not ownMarkers then changed = true end
+      end
+    end
+  end
+  for frame in pairs(tlMarkers) do
+    if not markersNow[frame] then
+      tlMarkers[frame] = nil
+      if not full then
+        tlHeldMarkers[frame] = true
+        if not ownMarkers then changed = true end
+      end
+    end
+  end
   if changed then tlLastChange = now end
   if not full and now - tlLastChange >= SETTLE then
     if tlHeldTracks then found(tracks) end
     for uid in pairs(tlHeldGone) do found({ type = "tl.gone", timeline = id, id = uid }) end
+    for frame in pairs(tlHeldMarkers) do
+      local m = markersNow[frame]
+      found(m and m.rec or { type = "tl.marker.gone", timeline = id, frame = frame })
+    end
+    tlHeldMarkers = {}
     local still = {}
     for uid in pairs(tlHeld) do
       local k = tlItems[uid]
@@ -1221,6 +1280,9 @@ handlers["item.add"] = function(cmd)
     item = withPlayhead(tl, function() return insertGenerated(tl, cmd) end)
   end
   if not item then return { ok = false, error = "add-failed" } end
+  -- Resolve copied the pool clip's markers onto it; the session says which
+  -- markers it has (SPEC §21.3).
+  if cmd.kind == "clip" then item:DeleteMarkersByColor("All") end
   if cmd.kind ~= "transition" then setCommon(item, cmd) end
   local rec = keepItem(tl, item, kind, index)
   if not rec then
@@ -1297,6 +1359,135 @@ handlers["item.link"] = function(cmd)
   return { ok = true, records = records }
 end
 
+-- Markers (SPEC §21.4) ----------------------------------------------------------------
+-- There's no call that changes a marker: a change deletes it and adds it
+-- again. Every write is read back.
+
+local MARKER_COLORS = {}
+for _, c in ipairs({ "Blue", "Cyan", "Green", "Yellow", "Red", "Pink", "Purple", "Fuchsia", "Rose", "Lavender", "Sky", "Mint",
+  "Lemon", "Sand", "Cocoa", "Cream" }) do MARKER_COLORS[c] = true end
+
+local function markerAt(owner, frame)
+  for _, m in ipairs(M.markerList(owner:GetMarkers())) do
+    if m.frame == frame then return m end
+  end
+end
+
+-- The marker's owner: the current timeline, an item on it, or a pool clip.
+-- Returns the owner, or nil and why; then the timeline (for timeline
+-- markers) and how to read the owner's record back (items and clips).
+local function markerOwner(cmd)
+  local o = type(cmd.owner) == "table" and cmd.owner or {}
+  if o.kind == "clip" then
+    local clip, binId = clipOf(o.id)
+    if not clip then return nil, "unknown-clip" end
+    return clip, nil, nil, function() return keepClip(clip, binId) end
+  end
+  local tl, err = currentFor(cmd)
+  if not tl then return nil, err end
+  if o.kind == "timeline" then
+    if o.id ~= tl:GetUniqueId() then return nil, "not-current" end
+    return tl, nil, tl, nil
+  end
+  local item = itemOf(o.id)
+  if not item then return nil, "unknown-item" end
+  local k = tlItems[o.id]
+  return item, nil, nil, function() return keepItem(tl, item, k.kind, k.index) end
+end
+
+local function badMarker(cmd)
+  local frame, duration = tonumber(cmd.frame), tonumber(cmd.duration)
+  if not frame or frame < 0 or frame ~= math.floor(frame) then return "bad-frame" end
+  if not duration or duration < 1 or duration ~= math.floor(duration) then return "bad-duration" end
+  if not MARKER_COLORS[cmd.color] then return "bad-color" end
+  if type(cmd.name) ~= "string" or type(cmd.note) ~= "string" or type(cmd.tag) ~= "string" then return "bad-marker" end
+end
+
+-- Adds the marker; one that reads back wrong is removed again.
+local function addMarker(owner, cmd)
+  local frame, duration = tonumber(cmd.frame), tonumber(cmd.duration)
+  if markerAt(owner, frame) then return "occupied" end
+  if not owner:AddMarker(frame, cmd.color, cmd.name, cmd.note, duration, cmd.tag) then return "add-failed" end
+  local m = markerAt(owner, frame)
+  if not (m and m.color == cmd.color and m.name == cmd.name and m.note == cmd.note and m.duration == duration and m.tag == cmd.tag) then
+    if m then owner:DeleteMarkerAtFrame(frame) end
+    return "readback"
+  end
+end
+
+-- The answer: the owner's fresh record, or for timeline markers the records
+-- of `frames` and which of `cleared` now hold none. Either way they're kept
+-- as reported, so the next scan doesn't report the bridge's own change.
+local function markerDone(owner, tl, keep, err, frames, cleared)
+  local r = { ok = err == nil, error = err }
+  if keep then
+    local rec = keep()
+    r.records = rec and { rec } or nil
+    return r
+  end
+  local now, id = {}, tl:GetUniqueId()
+  for _, m in ipairs(M.markerList(owner:GetMarkers())) do now[m.frame] = m end
+  r.records, r.markerGone = {}, {}
+  for _, f in ipairs(frames) do
+    if now[f] then
+      local rec = markerRecord(id, now[f])
+      tlMarkers[f] = M.jencode(rec)
+      r.records[#r.records + 1] = rec
+    end
+  end
+  for _, f in ipairs(cleared) do
+    if not now[f] then
+      tlMarkers[f] = nil
+      r.markerGone[#r.markerGone + 1] = f
+    end
+  end
+  tlMarkersOwn = bmd.gettime()
+  return r
+end
+
+handlers["marker.add"] = function(cmd)
+  local owner, err, tl, keep = markerOwner(cmd)
+  if not owner then return { ok = false, error = err } end
+  local bad = badMarker(cmd)
+  if bad then return { ok = false, error = bad } end
+  return markerDone(owner, tl, keep, addMarker(owner, cmd), { tonumber(cmd.frame) }, {})
+end
+
+handlers["marker.set"] = function(cmd)
+  local owner, err, tl, keep = markerOwner(cmd)
+  if not owner then return { ok = false, error = err } end
+  local bad = badMarker(cmd)
+  if bad then return { ok = false, error = bad } end
+  local at = tonumber(cmd.at)
+  local old = at and markerAt(owner, at)
+  if not old then return { ok = false, error = "unknown-marker" } end
+  owner:DeleteMarkerAtFrame(at)
+  local failed = addMarker(owner, cmd)
+  -- Couldn't place the new values: put the old marker back.
+  if failed then owner:AddMarker(old.frame, old.color, old.name, old.note, old.duration, old.tag) end
+  return markerDone(owner, tl, keep, failed, { tonumber(cmd.frame), at }, { at })
+end
+
+handlers["marker.delete"] = function(cmd)
+  local owner, err, tl, keep = markerOwner(cmd)
+  if not owner then return { ok = false, error = err } end
+  local frame = tonumber(cmd.frame)
+  if not frame then return { ok = false, error = "bad-frame" } end
+  if markerAt(owner, frame) then owner:DeleteMarkerAtFrame(frame) end
+  return markerDone(owner, tl, keep, markerAt(owner, frame) and "delete-failed" or nil, {}, { frame })
+end
+
+handlers["marker.tag"] = function(cmd)
+  local owner, err, tl, keep = markerOwner(cmd)
+  if not owner then return { ok = false, error = err } end
+  local frame = tonumber(cmd.frame)
+  if not frame or type(cmd.tag) ~= "string" then return { ok = false, error = "bad-marker" } end
+  if not markerAt(owner, frame) then return { ok = false, error = "unknown-marker" } end
+  owner:UpdateMarkerCustomData(frame, cmd.tag)
+  local m = markerAt(owner, frame)
+  return markerDone(owner, tl, keep, not (m and m.tag == cmd.tag) and "readback" or nil, { frame }, {})
+end
+
 -- A media pool snapshot (asked for by a companion that attached late) also
 -- reports the timelines again.
 local poolSnapshot = handlers["mp.snapshot"]
@@ -1344,6 +1535,7 @@ end
 
 local function touched(message, result)
   local ids = { message.id }
+  if type(message.owner) == "table" then ids[#ids + 1] = message.owner.id end
   for _, id in ipairs(type(message.ids) == "table" and message.ids or {}) do ids[#ids + 1] = id end
   if type(message.edge) == "table" then ids[#ids + 1] = message.edge.item end
   for _, rec in ipairs(type(result) == "table" and type(result.records) == "table" and result.records or {}) do
@@ -1356,7 +1548,9 @@ end
 local function handle(message)
   local handler = type(message) == "table" and handlers[message.type]
   if not handler then return { ok = false, error = "unknown-command" } end
-  local edits = type(message.type) == "string" and message.type:match("^item%.") ~= nil
+  local kind = type(message.type) == "string" and message.type or ""
+  -- Items, and markers on items, changed by us.
+  local edits = kind:match("^item%.") ~= nil or (kind:match("^marker%.") ~= nil and type(message.owner) == "table" and message.owner.kind == "item")
   if edits then markOwn(touched(message)) end -- before: a delete takes the links with it
   local ok, result = pcall(handler, message)
   if not ok then return { ok = false, error = "exception", detail = tostring(result) } end

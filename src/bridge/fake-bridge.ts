@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { type JsonValue, decodeInbox, readyFolder } from "../bridge-protocol/wire.ts";
-import { type FakeTimeline, FakeTimelines } from "./fake-timelines.ts";
+import { type FakeMarker, type FakeTimeline, FakeTimelines, applyMarkerCommand } from "./fake-timelines.ts";
 
 export interface FakeClip {
   timeline: string;
@@ -35,6 +35,7 @@ export interface FakePoolClip {
   flags: string[];
   meta: Record<string, string>;
   path: string;
+  markers: FakeMarker[];
 }
 
 const localId = () => randomBytes(8).toString("hex");
@@ -51,7 +52,7 @@ export class FakeBridge {
   readonly rootId = localId();
   readonly commands: Record<string, JsonValue>[] = [];
   project = { id: "fake-project", name: "Fake Project" };
-  readonly timelines = new FakeTimelines((id) => this.poolClips.has(id), () => this.project.id);
+  readonly timelines = new FakeTimelines((id) => this.poolClips.has(id), () => this.project.id, (id) => this.poolClips.get(id)?.markers ?? []);
   private readonly seen = new Map<string, string>(); // "bin:<id>" → last reported encoding
   private readonly projectTimelines = new Map<string, { timelines: Map<string, FakeTimeline>; current: string }>();
   private lastHandled = 0;
@@ -89,7 +90,7 @@ export class FakeBridge {
   }
 
   importClip(path: string, bin = this.rootId): FakePoolClip {
-    const clip: FakePoolClip = { id: localId(), rcId: "", name: basename(path), bin, color: "", flags: [], meta: {}, path };
+    const clip: FakePoolClip = { id: localId(), rcId: "", name: basename(path), bin, color: "", flags: [], meta: {}, path, markers: [] };
     this.poolClips.set(clip.id, clip);
     return clip;
   }
@@ -143,7 +144,7 @@ export class FakeBridge {
   }
 
   private clipRecord(clip: FakePoolClip): Record<string, JsonValue> {
-    return { type: "mp.clip", ...clip, flags: [...clip.flags].sort(), meta: { ...clip.meta } };
+    return { type: "mp.clip", ...clip, flags: [...clip.flags].sort(), meta: { ...clip.meta }, markers: structuredClone(clip.markers) as unknown as JsonValue };
   }
 
   private keep(key: string, record: Record<string, JsonValue>): Record<string, JsonValue> {
@@ -273,6 +274,15 @@ export class FakeBridge {
         this.poolClips.delete(c.id);
         this.seen.delete(`clip:${c.id}`);
         return { ok: true, gone: [{ kind: "clip", id: c.id }] };
+      case "marker.add":
+      case "marker.set":
+      case "marker.delete":
+      case "marker.tag": {
+        const clip = this.poolClips.get(String((command.owner as Record<string, JsonValue> | undefined)?.id));
+        if (!clip) return { ok: false, error: "unknown-clip" };
+        const result = applyMarkerCommand(clip.markers, command);
+        return { ok: result.ok, ...(result.error ? { error: result.error } : {}), records: [this.keep(`clip:${clip.id}`, this.clipRecord(clip))] };
+      }
       default:
         return { ok: false, error: "unknown-command" };
     }

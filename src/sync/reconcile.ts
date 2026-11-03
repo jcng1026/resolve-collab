@@ -7,7 +7,8 @@
 // how to read entities and fields and how to build operations. The media
 // pool domain is below; timelines have theirs in timeline-reconcile.ts.
 
-import { type Bin, type Clip, type MediaPool, type Op, ROOT, clonePool } from "./media-pool.ts";
+import { MARKER_FIELDS, markerValues } from "./marker.ts";
+import { type Bin, type Clip, type MediaPool, type Op, type PoolMarker, ROOT, clonePool } from "./media-pool.ts";
 
 export type Mode = "live" | "catch-up";
 
@@ -226,7 +227,7 @@ export function resolveWith<M, O>(
 
 // --- media pool (SPEC §19.5) ----------------------------------------------------
 
-export type Kind = "bin" | "clip";
+export type Kind = "bin" | "clip" | "poolmarker";
 
 function depth(pool: MediaPool, id: string): number {
   let n = 0;
@@ -243,12 +244,14 @@ function coveredByDelete(pool: MediaPool, item: string, id: string, deletedBins:
 }
 
 export const mediaPoolDomain: Domain<MediaPool, Op> = {
-  kinds: ["bin", "clip"],
-  empty: () => ({ bins: {}, clips: {} }),
+  kinds: ["bin", "clip", "poolmarker"],
+  empty: () => ({ bins: {}, clips: {}, markers: {} }),
   clone: clonePool,
-  table: (pool, kind) => (kind === "bin" ? pool.bins : pool.clips),
+  table: (pool, kind) => (kind === "bin" ? pool.bins : kind === "clip" ? pool.clips : pool.markers),
   skip: (kind, id) => kind === "bin" && id === ROOT,
   fields(kind, entity) {
+    // A marker's clip never changes.
+    if (kind === "poolmarker") return { ...markerValues(entity as PoolMarker) };
     if (kind === "bin") {
       const bin = entity as Bin;
       return { name: bin.name, parent: bin.parent };
@@ -260,11 +263,12 @@ export const mediaPoolDomain: Domain<MediaPool, Op> = {
   },
   // A missing meta key reads as "" (unset).
   missing: (field) => (field.startsWith("meta:") ? "" : undefined),
-  label: (_kind, entity) => (entity as Bin | Clip).name,
-  create: (kind, entity) => (kind === "bin" ? { type: "bin.create", ...(entity as Bin) } : { type: "clip.create", ...structuredClone(entity as Clip) }),
-  remove: (kind, id) => ({ type: kind === "bin" ? "bin.delete" : "clip.delete", id }),
+  label: (kind, entity) =>
+    kind === "poolmarker" ? (entity as PoolMarker).name || `marker at frame ${(entity as PoolMarker).frame}` : (entity as Bin | Clip).name,
+  create: (kind, entity) => ({ type: `${kind as Kind}.create`, ...structuredClone(entity) }) as Op,
+  remove: (kind, id) => ({ type: `${kind as Kind}.delete`, id }) as Op,
   set(kind, id, changes) {
-    if (kind === "bin") return { type: "bin.set", id, ...changes } as Op;
+    if (kind !== "clip") return { type: `${kind as Kind}.set`, id, ...changes } as Op;
     const meta: Record<string, string> = {};
     const rest: Fields = {};
     for (const [field, value] of Object.entries(changes)) {
@@ -275,6 +279,7 @@ export const mediaPoolDomain: Domain<MediaPool, Op> = {
   },
   rebuild(kind, entity, fields) {
     const out = structuredClone(entity) as Bin | Clip;
+    if (kind === "poolmarker") for (const k of MARKER_FIELDS) delete (out as unknown as Fields)[k];
     if (kind === "clip") (out as Clip).meta = {};
     for (const [field, value] of Object.entries(fields)) {
       if (field.startsWith("meta:")) {
@@ -286,13 +291,19 @@ export const mediaPoolDomain: Domain<MediaPool, Op> = {
     return out;
   },
   // Creates parent-first; sets; deletes last, leaving out ones a bin delete
-  // already covers.
+  // already covers. Markers go after their clip is created and before it's
+  // deleted; marker deletes and moves first, freeing frames (SPEC §21.1).
   order(ops, created, where, deleted) {
-    const rank = (op: Op) => ["bin.create", "bin.set", "clip.create", "clip.set", "clip.delete", "bin.delete"].indexOf(op.type);
+    const rank = (op: Op) => ["bin.create", "bin.set", "clip.create", "clip.set", "poolmarker.delete", "poolmarker.set", "poolmarker.create",
+      "clip.delete", "bin.delete"].indexOf(op.type);
     return ops
       .filter((op) => {
         if (op.type === "bin.delete") return !coveredByDelete(where, "bin", op.id, deleted.bin ?? new Set());
         if (op.type === "clip.delete") return !coveredByDelete(where, "clip", op.id, deleted.bin ?? new Set());
+        if (op.type === "poolmarker.delete") {
+          const clip = where.markers[op.id]?.clip;
+          return !clip || !(deleted.clip?.has(clip) || coveredByDelete(where, "clip", clip, deleted.bin ?? new Set()));
+        }
         return true;
       })
       .sort((a, b) => rank(a) - rank(b) || (a.type === "bin.create" && b.type === "bin.create" ? depth(created, a.id) - depth(created, b.id) : 0));
