@@ -90,6 +90,29 @@ describe.skipIf(!existsSync(FUSCRIPT))("Lua bridge codec (fuscript)", () => {
     expect(decoded!.value).toEqual([{ seq: 1, message: { type: "ping" } }]);
   });
 
+  it("turns a frame offset into a timecode from the timeline's start", () => {
+    const results = runLua([
+      { body: `return M.timecode(0, 24, "01:00:00:00")`, input: "" },
+      { body: `return M.timecode(1248, 24, "01:00:00:00")`, input: "" },
+      { body: `return M.timecode(90000, 23.976, "00:59:59:00")`, input: "" },
+      { body: `return M.timecode(25, 25, "10:00:00;00")`, input: "" },
+    ]);
+    expect(results.map((r) => r!.value)).toEqual(["01:00:00:00", "01:00:52:00", "02:02:29:00", "10:00:01:00"]);
+  });
+
+  it("tells item kinds apart as the probes found them", () => {
+    const kinds = runLua([
+      { body: `return M.itemKind({ type = "video", mediaType = "Video + Audio" })`, input: "" },
+      { body: `return M.itemKind({ type = "video", mediaType = "Compound" })`, input: "" },
+      { body: `return M.itemKind({ type = "generator", name = "Text" })`, input: "" },
+      { body: `return M.itemKind({ type = "generator", name = "Solid Color" })`, input: "" },
+      { body: `return M.itemKind({ type = "video", textPlus = true })`, input: "" },
+      { body: `return M.itemKind({ type = "transition" })`, input: "" },
+      { body: `return M.itemKind({ type = "video" })`, input: "" },
+    ]);
+    expect(kinds.map((r) => r!.value)).toEqual(["clip", "other", "title", "generator", "textplus", "transition", "other"]);
+  });
+
   it("round-trips hex", () => {
     const [result] = runLua([{ body: "return M.unhex(M.hex(input))", input: "héllo|RC|\"x\"" }]);
     expect(result!.value).toBe('héllo|RC|"x"');

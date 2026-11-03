@@ -1,4 +1,4 @@
--- ResolveCollab bridge (SPEC §3, §18, §19). Runs inside DaVinci Resolve from
+-- ResolveCollab bridge (SPEC §3, §18, §19, §20). Runs inside DaVinci Resolve from
 -- Workspace > Scripts > ResolveCollab and talks to the companion app:
 --   out: errors raised through fusion:Execute, which Resolve writes to
 --        Support/logs/ResolveDebug.txt as  RC|<bridgeId>|<kind>|<hex(JSON)>,
@@ -213,6 +213,35 @@ function M.readyName(seq)
   return string.format("%08d.ready", seq)
 end
 
+-- Timelines: pure helpers -----------------------------------------------------------
+
+-- Timecode of a frame offset from a timeline's start timecode (non-drop,
+-- nominal rate: 23.976 counts as 24).
+function M.timecode(offset, fps, startTc)
+  local rate = math.floor((tonumber(fps) or 24) + 0.5)
+  local h, m, s, f = tostring(startTc or "01:00:00:00"):match("^(%d+)[:;](%d+)[:;](%d+)[:;](%d+)$")
+  local start = h and (((tonumber(h) * 60 + tonumber(m)) * 60 + tonumber(s)) * rate + tonumber(f)) or 0
+  local total = start + math.floor(offset)
+  local frames = total % rate
+  local secs = math.floor(total / rate)
+  return string.format("%02d:%02d:%02d:%02d", math.floor(secs / 3600), math.floor(secs / 60) % 60, secs % 60, frames)
+end
+
+-- Basic titles from Effects > Titles report GetType() "generator" like real
+-- generators; they are told apart by name.
+local BASIC_TITLES = { ["Text"] = true, ["Scroll"] = true, ["Left Lower Third"] = true, ["Middle Lower Third"] = true, ["Right Lower Third"] = true }
+-- Media pool types a timeline clip can't be synced as (SPEC §20.2).
+local UNSUPPORTED_MEDIA = { ["Compound"] = true, ["Timeline"] = true, ["Multicam"] = true, ["Fusion Composition"] = true }
+
+-- What kind of item this is, from facts the runtime reads.
+function M.itemKind(facts)
+  if facts.type == "transition" then return "transition" end
+  if facts.mediaType then return UNSUPPORTED_MEDIA[facts.mediaType] and "other" or "clip" end
+  if facts.type == "generator" then return BASIC_TITLES[facts.name] and "title" or "generator" end
+  if facts.textPlus then return "textplus" end
+  return "other"
+end
+
 if MODE == "test" then return M end
 
 -- Runtime -------------------------------------------------------------------------
@@ -247,61 +276,6 @@ end
 
 local pm = R:GetProjectManager()
 local ms = R:GetMediaStorage()
-
-local function currentTimeline()
-  local project = pm:GetCurrentProject()
-  return project and project:GetCurrentTimeline(), project
-end
-
--- Clips the bridge itself appended; they must not be reported as local edits.
-local selfAdded = {}
-local known, knownTimeline = {}, nil
-
-local function clipInfo(tl, item, track)
-  local mpi = item:GetMediaPoolItem()
-  local props = mpi and mpi:GetClipProperty() or {}
-  return {
-    type = "clip.added",
-    timeline = tl:GetName(),
-    track = track,
-    start = item:GetStart(),
-    ["end"] = item:GetEnd(),
-    srcStart = item:GetSourceStartFrame(),
-    srcEnd = item:GetSourceEndFrame(),
-    media = { name = props["File Name"] or (mpi and mpi:GetName()) or "", path = props["File Path"] or "",
-      frames = tonumber(props["Frames"]) or 0 },
-  }
-end
-
--- Video items only; linked audio follows its video clip.
-local function scanTimeline(report)
-  local tl = currentTimeline()
-  if not tl then return end
-  local tlId = tl:GetUniqueId()
-  if tlId ~= knownTimeline then
-    known, knownTimeline, report = {}, tlId, false -- switching timelines is not an edit
-  end
-  for track = 1, tl:GetTrackCount("video") do
-    for _, item in ipairs(tl:GetItemListInTrack("video", track) or {}) do
-      local uid = item:GetUniqueId()
-      if not known[uid] then
-        known[uid] = true
-        if report and not selfAdded[uid] then emit("EVT", clipInfo(tl, item, track)) end
-      end
-    end
-  end
-end
-
-local function findMedia(folder, fileName)
-  for _, clip in ipairs(folder:GetClipList() or {}) do
-    local props = clip:GetClipProperty() or {}
-    if props["File Name"] == fileName then return clip end
-  end
-  for _, sub in ipairs(folder:GetSubFolderList() or {}) do
-    local found = findMedia(sub, fileName)
-    if found then return found end
-  end
-end
 
 -- Media pool (SPEC §19.4) ------------------------------------------------------------
 -- Last-seen state by local unique ID: { obj, sig } for bins, plus { bin } for
@@ -620,6 +594,512 @@ handlers["mp.clip.delete"] = function(cmd)
   return { ok = true, gone = gone }
 end
 
+-- Timelines (SPEC §20.4) ---------------------------------------------------------------
+-- The timeline list every scan; the current timeline's tracks and items:
+-- positions of all items every scan (cheap), full records for new or moved
+-- items and a rotating share of the rest. Item records use frames from the
+-- timeline start and local IDs; the companion maps them to the session.
+
+local TL_BUDGET = 40 -- existing items fully re-read per scan
+local SETTINGS_EVERY = 5 -- seconds between re-reading a timeline's settings
+local PROP_KEYS = {}
+for _, k in ipairs({ "AnchorPointX", "AnchorPointY", "CompositeEnabled", "CompositeMode", "CropBottom", "CropLeft", "CropRetain", "CropRight",
+  "CropSoftness", "CropTop", "CroppingEnabled", "Distortion", "DynamicZoomEase", "DynamicZoomEnabled", "FlipX", "FlipY",
+  "LensCorrectionEnabled", "MotionEstimation", "Opacity", "Pan", "Pitch", "ResizeFilter", "RetimeAndScalingEnabled",
+  "RetimeProcess", "RotationAngle", "Scaling", "Tilt", "TransformEnabled", "Yaw", "ZoomGang", "ZoomX", "ZoomY" }) do PROP_KEYS[k] = true end
+
+local tlListSig, tlCurrent, tlTracksSig = nil, nil, nil
+local tlItems, tlOrder, tlCursor = {}, {}, 1 -- current timeline: uid → { obj, light, sig }
+local tlSettings = {} -- timeline uid → { at, fps, width, height }
+
+local function project() return pm:GetCurrentProject() end
+
+local function timelines()
+  local p = project()
+  local out = {}
+  if not p then return out end
+  for i = 1, p:GetTimelineCount() or 0 do out[#out + 1] = p:GetTimelineByIndex(i) end
+  return out
+end
+
+local function timelineById(id)
+  for _, t in ipairs(timelines()) do if t:GetUniqueId() == id then return t end end
+end
+
+local function settingsOf(tl)
+  local id = tl:GetUniqueId()
+  local s = tlSettings[id]
+  if not s or bmd.gettime() - s.at > SETTINGS_EVERY then
+    local all = tl:GetSettings() or {}
+    s = { at = bmd.gettime(), fps = tonumber(all.timelineFrameRate) or 24, width = tonumber(all.timelineResolutionWidth) or 1920,
+      height = tonumber(all.timelineResolutionHeight) or 1080 }
+    tlSettings[id] = s
+  end
+  return s
+end
+
+local function rcIdOf(tl)
+  local mpi = tl:GetMediaPoolItem()
+  local rc = mpi and mpi:GetThirdPartyMetadata("rcId")
+  return type(rc) == "string" and rc or ""
+end
+
+local function listRecord()
+  local p = project()
+  local cur = p and p:GetCurrentTimeline()
+  local list = {}
+  for _, t in ipairs(timelines()) do
+    local s = settingsOf(t)
+    list[#list + 1] = { id = t:GetUniqueId(), rcId = rcIdOf(t), name = t:GetName(), fps = s.fps, width = s.width, height = s.height }
+  end
+  return { type = "tl.list", timelines = list, current = cur and cur:GetUniqueId() or "" }
+end
+
+local function textPlusTool(item)
+  local ok, comp = pcall(function() return item:GetFusionCompByIndex(1) end)
+  if not ok or not comp then return nil, nil end
+  local tool = (comp:GetToolList(false, "TextPlus") or {})[1]
+  return tool, comp
+end
+
+local function trackRecord(tl)
+  local rec = { type = "tl.tracks", timeline = tl:GetUniqueId(), video = {}, audio = {} }
+  for _, kind in ipairs({ "video", "audio" }) do
+    for i = 1, tl:GetTrackCount(kind) or 0 do
+      rec[kind][i] = { name = tl:GetTrackName(kind, i) or "", enabled = tl:GetIsTrackEnabled(kind, i) == true,
+        locked = tl:GetIsTrackLocked(kind, i) == true, subType = kind == "audio" and (tl:GetTrackSubType(kind, i) or "") or "" }
+    end
+  end
+  return rec
+end
+
+local function itemRecord(tl, item, kind, index)
+  local base = tl:GetStartFrame()
+  local mpi = item:GetMediaPoolItem()
+  local typ = item:GetType()
+  local tool = (not mpi and typ == "video") and textPlusTool(item) or nil
+  local k = M.itemKind({ type = typ, name = item:GetName(), mediaType = mpi and (mpi:GetClipProperty("Type") or "") or nil, textPlus = tool ~= nil })
+  local rec = { type = "tl.item", timeline = tl:GetUniqueId(), id = item:GetUniqueId(), kind = k, trackKind = kind, trackIndex = index,
+    start = item:GetStart() - base, duration = item:GetDuration(), enabled = item:GetClipEnabled() ~= false,
+    color = item:GetClipColor() or "", name = item:GetName() or "", media = mpi and mpi:GetUniqueId() or "", linked = {} }
+  if k == "clip" then
+    rec.srcStart = item:GetLeftOffset() or 0
+    local speed = item:GetSpeed()
+    rec.speed = type(speed) == "table" and speed.Percentage or 100
+    for _, l in ipairs(item:GetLinkedItems() or {}) do rec.linked[#rec.linked + 1] = l:GetUniqueId() end
+  end
+  if k == "clip" or k == "textplus" then
+    local fades = item:GetFades() or {}
+    rec.fadeIn, rec.fadeOut = fades.FadeIn or 0, fades.FadeOut or 0
+  end
+  if (k == "clip" and kind == "video") or k == "textplus" then
+    rec.props = {}
+    for key, v in pairs(item:GetProperties() or {}) do
+      if PROP_KEYS[key] and (type(v) == "number" or type(v) == "boolean") then rec.props[key] = v end
+    end
+  end
+  if k == "title" or k == "generator" or k == "textplus" then rec.template = item:GetName() or "" end
+  if k == "textplus" then
+    rec.text = { styled = tostring(tool:GetInput("StyledText") or ""), font = tostring(tool:GetInput("Font") or ""),
+      style = tostring(tool:GetInput("Style") or ""), size = tonumber(tool:GetInput("Size")) or 0 }
+  end
+  if k == "transition" then
+    rec.template = item:GetProperty("TransitionType") or item:GetName() or ""
+    rec.alignment = string.lower(tostring(item:GetProperty("TransitionAlignment") or "center"))
+  end
+  return rec
+end
+
+local function keepItem(tl, item, kind, index)
+  local rec = itemRecord(tl, item, kind, index)
+  local light = rec.start .. ":" .. rec.duration .. ":" .. kind .. index
+  tlItems[rec.id] = { obj = item, light = light, sig = M.jencode(rec), kind = kind, index = index }
+  return rec
+end
+
+local function scanTimelines(full)
+  local list = listRecord()
+  local sig = M.jencode(list)
+  if sig ~= tlListSig then
+    tlListSig = sig
+    emit("EVT", list)
+  end
+  local p = project()
+  local tl = p and p:GetCurrentTimeline()
+  if not tl then
+    tlCurrent = nil
+    return
+  end
+  local id = tl:GetUniqueId()
+  if id ~= tlCurrent or full then
+    tlCurrent, tlTracksSig, tlItems, tlOrder, tlCursor, full = id, nil, {}, {}, 1, true
+    emit("EVT", { type = "tl.reset", timeline = id })
+  end
+  local tracks = trackRecord(tl)
+  local tsig = M.jencode(tracks)
+  if tsig ~= tlTracksSig then
+    tlTracksSig = tsig
+    emit("EVT", tracks)
+  end
+  local base = tl:GetStartFrame()
+  local seen, order = {}, {}
+  for _, kind in ipairs({ "video", "audio" }) do
+    for index = 1, tl:GetTrackCount(kind) or 0 do
+      for _, item in ipairs(tl:GetItemListInTrack(kind, index) or {}) do
+        local uid = item:GetUniqueId()
+        local light = (item:GetStart() - base) .. ":" .. item:GetDuration() .. ":" .. kind .. index
+        local known = tlItems[uid]
+        if not known or known.light ~= light then
+          local rec = itemRecord(tl, item, kind, index)
+          local s = M.jencode(rec)
+          if not known or known.sig ~= s then emit("EVT", rec) end
+          tlItems[uid] = { obj = item, light = light, sig = s, kind = kind, index = index }
+        else
+          known.obj = item
+        end
+        seen[uid] = true
+        order[#order + 1] = uid
+      end
+    end
+  end
+  for uid in pairs(tlItems) do
+    if not seen[uid] then
+      tlItems[uid] = nil
+      emit("EVT", { type = "tl.gone", timeline = id, id = uid })
+    end
+  end
+  -- Names, colours, properties, fades and text: a rotating share of items.
+  tlOrder = order
+  for _ = 1, math.min(TL_BUDGET, #tlOrder) do
+    if tlCursor > #tlOrder then tlCursor = 1 end
+    local k = tlItems[tlOrder[tlCursor]]
+    tlCursor = tlCursor + 1
+    local rec = itemRecord(tl, k.obj, k.kind, k.index)
+    local s = M.jencode(rec)
+    if s ~= k.sig then
+      k.sig = s
+      emit("EVT", rec)
+    end
+  end
+  if full then emit("EVT", { type = "tl.synced", timeline = id }) end
+end
+
+-- Timeline commands -------------------------------------------------------------------
+
+local function currentFor(cmd)
+  local p = project()
+  local tl = p and p:GetCurrentTimeline()
+  if not tl then return nil, "no-timeline" end
+  if tl:GetUniqueId() ~= cmd.timeline then return nil, "not-current" end
+  return tl
+end
+
+local function itemOf(id)
+  local k = type(id) == "string" and tlItems[id]
+  return k and k.obj
+end
+
+-- Files for timeline swaps live under the ResolveCollab folder only.
+local HOME = INBOX:gsub("[\\/][^\\/]+$", "") .. "\\"
+local function safeDrt(path)
+  return type(path) == "string" and path:sub(1, #HOME) == HOME and not path:find("%.%.") and path:match("%.drt$") ~= nil
+end
+
+-- Puts the playhead back after an append or insert moved it.
+local function withPlayhead(tl, fn)
+  local tc = tl:GetCurrentTimecode()
+  local a, b = fn()
+  if tc then tl:SetCurrentTimecode(tc) end
+  return a, b
+end
+
+local function settingsFor(cmd)
+  local s = { useCustomSettings = "1" }
+  if cmd.fps then s.timelineFrameRate = tostring(cmd.fps) end
+  if cmd.width then s.timelineResolutionWidth = tostring(cmd.width) end
+  if cmd.height then s.timelineResolutionHeight = tostring(cmd.height) end
+  return s
+end
+
+handlers["tl.create"] = function(cmd)
+  if not validName(cmd.name) then return { ok = false, error = "bad-name" } end
+  local p = project()
+  local before = p:GetCurrentTimeline()
+  local tl = mediaPool():CreateEmptyTimeline(cmd.name)
+  if not tl then return { ok = false, error = "create-failed" } end
+  tl:SetSettings(settingsFor(cmd))
+  local mpi = tl:GetMediaPoolItem()
+  if mpi then mpi:SetThirdPartyMetadata({ rcId = cmd.rcId }) end
+  -- Creating a timeline makes it current; the user's view is put back.
+  if before then p:SetCurrentTimeline(before) end
+  tlSettings[tl:GetUniqueId()] = nil
+  return { ok = true, id = tl:GetUniqueId() }
+end
+
+handlers["tl.link"] = function(cmd)
+  local tl = timelineById(cmd.id)
+  local mpi = tl and tl:GetMediaPoolItem()
+  if not mpi then return { ok = false, error = "unknown-timeline" } end
+  mpi:SetThirdPartyMetadata({ rcId = cmd.rcId })
+  return { ok = mpi:GetThirdPartyMetadata("rcId") == cmd.rcId }
+end
+
+handlers["tl.set"] = function(cmd)
+  local tl = timelineById(cmd.id)
+  if not tl then return { ok = false, error = "unknown-timeline" } end
+  if cmd.name ~= nil then
+    if not validName(cmd.name) then return { ok = false, error = "bad-name" } end
+    tl:SetName(cmd.name)
+  end
+  if cmd.fps or cmd.width or cmd.height then tl:SetSettings(settingsFor(cmd)) end
+  tlSettings[cmd.id] = nil
+  if cmd.name ~= nil and tl:GetName() ~= cmd.name then return { ok = false, error = "readback-name" } end
+  return { ok = true }
+end
+
+handlers["tl.delete"] = function(cmd)
+  local tl = timelineById(cmd.id)
+  if not tl then return { ok = true } end
+  return { ok = mediaPool():DeleteTimelines({ tl }) == true }
+end
+
+handlers["tl.export"] = function(cmd)
+  if not safeDrt(cmd.path) then return { ok = false, error = "bad-path" } end
+  local tl = timelineById(cmd.id)
+  if not tl then return { ok = false, error = "unknown-timeline" } end
+  return { ok = tl:Export(cmd.path, R.EXPORT_DRT, R.EXPORT_NONE) == true }
+end
+
+-- Tier 3 (SPEC §20.6): replace a timeline with an imported copy, keeping its
+-- name, collab ID, and the user's current timeline and playhead.
+handlers["tl.swap"] = function(cmd)
+  if not safeDrt(cmd.path) or not validName(cmd.name) then return { ok = false, error = "bad-path" } end
+  local p = project()
+  local old = timelineById(cmd.id)
+  if not old then return { ok = false, error = "unknown-timeline" } end
+  local before = p:GetCurrentTimeline()
+  local wasCurrent = before and before:GetUniqueId() == cmd.id
+  local tc = wasCurrent and before:GetCurrentTimecode() or nil
+  local fresh = mediaPool():ImportTimelineFromFile(cmd.path, { importSourceClips = false })
+  if not fresh then return { ok = false, error = "import-failed" } end
+  if not mediaPool():DeleteTimelines({ old }) then
+    mediaPool():DeleteTimelines({ fresh })
+    return { ok = false, error = "delete-failed" }
+  end
+  fresh:SetName(cmd.name)
+  local mpi = fresh:GetMediaPoolItem()
+  if mpi then mpi:SetThirdPartyMetadata({ rcId = cmd.rcId }) end
+  if wasCurrent then
+    p:SetCurrentTimeline(fresh)
+    if tc then fresh:SetCurrentTimecode(tc) end
+  elseif before then
+    p:SetCurrentTimeline(before)
+  end
+  return { ok = true, id = fresh:GetUniqueId() }
+end
+
+handlers["track.add"] = function(cmd)
+  local tl, err = currentFor(cmd)
+  if not tl then return { ok = false, error = err } end
+  local kind = cmd.kind == "audio" and "audio" or "video"
+  local subType = kind == "audio" and cmd.subType ~= "" and cmd.subType or nil
+  if not tl:AddTrack(kind, subType) then return { ok = false, error = "add-failed" } end
+  local index = tl:GetTrackCount(kind)
+  if type(cmd.name) == "string" and cmd.name ~= "" then tl:SetTrackName(kind, index, cmd.name) end
+  if cmd.enabled == false then tl:SetTrackEnable(kind, index, false) end
+  if cmd.locked == true then tl:SetTrackLock(kind, index, true) end
+  tlTracksSig = M.jencode(trackRecord(tl))
+  return { ok = true }
+end
+
+handlers["track.set"] = function(cmd)
+  local tl, err = currentFor(cmd)
+  if not tl then return { ok = false, error = err } end
+  local kind = cmd.kind == "audio" and "audio" or "video"
+  local index = tonumber(cmd.index)
+  if not index or index < 1 or index > (tl:GetTrackCount(kind) or 0) then return { ok = false, error = "unknown-track" } end
+  if type(cmd.name) == "string" and cmd.name ~= "" then tl:SetTrackName(kind, index, cmd.name) end
+  if cmd.enabled ~= nil then tl:SetTrackEnable(kind, index, cmd.enabled == true) end
+  if cmd.locked ~= nil then tl:SetTrackLock(kind, index, cmd.locked == true) end
+  tlTracksSig = M.jencode(trackRecord(tl))
+  return { ok = true }
+end
+
+handlers["track.delete"] = function(cmd)
+  local tl, err = currentFor(cmd)
+  if not tl then return { ok = false, error = err } end
+  local kind = cmd.kind == "audio" and "audio" or "video"
+  local index = tonumber(cmd.index)
+  if not index or index < 1 or index > (tl:GetTrackCount(kind) or 0) then return { ok = false, error = "unknown-track" } end
+  local gone = {}
+  for _, item in ipairs(tl:GetItemListInTrack(kind, index) or {}) do gone[#gone + 1] = item:GetUniqueId() end
+  -- Resolve won't delete a locked track.
+  if tl:GetIsTrackLocked(kind, index) then tl:SetTrackLock(kind, index, false) end
+  if not tl:DeleteTrack(kind, index) then return { ok = false, error = "delete-failed" } end
+  for _, uid in ipairs(gone) do tlItems[uid] = nil end
+  tlTracksSig = M.jencode(trackRecord(tl))
+  return { ok = true, gone = gone }
+end
+
+-- Fields every item kind takes after it exists; read back by the caller.
+local function setCommon(item, cmd)
+  if cmd.enabled ~= nil then item:SetClipEnabled(cmd.enabled == true) end
+  if cmd.color ~= nil then
+    if cmd.color == "" then item:ClearClipColor() else item:SetClipColor(cmd.color) end
+  end
+  if type(cmd.name) == "string" and cmd.name ~= "" and cmd.name ~= item:GetName() then item:SetName(cmd.name) end
+  if type(cmd.props) == "table" then
+    local props = {}
+    for k, v in pairs(cmd.props) do if PROP_KEYS[k] then props[k] = v end end
+    if next(props) then item:SetProperties(props) end
+  end
+  if cmd.speed ~= nil and tonumber(cmd.speed) and tonumber(cmd.speed) ~= 100 then item:SetSpeed({ Percentage = tonumber(cmd.speed) }) end
+  if cmd.fadeIn ~= nil or cmd.fadeOut ~= nil then
+    local f = item:GetFades() or {}
+    item:SetFades({ FadeIn = tonumber(cmd.fadeIn) or f.FadeIn or 0, FadeOut = tonumber(cmd.fadeOut) or f.FadeOut or 0 })
+  end
+  if type(cmd.text) == "table" then
+    local tool, comp = textPlusTool(item)
+    if tool then
+      comp:Lock()
+      if type(cmd.text.styled) == "string" then tool:SetInput("StyledText", cmd.text.styled) end
+      if type(cmd.text.font) == "string" and cmd.text.font ~= "" then tool:SetInput("Font", cmd.text.font) end
+      if type(cmd.text.style) == "string" and cmd.text.style ~= "" then tool:SetInput("Style", cmd.text.style) end
+      if tonumber(cmd.text.size) then tool:SetInput("Size", tonumber(cmd.text.size)) end
+      comp:Unlock()
+    end
+  end
+end
+
+-- Titles and generators are insert edits that ripple; past the end of the
+-- timeline nothing moves. The In/Out marks give the length (SPEC §20.1).
+local function insertGenerated(tl, cmd)
+  local s = settingsOf(tl)
+  local base = tl:GetStartFrame()
+  local userMarks = tl:GetMarkInOut()
+  local markIn = tl:GetEndFrame() - base + 48
+  tl:SetMarkInOut(markIn, markIn + tonumber(cmd.duration) - 1)
+  tl:SetCurrentTimecode(M.timecode(markIn, s.fps, tl:GetStartTimecode()))
+  local template = type(cmd.template) == "string" and cmd.template ~= "" and cmd.template or nil
+  local item
+  if cmd.kind == "title" then item = tl:InsertTitleIntoTimeline(template or "Text")
+  elseif cmd.kind == "textplus" then item = tl:InsertFusionTitleIntoTimeline(template or "Text+")
+  else
+    item = tl:InsertGeneratorIntoTimeline(template or "Solid Color") or tl:InsertFusionGeneratorIntoTimeline(template or "")
+      or tl:InsertOFXGeneratorIntoTimeline(template or "")
+  end
+  tl:ClearMarkInOut()
+  local v = userMarks and userMarks.video
+  if v and v["in"] then tl:SetMarkInOut(v["in"], v["out"]) end
+  if not item then return nil end
+  item:SetPosition({ startFrame = base + tonumber(cmd.start), trackIndex = tonumber(cmd.trackIndex) })
+  return item
+end
+
+handlers["item.add"] = function(cmd)
+  local tl, err = currentFor(cmd)
+  if not tl then return { ok = false, error = err } end
+  local kind = cmd.trackKind == "audio" and "audio" or "video"
+  local index = tonumber(cmd.trackIndex)
+  if not index or index < 1 or index > (tl:GetTrackCount(kind) or 0) then return { ok = false, error = "unknown-track" } end
+  local start, duration = tonumber(cmd.start), tonumber(cmd.duration)
+  if not start or not duration or duration < 1 then return { ok = false, error = "bad-range" } end
+  local base = tl:GetStartFrame()
+  local item
+  if cmd.kind == "clip" then
+    local mpi = clipOf(cmd.media)
+    if not mpi then return { ok = false, error = "media-missing" } end
+    local src = tonumber(cmd.srcStart) or 0
+    local items = withPlayhead(tl, function()
+      return mediaPool():AppendToTimeline({ { mediaPoolItem = mpi, startFrame = src, endFrame = src + duration,
+        mediaType = kind == "video" and 1 or 2, trackIndex = index, recordFrame = base + start } })
+    end) or {}
+    item = items[1]
+  elseif cmd.kind == "transition" then
+    local edge = type(cmd.edge) == "table" and itemOf(cmd.edge.item)
+    if not edge then return { ok = false, error = "edge-missing" } end
+    local position = cmd.edge.side == "end" and "end" or "start"
+    item = edge:AddTransition({ type = cmd.template, position = position, alignment = cmd.edge.alignment, duration = duration })
+  else
+    item = withPlayhead(tl, function() return insertGenerated(tl, cmd) end)
+  end
+  if not item then return { ok = false, error = "add-failed" } end
+  if cmd.kind ~= "transition" then setCommon(item, cmd) end
+  local rec = keepItem(tl, item, kind, index)
+  -- Read back: an append never overwrites, so a taken space shows up here.
+  if cmd.kind ~= "transition" and (rec.start ~= start or rec.duration ~= duration) then
+    return { ok = false, error = "readback", id = rec.id, records = { rec } }
+  end
+  return { ok = true, id = rec.id, records = { rec } }
+end
+
+handlers["item.set"] = function(cmd)
+  local tl, err = currentFor(cmd)
+  if not tl then return { ok = false, error = err } end
+  local item = itemOf(cmd.id)
+  if not item then return { ok = false, error = "unknown-item" } end
+  local base = tl:GetStartFrame()
+  local known = tlItems[cmd.id]
+  local kind, index = known.kind, tonumber(cmd.trackIndex) or known.index
+  -- Trims: source start first (moves the head), then the length.
+  if cmd.srcStart ~= nil and item:GetLeftOffset() ~= nil and item:GetLeftOffset() ~= tonumber(cmd.srcStart) then
+    item:SetLeftOffset(tonumber(cmd.srcStart))
+  end
+  if cmd.duration ~= nil and item:GetDuration() ~= tonumber(cmd.duration) then
+    local right = item:GetRightOffset()
+    if right == nil then return { ok = false, error = "cannot-trim" } end
+    local speed = item:GetSpeed()
+    local factor = (type(speed) == "table" and speed.Percentage or 100) / 100
+    item:SetRightOffset(right + (item:GetDuration() - tonumber(cmd.duration)) * factor)
+  end
+  if cmd.start ~= nil or cmd.trackIndex ~= nil then
+    local target = { startFrame = base + (tonumber(cmd.start) or (item:GetStart() - base)), trackIndex = index }
+    if item:GetStart() ~= target.startFrame or index ~= known.index then item:SetPosition(target) end
+  end
+  setCommon(item, cmd)
+  local rec = keepItem(tl, item, kind, index)
+  if (cmd.start ~= nil and rec.start ~= tonumber(cmd.start)) or (cmd.duration ~= nil and rec.duration ~= tonumber(cmd.duration)) then
+    return { ok = false, error = "readback", records = { rec } }
+  end
+  return { ok = true, records = { rec } }
+end
+
+handlers["item.delete"] = function(cmd)
+  local tl, err = currentFor(cmd)
+  if not tl then return { ok = false, error = err } end
+  local item = itemOf(cmd.id)
+  if not item then return { ok = true } end
+  if not tl:DeleteClips({ item }, false) then return { ok = false, error = "delete-failed" } end
+  tlItems[cmd.id] = nil
+  return { ok = true, gone = { cmd.id } }
+end
+
+handlers["item.link"] = function(cmd)
+  local tl, err = currentFor(cmd)
+  if not tl then return { ok = false, error = err } end
+  local items, records = {}, {}
+  for _, id in ipairs(type(cmd.ids) == "table" and cmd.ids or {}) do
+    local it = itemOf(id)
+    if it then items[#items + 1] = it end
+  end
+  if #items < 1 then return { ok = false, error = "unknown-item" } end
+  if not tl:SetClipsLinked(items, cmd.linked ~= false) then return { ok = false, error = "link-failed" } end
+  for _, it in ipairs(items) do
+    local k = tlItems[it:GetUniqueId()]
+    records[#records + 1] = keepItem(tl, it, k.kind, k.index)
+  end
+  return { ok = true, records = records }
+end
+
+-- A media pool snapshot (asked for by a companion that attached late) also
+-- reports the timelines again.
+local poolSnapshot = handlers["mp.snapshot"]
+handlers["mp.snapshot"] = function(cmd)
+  local r = poolSnapshot(cmd)
+  tlListSig, tlCurrent = nil, nil
+  return r
+end
+
 -- Backups go next to the inbox only: %USERPROFILE%\ResolveCollab\backups\.
 local BACKUPS = INBOX:gsub("[\\/][^\\/]+$", "") .. "\\backups\\"
 
@@ -642,31 +1122,6 @@ function handlers.stop()
   return { ok = true, stopping = true }
 end
 
--- AppendToTimeline appends to the current timeline, so M2 only applies the
--- clip when the receiver is on a timeline with the same name.
-handlers["clip.append"] = function(cmd)
-  local tl, project = currentTimeline()
-  if not tl then return { ok = false, error = "no-timeline" } end
-  if tl:GetName() ~= cmd.timeline then return { ok = false, error = "timeline-not-current", current = tl:GetName() } end
-  local mpi = findMedia(project:GetMediaPool():GetRootFolder(), cmd.media and cmd.media.name or "")
-  if not mpi then return { ok = false, error = "media-missing" } end
-  while tl:GetTrackCount("video") < cmd.track do tl:AddTrack("video") end
-  local items = project:GetMediaPool():AppendToTimeline({ { mediaPoolItem = mpi, startFrame = cmd.srcStart,
-    endFrame = cmd.srcEnd, trackIndex = cmd.track, recordFrame = cmd.start } }) or {}
-  local video
-  for _, item in ipairs(items) do
-    selfAdded[item:GetUniqueId()] = true
-    known[item:GetUniqueId()] = true
-    if item:GetTrackTypeAndIndex()[1] == "video" then video = item end
-  end
-  if not video then return { ok = false, error = "append-failed" } end
-  -- Read back: a call can report success without doing what was asked.
-  if video:GetStart() ~= cmd.start then
-    return { ok = false, error = "readback-mismatch", start = video:GetStart() }
-  end
-  return { ok = true }
-end
-
 local function handle(message)
   local handler = type(message) == "table" and handlers[message.type]
   if not handler then return { ok = false, error = "unknown-command" } end
@@ -679,7 +1134,6 @@ end
 
 F:SetPrefs(ACTIVE_PREF, bridgeId) -- a newer bridge run takes over from this one
 emit("HELLO", { product = R:GetProductName(), version = R:GetVersionString(), studio = R:IsStudio(), inbox = INBOX })
-scanTimeline(false)
 snapshotMediaPool()
 
 local lastHandled, lastBeat, lastScan, lastPoolScan = 0, 0, 0, 0
@@ -701,7 +1155,7 @@ while F:GetPrefs(ACTIVE_PREF) == bridgeId do
   if stopping then break end
   if now - lastScan >= SNAPSHOT_EVERY then
     lastScan = now
-    local ok, err = pcall(scanTimeline, true)
+    local ok, err = pcall(scanTimelines)
     if not ok then emit("ERR", { error = "scan-failed", detail = tostring(err) }) end
   end
   if now - lastPoolScan >= MEDIA_POOL_EVERY then
@@ -709,7 +1163,12 @@ while F:GetPrefs(ACTIVE_PREF) == bridgeId do
     local project = pm:GetCurrentProject()
     local ok, err = pcall(function()
       -- Another project open: report it whole, and the companion pauses (SPEC §9.2).
-      if project and project:GetUniqueId() ~= mpProject then snapshotMediaPool() else scanMediaPool(true) end
+      if project and project:GetUniqueId() ~= mpProject then
+        snapshotMediaPool()
+        tlListSig, tlCurrent = nil, nil -- and the timelines, whole
+      else
+        scanMediaPool(true)
+      end
     end)
     if not ok then emit("ERR", { error = "media-pool-scan-failed", detail = tostring(err) }) end
   end
