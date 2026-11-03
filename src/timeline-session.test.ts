@@ -212,6 +212,24 @@ describe("forced tiers", () => {
     expect(member.fake.commands.some((c) => c.type === "item.set")).toBe(false);
   }, 30_000);
 
+  it("without forcing, never swaps in another PC's timeline file: a track inserted between others is reported", async () => {
+    const host = makePc("noswaphost");
+    const member = makePc("noswapmember");
+    const code = newInviteCode();
+    const media = footage(host, [member], "e.mp4");
+    const edit = host.fake.timelines.addTimeline("Edit");
+    host.fake.timelines.addClip(edit, media, "e.mp4", 0, 48);
+    edit.video.push({ name: "Top", enabled: true, locked: false, subType: "" });
+    await connect(host, "host", code);
+    await connect(member, "member", code);
+    await waitFor("Edit with two video tracks on member", () => tl(member)?.video.length === 2 && !!clip(member, "e.mp4"));
+    // A track inserted between V1 and Top: Resolve can only add at the end.
+    edit.video.splice(1, 0, { name: "Middle", enabled: true, locked: false, subType: "" });
+    await waitFor("the member is told", () => member.logs.some((l) => l.includes("a track was inserted between others; this change can't be synced here")));
+    expect(member.fake.commands.some((c) => c.type === "tl.swap")).toBe(false);
+    expect(member.fake.commands.some((c) => c.type === "tl.export")).toBe(false);
+  }, 30_000);
+
   it("tier 3 swaps in the author's copy of the timeline", async () => {
     const host = makePc("t3host");
     const member = makePc("t3member", 3);

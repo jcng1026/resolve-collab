@@ -80,5 +80,5 @@ Send me both companions' output if anything fails.
 - Changes to a timeline you don't have open are applied when you open it. Until then, rendering that timeline renders the older version.
 - Fades are put back only while the bridge runs. A PC that opens or renders the project without ResolveCollab running won't have fades made on other PCs.
 - When two people change the same thing at the same moment, the later change wins and the overwritten person sees a notice (first-to-host-wins with undo is M7).
-- Changes Resolve can't make by script (a track inserted between others) replace the whole timeline with a copy from the PC that made the change, which takes a few seconds.
+- A track inserted between two others can't be synced (Resolve can't do it by script, and replacing the whole timeline with another PC's file was switched off for safety). The other PC's companion says so; add the track there by hand, or add new tracks at the top.
 - Anyone with the invite code can join (host approval is M6).

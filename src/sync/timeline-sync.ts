@@ -10,8 +10,10 @@
 //
 // Applying a change uses the best tier that works (SPEC §3.5, §20.6):
 //   1 direct API calls; 2 rebuild the item (delete + add); 3 swap the whole
-//   timeline for a peer's copy. `forceTier` makes every eligible change use
-//   tier 2 or 3, so those paths stay tested.
+//   timeline for a peer's copy. Tier 3 imports a file made on another PC,
+//   which could carry scripts, so it runs only when forced for testing
+//   (decision 2026-11-03). `forceTier` makes every eligible change use tier
+//   2 or 3, so those paths stay tested.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
@@ -533,8 +535,12 @@ export class TimelineSync {
   }
 
   private async escalate(timeline: string, why: string): Promise<boolean> {
-    if (!this.options.swap) {
-      this.options.log(`${why}; this change can't be applied here yet`);
+    if (this.options.forceTier !== 3 || !this.options.swap) {
+      const note = `escalate:${timeline}:${why}`;
+      if (!this.failures.has(note)) {
+        this.failures.add(note);
+        this.options.log(`${why}; this change can't be synced here, so make it by hand on this PC`);
+      }
       return false;
     }
     this.options.log(`${why}; replacing this timeline with a copy from another PC`);

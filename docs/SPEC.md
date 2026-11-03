@@ -97,7 +97,7 @@ Each bridge reports at startup which API calls work on its Resolve (a capability
 
 No edit is ever blocked because a peer is on Free. Free peers may just receive some edits a little later.
 
-All three tiers are built (decision 2026-11-03), although Free 21.1.2 needs only tier 1. A test switch forces tier 2 or 3 so both stay tested (§20.6).
+All three tiers are built (decision 2026-11-03), although Free 21.1.2 needs only tier 1. A test switch forces tier 2 or 3 so both stay tested (§20.6). **Tier 3 runs only when forced:** it imports a file made on another PC, which could carry scripts (decision 2026-11-03, §20.6).
 
 ---
 
@@ -351,6 +351,7 @@ Every feature follows: spec section → automated tests (using a **fake bridge**
 | Fades | Synced live; Resolve forgets API-set fades on reopen, so the companion re-applies them when the project opens with the bridge running (2026-11-03) |
 | Titles and generators | Text+ fully (text, font, size, place, length). Basic titles and generators placed at the right length; their words/settings can't sync, the companion warns (2026-11-03) |
 | Apply tiers | All three built; tier 1 used whenever it works; a test switch forces tiers 2 and 3 (2026-11-03) |
+| Tier 3 (timeline swap) | Off in normal use, only with `--force-tier 3`: importing another PC's `.drt` could run scripts hidden in Fusion comps. A change that would need it is reported, to be made by hand (2026-11-03) |
 
 ---
 
@@ -603,7 +604,7 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
   3. the companion maps the new items by position (§20.3), and fades come back as in §20.5.
   - Also used when a track was inserted between others, which Resolve can't do by script.
   - Not built: grouping swaps to at most once every 2 s.
-  - **Security (open, review 2026-11-03):** this is the one path where a file made on another PC is imported into Resolve. A `.drt` can hold Fusion compositions (every Text+ title is one), and Fusion comps can carry scripts that Resolve runs. So a tampered `.drt` could make this PC run code, against §13's rule that peers send data, never code. Every other path sends JSON values that the bridge applies with specific API calls. To be decided by the user.
+  - **Security: tier 3 runs only with `--force-tier 3` (decision 2026-11-03).** This is the one path where a file made on another PC would be imported into Resolve. A `.drt` can hold Fusion compositions (every Text+ title is one), and Fusion comps can carry scripts that Resolve runs. So a tampered `.drt` could make this PC run code, against §13's rule that peers send data, never code. In normal use, a change that would need tier 3 is reported instead ("this change can't be synced here, so make it by hand on this PC"). Today that's only a track inserted between others.
 - **Test switch:** `--force-tier 2|3` makes every eligible change use that tier.
 
 ### 20.7 Confirmed before building (probe, 2026-11-03)
@@ -623,7 +624,8 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
   - a fade Resolve forgot;
   - a middle track delete;
   - a project switch that reports the timeline list before the media pool;
-  - forced tiers 2 and 3.
+  - forced tiers 2 and 3;
+  - without forcing, a track inserted between others is reported and no timeline file is exported or imported.
   - The fake reports timeline lists at the real bridge's pace, so races between a command's result and the next list are caught.
 - **Real Resolve on one PC:** `tools/m4-resolve-check.ts` runs Resolve as host with a fake member.
   - **Result, 2026-11-03, Free 21.1.2: all checks passed** (project "RC M4 Check 6"). That covers:
