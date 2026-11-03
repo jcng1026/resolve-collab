@@ -69,6 +69,21 @@ export class MediaPoolSync {
     this.load();
   }
 
+  // --- for timeline sync: media pool clips by local and collab ID -------------
+
+  // True once Resolve's media pool has been read for the session's project.
+  get ready(): boolean {
+    return this.bridgeSynced && !this.paused && this.session !== null;
+  }
+
+  mediaCollab(localId: string): string | undefined {
+    return this.local.clips.get(localId)?.rcId || undefined;
+  }
+
+  mediaLocal(collabId: string): string | undefined {
+    return this.localClip(collabId);
+  }
+
   // --- inputs ---------------------------------------------------------------
 
   bridgeEvent(event: Record<string, JsonValue>): void {

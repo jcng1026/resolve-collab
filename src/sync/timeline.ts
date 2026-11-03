@@ -279,8 +279,11 @@ export function applyTimelineOp(model: Timelines, op: TimelineOp): void {
       return;
     }
     case "item.set": {
-      const { type: _, id: __, ...fields } = op;
-      Object.assign(model.items[op.id]!, structuredClone(fields));
+      const { type: _, id: __, props, ...fields } = op;
+      const item = model.items[op.id]!;
+      Object.assign(item, structuredClone(fields));
+      // A set carries only the properties that changed.
+      if (props) item.props = { ...item.props, ...props };
       return;
     }
     case "item.delete":
