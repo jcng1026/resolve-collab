@@ -908,8 +908,9 @@ handlers["track.add"] = function(cmd)
   if type(cmd.name) == "string" and cmd.name ~= "" then tl:SetTrackName(kind, index, cmd.name) end
   if cmd.enabled == false then tl:SetTrackEnable(kind, index, false) end
   if cmd.locked == true then tl:SetTrackLock(kind, index, true) end
-  tlTracksSig = M.jencode(trackRecord(tl))
-  return { ok = true }
+  local tracks = trackRecord(tl)
+  tlTracksSig = M.jencode(tracks)
+  return { ok = true, tracks = tracks }
 end
 
 handlers["track.set"] = function(cmd)
@@ -921,8 +922,9 @@ handlers["track.set"] = function(cmd)
   if type(cmd.name) == "string" and cmd.name ~= "" then tl:SetTrackName(kind, index, cmd.name) end
   if cmd.enabled ~= nil then tl:SetTrackEnable(kind, index, cmd.enabled == true) end
   if cmd.locked ~= nil then tl:SetTrackLock(kind, index, cmd.locked == true) end
-  tlTracksSig = M.jencode(trackRecord(tl))
-  return { ok = true }
+  local tracks = trackRecord(tl)
+  tlTracksSig = M.jencode(tracks)
+  return { ok = true, tracks = tracks }
 end
 
 handlers["track.delete"] = function(cmd)
@@ -937,8 +939,13 @@ handlers["track.delete"] = function(cmd)
   if tl:GetIsTrackLocked(kind, index) then tl:SetTrackLock(kind, index, false) end
   if not tl:DeleteTrack(kind, index) then return { ok = false, error = "delete-failed" } end
   for _, uid in ipairs(gone) do tlItems[uid] = nil end
-  tlTracksSig = M.jencode(trackRecord(tl))
-  return { ok = true, gone = gone }
+  -- Items on the tracks above moved down one place.
+  for _, k in pairs(tlItems) do
+    if k.kind == kind and k.index > index then k.index = k.index - 1 end
+  end
+  local tracks = trackRecord(tl)
+  tlTracksSig = M.jencode(tracks)
+  return { ok = true, gone = gone, tracks = tracks }
 end
 
 -- Fields every item kind takes after it exists; read back by the caller.

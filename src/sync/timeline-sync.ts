@@ -53,6 +53,9 @@ interface Pending {
 }
 
 const PENDING_EXPIRE_MS = 10_000;
+// Items waiting for their media pool clip are retried this often: the clip
+// may be imported by a command, which the bridge doesn't report as an event.
+const MEDIA_RETRY_MS = 1000;
 
 type Command = { type: string } & Record<string, JsonValue>;
 
@@ -78,6 +81,8 @@ export class TimelineSync {
   private running = false;
   private again = false;
   private timer: NodeJS.Timeout | undefined;
+  private retry: NodeJS.Timeout | undefined;
+  private waitingForMedia = false;
   private readonly options: TimelineSyncOptions;
 
   constructor(options: TimelineSyncOptions) {
@@ -157,6 +162,7 @@ export class TimelineSync {
 
   stop(): void {
     clearTimeout(this.timer);
+    clearTimeout(this.retry);
   }
 
   // A change to a timeline that isn't open waits until it is (SPEC §20.5).
@@ -274,8 +280,15 @@ export class TimelineSync {
 
     for (const op of propose) this.sendProposal(op);
     for (const op of keep) await this.applyOp(op, session, timeline);
+    this.waitingForMedia = false;
     await this.applyBatch(apply, session, timeline);
     this.save();
+    if (this.waitingForMedia && !this.retry) {
+      this.retry = setTimeout(() => {
+        this.retry = undefined;
+        this.schedule();
+      }, MEDIA_RETRY_MS);
+    }
   }
 
   private warnUnsupported(unsupported: LocalItem[], model: Timelines): void {
@@ -468,6 +481,7 @@ export class TimelineSync {
   private async addItem(item: Item, localTimeline: string, timeline: string): Promise<boolean> {
     const command = this.addCommand(item, localTimeline, timeline);
     if ("error" in command) {
+      if (command.error === "media-missing") this.waitingForMedia = true;
       if (command.error === "media-missing" && !this.warned.has(`media:${item.id}`)) {
         this.warned.add(`media:${item.id}`);
         this.options.log(`"${item.name}" is waiting for its media before it can be added to the timeline`);
@@ -552,6 +566,12 @@ export class TimelineSync {
         if (r.timeline === this.current) this.record(r);
       }
       for (const gone of Array.isArray(result.gone) ? result.gone : []) this.items.delete(String(gone));
+      // Track commands return the new track list (the bridge doesn't report
+      // its own changes as events).
+      const tracks = result.tracks as Record<string, JsonValue> | undefined;
+      if (tracks && typeof tracks === "object" && tracks.timeline === this.current) {
+        this.tracks = { video: (tracks.video ?? []) as unknown as LocalTrack[], audio: (tracks.audio ?? []) as unknown as LocalTrack[] };
+      }
       if (!result.ok && result.error !== "not-current") this.options.log(`Resolve couldn't ${command.type} (${result.error})`);
       return result;
     } finally {

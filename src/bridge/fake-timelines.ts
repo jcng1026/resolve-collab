@@ -179,8 +179,11 @@ export class FakeTimelines {
     return r;
   }
 
-  private keepTracks(t: FakeTimeline): void {
-    this.seen.set("tracks", JSON.stringify({ type: "tl.tracks", timeline: t.id, video: t.video, audio: t.audio }));
+  // Marks the tracks as reported, and returns them for the command's result.
+  private keepTracks(t: FakeTimeline): C {
+    const record = { type: "tl.tracks", timeline: t.id, video: t.video, audio: t.audio };
+    this.seen.set("tracks", JSON.stringify(record));
+    return structuredClone(record) as unknown as C;
   }
 
   // --- commands -----------------------------------------------------------------
@@ -242,8 +245,7 @@ export class FakeTimelines {
         if (!current) return { ok: false, error: "not-current" };
         const kind = c.kind === "audio" ? "audio" : "video";
         t[kind].push({ name: String(c.name || `${kind === "video" ? "Video" : "Audio"} ${t[kind].length + 1}`), enabled: c.enabled !== false, locked: c.locked === true, subType: String(c.subType ?? "") });
-        this.keepTracks(t);
-        return { ok: true };
+        return { ok: true, tracks: this.keepTracks(t) };
       }
       case "track.set": {
         const kind = c.kind === "audio" ? "audio" : "video";
@@ -252,8 +254,7 @@ export class FakeTimelines {
         if (c.name !== undefined && c.name !== "") track.name = String(c.name);
         if (c.enabled !== undefined) track.enabled = c.enabled === true;
         if (c.locked !== undefined) track.locked = c.locked === true;
-        this.keepTracks(t);
-        return { ok: true };
+        return { ok: true, tracks: this.keepTracks(t) };
       }
       case "track.delete": {
         const kind = c.kind === "audio" ? "audio" : "video";
@@ -270,8 +271,7 @@ export class FakeTimelines {
             it.trackIndex--;
           }
         }
-        this.keepTracks(t);
-        return { ok: true, gone, records: [...t.items.values()].map((it) => this.keep(t, it)) };
+        return { ok: true, gone, tracks: this.keepTracks(t), records: [...t.items.values()].map((it) => this.keep(t, it)) };
       }
       case "item.add": {
         if (!current) return { ok: false, error: "not-current" };
