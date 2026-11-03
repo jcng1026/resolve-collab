@@ -86,6 +86,34 @@ describe("timeline identification", () => {
     expect(out.unsupported.map((u) => u.id)).toEqual(["L5"]);
   });
 
+  it("finds a transition's edge from where it sits, whatever alignment Resolve reports", () => {
+    const items = [
+      local(1, 1, 0),
+      { ...local(2, 1, 0), kind: "transition" as const, media: "", duration: 12, alignment: "center" as const, template: "Cross Dissolve" },
+    ];
+    const out = identifyTimelineState(input({ tracks: { video: [track()], audio: [] }, items }));
+    const clipId = Object.values(out.model.items).find((i) => i.kind === "clip")!.id;
+    expect(Object.values(out.model.items).find((i) => i.kind === "transition")!.edge).toEqual({ item: clipId, side: "start", alignment: "right" });
+  });
+
+  it("leaves an already synced item alone when it can't be identified for a moment", () => {
+    const itemMap = new Map([["L1", id(30)]]);
+    const out = identifyTimelineState(input({ tracks: { video: [track()], audio: [] }, items: [{ ...local(1, 1, 0), kind: "other" as const }], itemMap }));
+    expect(out.notReady.has(id(30))).toBe(true);
+    expect(out.unsupported).toEqual([]);
+  });
+
+  it("matches items that came back with new local IDs to the session by position", () => {
+    const session = emptyTimelines();
+    session.timelines[id(1)] = { id: id(1), name: "Edit", fps: 24, width: 1920, height: 1080 };
+    session.tracks[id(11)] = { id: id(11), timeline: id(1), kind: "video", order: 1, name: "", enabled: true, locked: false, subType: "" };
+    session.items[id(30)] = { id: id(30), timeline: id(1), kind: "clip", track: id(11), start: 0, duration: 48, enabled: true, color: "", name: "a.mp4", media: id(100) };
+    const itemMap = new Map([["OLD", id(30)]]); // the item's old local ID, now gone
+    const trackMap = new Map<string, TrackLists>([[id(1), { video: [id(11)], audio: [] }]]);
+    identifyTimelineState(input({ tracks: { video: [track()], audio: [] }, items: [local(9, 1, 0)], session, itemMap, trackMap }));
+    expect(itemMap.get("L9")).toBe(id(30));
+  });
+
   it("treats Resolve's default track names as no name", () => {
     expect(trackName("video", 2, "Video 2")).toBe("");
     expect(trackName("video", 2, "Video 3")).toBe("Video 3");

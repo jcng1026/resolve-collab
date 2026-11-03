@@ -152,18 +152,27 @@ function identifyTracks(input: TimelineIdentifyInput, timeline: string, kind: Tr
 }
 
 // Which item edge a transition sits on (SPEC §20.2), from its alignment.
+// Found from where the transition sits; Resolve's reported alignment is
+// only a first guess (it read "center" for a transition it had reported as
+// "right" moments before). The stored alignment follows from the edge found.
 function edgeOf(tr: LocalItem, items: LocalItem[], ids: Map<string, string>): Item["edge"] | undefined {
   const near = (a: number, b: number) => Math.abs(a - b) <= 1;
   const same = items.filter((it) => it.kind !== "transition" && it.trackKind === tr.trackKind && it.trackIndex === tr.trackIndex);
-  const alignment = tr.alignment ?? "center";
-  // right: starts where the item starts; left: ends where it ends; center:
-  // straddles the cut where the item starts.
-  const side = alignment === "right" ? "start" : alignment === "left" ? "end" : "cut";
-  const found = same.find((it) =>
-    side === "start" ? near(it.start, tr.start) : side === "end" ? near(it.start + it.duration, tr.start + tr.duration) : near(it.start, tr.start + Math.floor(tr.duration / 2)),
-  );
-  const item = found && ids.get(found.id);
-  return item ? { item, side, alignment } : undefined;
+  const at = {
+    // right: starts where the item starts
+    start: () => same.find((it) => near(it.start, tr.start)),
+    // left: ends where the item ends
+    end: () => same.find((it) => near(it.start + it.duration, tr.start + tr.duration)),
+    // center: straddles the cut where the item starts
+    cut: () => same.find((it) => near(it.start, tr.start + Math.floor(tr.duration / 2))),
+  };
+  const guess: "start" | "end" | "cut" = tr.alignment === "right" ? "start" : tr.alignment === "left" ? "end" : "cut";
+  for (const side of [guess, ...(["start", "end", "cut"] as const).filter((s) => s !== guess)]) {
+    const found = at[side]();
+    const item = found && ids.get(found.id);
+    if (item) return { item, side, alignment: side === "start" ? "right" : side === "end" ? "left" : "center" };
+  }
+  return undefined;
 }
 
 // A session item of the same kind in the same place, for unknown local items.
@@ -192,11 +201,19 @@ export function identifyTimelineState(input: TimelineIdentifyInput): TimelineIde
   }
   input.trackMap.set(timeline, lists);
 
-  const taken = new Set(input.itemMap.values());
+  // Collab IDs held by items Resolve still has; an ID whose local item is
+  // gone (a swapped-in copy, or Resolve gave the item a new ID) is free to
+  // be matched again by position.
+  const present = new Set(input.items.map((it) => it.id));
+  const taken = new Set([...input.itemMap].filter(([local]) => present.has(local)).map(([, collab]) => collab));
   const ids = new Map<string, string>();
   for (const it of input.items) {
     if (it.kind === "other") {
-      out.unsupported.push(it);
+      // An item synced before that can't be identified now (Resolve reports
+      // it differently for a moment) is left alone, never taken as deleted.
+      const known = input.itemMap.get(it.id);
+      if (known) out.notReady.add(known);
+      else out.unsupported.push(it);
       continue;
     }
     const track = lists[it.trackKind][it.trackIndex - 1];
@@ -244,7 +261,8 @@ export function identifyTimelineState(input: TimelineIdentifyInput): TimelineIde
     const item = out.model.items[id];
     if (!edge || !item) {
       delete out.model.items[id];
-      out.unsupported.push(it);
+      if (input.session.items[id]) out.notReady.add(id);
+      else out.unsupported.push(it);
       continue;
     }
     item.edge = edge;
