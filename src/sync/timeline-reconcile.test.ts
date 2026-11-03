@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Input } from "./reconcile.ts";
-import { reconcileTimelines } from "./timeline-reconcile.ts";
+import { groupLinked, reconcileTimelines } from "./timeline-reconcile.ts";
 import { type Item, type TimelineOp, type Timelines, emptyTimelines } from "./timeline.ts";
 
 const id = (n: number) => n.toString(16).padStart(32, "0");
@@ -87,5 +87,25 @@ describe("timeline reconciler", () => {
     const session = edit(model(), (m) => { m.items[id(31)]!.start = 70; });
     const plan = run({ local, session, mode: "catch-up" });
     expect(plan.conflicts).toEqual([expect.objectContaining({ item: "item", id: id(31), field: "start", mine: 60, theirs: 70 })]);
+  });
+
+  it("asks once for linked video and audio that conflict the same way", () => {
+    const linked = (m: Timelines) => {
+      m.tracks[id(12)] = { id: id(12), timeline: id(1), kind: "audio", order: 1, name: "", enabled: true, locked: false, subType: "" };
+      m.items[id(40)] = clip(40, 0, { track: id(12), link: id(30) });
+      delete m.items[id(40)]!.props; // audio has no transform properties
+      m.items[id(30)]!.link = id(30);
+    };
+    const base = edit(model(), linked);
+    const local = edit(base, (m) => { m.items[id(30)]!.duration = 30; m.items[id(40)]!.duration = 30; m.items[id(31)]!.duration = 30; });
+    const session = edit(base, (m) => { m.items[id(30)]!.duration = 40; m.items[id(40)]!.duration = 40; m.items[id(31)]!.duration = 40; });
+    const plan = run({ base, local, session, mode: "catch-up" });
+    expect(plan.conflicts).toHaveLength(3);
+    const groups = groupLinked(plan.conflicts, local, session);
+    expect(groups.map((g) => g.map((c) => c.id).sort())).toEqual(expect.arrayContaining([[id(30), id(40)], [id(31)]]));
+    expect(groups).toHaveLength(2);
+    // Different values on the two halves are two questions.
+    const apart = edit(local, (m) => { m.items[id(40)]!.duration = 20; });
+    expect(groupLinked(run({ base, local: apart, session, mode: "catch-up" }).conflicts, apart, session)).toHaveLength(3);
   });
 });

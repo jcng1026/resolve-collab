@@ -21,12 +21,12 @@ afterEach(() => {
   stops = [];
 });
 
-function setup() {
+function setup(quietMs?: number) {
   const dir = mkdtempSync(join(tmpdir(), "rc-bridge-"));
   const logPath = join(dir, "ResolveDebug.txt");
   const inboxDir = join(dir, "inbox");
   writeFileSync(logPath, "old line from before the companion started\n");
-  const client = new BridgeClient({ logPath, inboxDir, pollMs: 10, commandTimeoutMs: 1000 });
+  const client = new BridgeClient({ logPath, inboxDir, pollMs: 10, commandTimeoutMs: 1000, ...(quietMs ? { quietMs } : {}) });
   client.start();
   const fake = new FakeBridge(logPath, inboxDir);
   stops.push(() => client.stop(), () => fake.stop());
@@ -45,6 +45,26 @@ describe("BridgeClient with a fake bridge", () => {
     expect(await hello).toMatchObject({ product: "Fake Resolve" });
     expect(await alive).toBe(true);
     expect(client.connected).toBe(true);
+  });
+
+  it("takes a short silence for Resolve being busy, and only a long one for the bridge stopping", async () => {
+    const { client, fake } = setup(400);
+    const changes: boolean[] = [];
+    client.on("alive", (alive: boolean) => changes.push(alive));
+    fake.start(10);
+    await until(client, "hello");
+    await new Promise((r) => setTimeout(r, 50));
+    fake.stop(); // Resolve stops running scripts while a fade handle is dragged
+    await new Promise((r) => setTimeout(r, 250));
+    fake.start(10);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(changes).toEqual([true]);
+    fake.stop();
+    await new Promise((r) => setTimeout(r, 600));
+    expect(changes).toEqual([true, false]);
+    fake.start(10);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(changes).toEqual([true, false, true]);
   });
 
   it("sends a command through the inbox, gets the result, and clears acknowledged folders", async () => {

@@ -23,7 +23,7 @@ import { newId } from "./media-pool.ts";
 import type { BridgeResult } from "./media-pool-sync.ts";
 import { type Answer, type Conflict, EXISTS, fieldKey, itemKey, resolveWith } from "./reconcile.ts";
 import { type LocalItem, type LocalTimeline, type LocalTrack, type TrackLists, identifyTimelineState } from "./timeline-identify.ts";
-import { reconcileTimelines, timelineDomain } from "./timeline-reconcile.ts";
+import { groupLinked, reconcileTimelines, timelineDomain } from "./timeline-reconcile.ts";
 import { type Item, type TimelineOp, type Timelines, applyTimelineOp, emptyTimelines } from "./timeline.ts";
 
 export interface MediaLookup {
@@ -64,7 +64,7 @@ const PENDING_EXPIRE_MS = 10_000;
 // which the bridge doesn't report as an event.
 const RETRY_MS = 1000;
 // Errors that only mean "not now": no rebuild, no warning.
-const TRANSIENT = new Set(["not-current", "user-editing"]);
+const TRANSIENT = new Set(["not-current", "user-editing", "unreadable"]);
 
 type Command = { type: string } & Record<string, JsonValue>;
 
@@ -261,7 +261,12 @@ export class TimelineSync {
 
     let { propose, apply } = plan;
     if (plan.conflicts.length) {
-      const answers = await this.options.ask(plan.conflicts);
+      const groups = groupLinked(plan.conflicts, ids.model, session);
+      const answers = await this.options.ask(groups.map((g) => g[0]!));
+      for (const g of groups) {
+        const answer = answers.get(g[0]!.key);
+        if (answer) for (const c of g) answers.set(c.key, answer);
+      }
       const resolved = resolveWith(timelineDomain, plan.conflicts, answers, ids.model, scope(session));
       propose = [...propose, ...resolved.propose];
       apply = [...apply, ...resolved.apply];
@@ -640,8 +645,9 @@ export class TimelineSync {
         this.tracks = { video: (tracks.video ?? []) as unknown as LocalTrack[], audio: (tracks.audio ?? []) as unknown as LocalTrack[] };
       }
       this.lastError = result.ok ? undefined : result.error;
-      // The user is still changing the timeline in Resolve: try again shortly.
-      if (result.error === "user-editing") this.retrySoon = true;
+      // The user is still changing the timeline in Resolve, or Resolve can't
+      // read the item back yet: try again shortly.
+      if (result.error === "user-editing" || result.error === "unreadable") this.retrySoon = true;
       const failure = `${command.type}:${key}:${result.error}`;
       if (!result.ok && !TRANSIENT.has(String(result.error)) && !this.failures.has(failure)) {
         this.failures.add(failure);

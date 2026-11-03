@@ -112,8 +112,11 @@ export class Session {
       log("bridge connected (already running)");
       void bridge.send({ type: "mp.snapshot" });
     });
+    let paused = false;
     bridge.on("alive", (alive: boolean) => {
-      if (!alive) log("Sync paused: start Workspace > Scripts > ResolveCollab in Resolve");
+      if (!alive) log("Sync paused: Resolve hasn't answered for 15 s. If ResolveCollab stopped, start Workspace > Scripts > ResolveCollab in Resolve");
+      else if (paused) log("Resolve is answering again: sync resumes");
+      paused = !alive;
     });
     bridge.on("error", (error: JsonValue) => log(`bridge error: ${JSON.stringify(error)}`));
     bridge.on("event", (event: Message) => this.bridgeEvent(event));

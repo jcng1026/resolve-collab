@@ -96,6 +96,13 @@ describe("timeline identification", () => {
     expect(Object.values(out.model.items).find((i) => i.kind === "transition")!.edge).toEqual({ item: clipId, side: "start", alignment: "right" });
   });
 
+  it("skips a transition whose clip was just deleted, without calling it unsupported", () => {
+    const items = [{ ...local(1, 1, 96), kind: "transition" as const, media: "", duration: 24, alignment: "right" as const, template: "Cross Dissolve" }];
+    const out = identifyTimelineState(input({ tracks: { video: [track()], audio: [] }, items }));
+    expect(Object.values(out.model.items)).toEqual([]);
+    expect(out.unsupported).toEqual([]);
+  });
+
   it("leaves an already synced item alone when it can't be identified for a moment", () => {
     const itemMap = new Map([["L1", id(30)]]);
     const out = identifyTimelineState(input({ tracks: { video: [track()], audio: [] }, items: [{ ...local(1, 1, 0), kind: "other" as const }], itemMap }));

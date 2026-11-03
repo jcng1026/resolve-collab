@@ -113,6 +113,31 @@ describe.skipIf(!existsSync(FUSCRIPT))("Lua bridge codec (fuscript)", () => {
     expect(kinds.map((r) => r!.value)).toEqual(["clip", "other", "title", "generator", "textplus", "transition", "other"]);
   });
 
+  it("reads where an item sits, or nothing while Resolve can't say (an item being dropped)", () => {
+    const item = (start: string, duration: string, uid = `"u1"`) =>
+      `local it = { GetUniqueId = function() return ${uid} end, GetStart = function() return ${start} end, GetDuration = function() return ${duration} end }`;
+    const results = runLua([
+      { body: `${item("86448", "48")}; local u, s, d = M.placeOf(it, 86400); return { u, s, d }`, input: "" },
+      { body: `${item("nil", "48")}; local u, s, d = M.placeOf(it, 86400); return { u or false, s or false, d or false }`, input: "" },
+      { body: `${item("86448", "nil")}; local u, s = M.placeOf(it, 86400); return { u or false, s or false }`, input: "" },
+      { body: `${item("86448", "48", "nil")}; local u, s = M.placeOf(it, 86400); return { u or false, s or false }`, input: "" },
+      // A deleted item's methods can throw.
+      { body: `local it = { GetUniqueId = function() error("gone") end }; local u = M.placeOf(it, 0); return u or false`, input: "" },
+    ]);
+    expect(results.map((r) => r.value)).toEqual([["u1", 48, 48], ["u1", false, false], ["u1", false], [false, false], false]);
+  });
+
+  it("picks the synced properties, or nothing when Resolve returned none of them", () => {
+    const keys = `{ ZoomX = true, Opacity = true }`;
+    const results = runLua([
+      { body: `return M.pickProps({ ZoomX = 1.5, Opacity = 100, Other = 3, Name = "x" }, ${keys})`, input: "" },
+      { body: `return M.pickProps(nil, ${keys}) or false`, input: "" },
+      { body: `return M.pickProps({}, ${keys}) or false`, input: "" },
+      { body: `return M.pickProps({ Other = 3 }, ${keys}) or false`, input: "" },
+    ]);
+    expect(results.map((r) => r.value)).toEqual([{ ZoomX: 1.5, Opacity: 100 }, false, false, false]);
+  });
+
   it("round-trips hex", () => {
     const [result] = runLua([{ body: "return M.unhex(M.hex(input))", input: "héllo|RC|\"x\"" }]);
     expect(result!.value).toBe('héllo|RC|"x"');

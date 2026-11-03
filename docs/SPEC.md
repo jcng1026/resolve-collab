@@ -72,7 +72,7 @@ Resolve Free 21.1 Lua has no sockets or general file I/O. Measured on Free 21.1.
   - *Superseded:* the keyboard-preset trick (the bridge can't know the file name it would have to import) and the OTIO timeline trick (switches the editor's current timeline).
 - *Rejected:* `Fusion.prefs` via `SetPrefs`/`SavePrefs`. `SavePrefs` doesn't exist on Free, and the file is only written when Resolve restarts.
 - **Protocol:** every request has a sequence number, a command, arguments and a timeout. Every response echoes the sequence number, plus a status (`ok` / `error` / `unsupported`) and its data. Requests older than 120 s are refused.
-- **Liveness:** the bridge writes a heartbeat key every second. No heartbeat for 3 s means the bridge is not running (§9.4).
+- **Liveness:** the bridge writes a heartbeat key every second. No heartbeat for 15 s means the bridge is not running (§9.4). Resolve stops running scripts while you drag some controls (5–9 s while dragging a fade handle in the two-PC test, 2026-11-04), so a shorter gap is only Resolve being busy.
 
 ### 3.3 Change detection
 - The API sends no change events, so the bridge **snapshots** the session project about every 300 ms and the companion diffs consecutive snapshots.
@@ -181,7 +181,7 @@ Window and panel layout, playhead position, timeline zoom and scroll, viewer and
 A banner says **"Offline — changes won't sync"**. You can keep editing, and changes are queued. On reconnect, the merge in §9.3 runs.
 
 ### 9.2 Bridge not running or a different project open
-- **Bridge not running** (forgot to start it, or Resolve restarted): a large banner says **"Sync paused — start ResolveCollab in Resolve"**. When the bridge starts, it compares the project with the last state it knew, and the merge in §9.3 runs.
+- **Bridge not running** (forgot to start it, or Resolve restarted): a large banner says **"Sync paused — start ResolveCollab in Resolve"**, after 15 s without a heartbeat (§3.2), and the companion says when sync resumes. When the bridge starts, it compares the project with the last state it knew, and the merge in §9.3 runs.
 - **A different project open in Resolve:** sync pauses with *"You switched to another project — switch back to resume."* Nothing from the other project is ever sent.
 
 ### 9.3 Merge rules (same everywhere)
@@ -191,7 +191,7 @@ Three versions are compared for each item: the **last version everyone agreed on
 3. Items only others changed are applied to your copy.
 4. Items you both changed:
    - **Different properties** (you changed volume, Alex trimmed): both are kept automatically.
-   - **Same property:** dialog with **Keep mine / Keep Alex's**, one decision per item, plus **Apply to all remaining**.
+   - **Same property:** dialog with **Keep mine / Keep Alex's**, one decision per item, plus **Apply to all remaining**. A linked video and audio pair that conflicts the same way is one item.
    - **Deleted on one side, edited on the other:** always asks, *Keep it / Delete it*. A deletion never wins silently.
    - **Media you used was deleted from the media pool:** asks whether to restore it for everyone or remove your clips that use it.
 5. The dialogs are shown **only to the returning person**. Nothing is sent until they've answered all of them, and meanwhile they appear as "reviewing changes" to others, who keep working normally.
@@ -563,9 +563,11 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
   - Only the current timeline can be edited by the user, so only its tracks and items are scanned. Positions of every item every scan (~0.5 ms per item); full records for new or moved items and a rotating share of the rest (like §19.4).
   - Switching timelines reports the new one in full: `tl.reset`, tracks, items, `tl.synced`.
   - **The user's changes are reported once they have been still for 1 s.** While the user drags a clip, Resolve shows it to scripts as an item. Editing around it crashed Resolve in the two-PC test (2026-11-03). Changed, new and gone items and track changes are held back until nothing has changed for 1 s. Changes made by the bridge's own commands (to the items they touch and the items linked to them) are reported the same way but don't count as the user editing. A drag held still for longer is caught by the companion's mouse check (§20.5).
+  - **Items Resolve can't fully read yet count as still moving.** While a title, clip or transition is being dropped, Resolve briefly reports items with no position or length, and clips with no transform properties (two-PC test, 2026-11-04). The scan used to fail on them, and once passed on three items without their zoom. Such items are read again later and reported only once they read fully; meanwhile they hold the 1 s wait, for at most 3 s per item, so an item that never reads fully can't block sync. A scan that meets an item whose ID can't be read doesn't decide what was deleted.
   - **Both the media pool scan and the timeline scan hold their findings back**, and drop them if the project changed during the scan. Resolve keeps the bridge running while it loads another project; once, a pool walk read the other project, and its bins were reported as new and this project's clips as deleted.
 - **Commands**, each reading the result back:
   - Commands that edit the open timeline answer `user-editing` while the user's own changes are less than 1 s old, and change nothing.
+  - A command whose item can't be read back fully answers `unreadable`; an add removes its item again first.
   - `tl.create/link/set/delete/export/swap`. A created timeline becomes current in Resolve, so the bridge puts the user's timeline back.
   - `track.add/set/delete`. Each returns the new track list, since the bridge doesn't report its own changes as events.
   - `item.add`:
@@ -594,7 +596,7 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
   - a PC that opens or renders the project without the bridge has no API-set fades.
 - **Media:** a clip whose media pool clip isn't linked yet is retried every second; one whose file is missing waits on the missing list (§19.6).
 - **Nothing is compared or sent to Resolve while the left mouse button is held** (anywhere), then for 1 s after the bridge last saw a change (§20.4). A clip being dragged onto the timeline is already a real item to scripts, with the ID it keeps after the drop, and it has already overwritten what lies under it; nothing in the API tells it apart. Resolve's Lua has no `ffi`, so the companion reads that one button's state through a small PowerShell process (`GetAsyncKeyState`). Where that can't run, it says so and relies on the 1 s wait.
-- **Warnings**, each shown once per item: basic title words not synced; generator settings not synced; items of unsupported kinds not synced.
+- **Warnings**, each shown once per item: basic title words not synced; generator settings not synced; items of unsupported kinds not synced. A transition with no clip at its edge (its clip was just deleted, and Resolve removes the transition a moment later) is skipped without a warning.
 - **Timeline delete:**
   - when the bridge sees a local timeline deletion, the companion asks the deleter in the terminal: "Delete '<name>' for everyone?";
   - if they decline, nothing is sent and the timeline is rebuilt from the session on their PC;
@@ -603,7 +605,7 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
 ### 20.6 Apply tiers (§3.5)
 - **Tier 1 (direct)** is always tried first. A command that fails or reads back wrong moves to tier 2. A change of media or of a transition's edge goes straight to tier 2.
 - **Tier 2 (rebuild):** delete the item, add it again with every value from the session (by `item.add` rules), and map the new local ID to the same collab ID. If that fails, go to tier 3.
-- **`not-current` and `user-editing` only mean "not now":** no rebuild, no warning; the change is tried again a second later.
+- **`not-current`, `user-editing` and `unreadable` only mean "not now":** no rebuild, no warning; the change is tried again a second later.
 - **A failed add is tried once per session value.** It's tried again only when someone changes that item, so a failing add or rebuild can't loop. An item a failed rebuild removed counts as still to add, never as deleted on this PC.
 - **Tier 3 (timeline swap):**
   1. this PC asks the peer that last changed the timeline (who has it open and up to date) for a `.drt` export of it, sent in chunks over the peer link (at most 200 chunks of 256 KB);
@@ -647,6 +649,7 @@ Goal (§16): §6.1 timeline items sync both ways, live and after offline or brid
   - **Rerun after the two-PC crash fix, 2026-11-03** (projects "RC M4 Check 8" to "12"): all checks passed, at tier 1 and forced tier 2. New steps:
     - 7b: a 30 fps clip on the 24 fps timeline, added from frame 24 and trimmed;
     - 7c (`--drag`, and in the full run): a clip held mid-drag over the timeline for 5 s while the member keeps moving and recolouring another clip. Resolve didn't crash, nothing was applied while the button was held, and both sides matched afterwards.
+  - **Rerun after the second two-PC test's fixes, 2026-11-04** ("RC M4 Check 13" with `--auto --drag`, "14" with `--auto --force-tier 2`): all checks passed, with no bridge errors.
   - Bugs it found, all fixed:
     - a scan read the other project during a switch (M3 media pool bug: this project's clips were deleted);
     - a project switch looked like deleting every timeline;

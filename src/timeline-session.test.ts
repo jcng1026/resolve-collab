@@ -254,9 +254,12 @@ describe("the user editing in Resolve, and adds that fail", () => {
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const count = (pc: Pc, type: string) => pc.fake.commands.filter((c) => c.type === type).length;
 
-  it("waits while the user is mid-edit, without rebuilding, then applies", async () => {
-    const host = makePc("edithost");
-    const member = makePc("editmember", 2); // tier 2: a move is a rebuild, which must wait too
+  it.each([
+    ["the user is mid-edit", "editing"],
+    ["Resolve can't read items back yet", "unreadable"],
+  ] as const)("waits while %s, without rebuilding, then applies", async (_, flag) => {
+    const host = makePc(`${flag}host`);
+    const member = makePc(`${flag}member`, 2); // tier 2: a move is a rebuild, which must wait too
     const code = newInviteCode();
     const media = footage(host, [member], "f.mp4");
     host.fake.timelines.addClip(host.fake.timelines.addTimeline("Edit"), media, "f.mp4", 0, 48);
@@ -264,14 +267,14 @@ describe("the user editing in Resolve, and adds that fail", () => {
     await connect(member, "member", code);
     await waitFor("f.mp4 on member", () => !!clip(member, "f.mp4"));
     const before = clip(member, "f.mp4")!.id;
-    member.fake.timelines.editing = true;
+    member.fake.timelines[flag] = true;
     clip(host, "f.mp4")!.start = 96;
     await sleep(1500);
     expect(clip(member, "f.mp4")!.start).toBe(0);
     expect(count(member, "item.delete")).toBeGreaterThan(0); // it did try
     expect(clip(member, "f.mp4")!.id).toBe(before); // asked, refused, nothing removed
     expect(member.logs.some((l) => l.includes("couldn't"))).toBe(false);
-    member.fake.timelines.editing = false;
+    member.fake.timelines[flag] = false;
     await waitFor("moved on member", () => clip(member, "f.mp4")?.start === 96);
   }, 30_000);
 

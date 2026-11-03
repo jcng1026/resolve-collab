@@ -2,7 +2,7 @@
 // items are compared field by field, how operations are built, and the order
 // a batch is applied in.
 
-import { type Deleted, type Domain, type Fields, type Input, type PlanOf, reconcileWith } from "./reconcile.ts";
+import { type Conflict, type Deleted, type Domain, type Fields, type Input, type PlanOf, reconcileWith } from "./reconcile.ts";
 import { type Item, type TimelineInfo, type TimelineOp, type Timelines, type Track, emptyTimelines } from "./timeline.ts";
 
 type Kind = "timeline" | "track" | "item";
@@ -118,4 +118,18 @@ export type TimelinePlan = PlanOf<Timelines, TimelineOp>;
 
 export function reconcileTimelines(input: Input<Timelines>): TimelinePlan {
   return reconcileWith(timelineDomain, input);
+}
+
+// A linked video and audio pair that conflicts the same way is one question
+// (SPEC §9.3): each group's first conflict is asked, and its answer stands for
+// the rest of the group.
+export function groupLinked(conflicts: Conflict[], ...models: Timelines[]): Conflict[][] {
+  const linkOf = (id: string) => models.map((m) => m.items[id]?.link).find((l) => l) ?? "";
+  const groups = new Map<string, Conflict[]>();
+  for (const c of conflicts) {
+    const link = c.item === "item" ? linkOf(c.id) : "";
+    const key = link ? JSON.stringify([link, c.kind, c.field ?? "", c.mine ?? null, c.theirs ?? null]) : c.key;
+    groups.set(key, [...(groups.get(key) ?? []), c]);
+  }
+  return [...groups.values()];
 }

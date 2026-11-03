@@ -66,6 +66,8 @@ export class FakeTimelines {
   readonly failing = new Set<string>();
   // The user is mid-edit in Resolve: edits to the current timeline are refused.
   editing = false;
+  // Resolve can't fully read items back for a moment: item edits answer "unreadable".
+  unreadable = false;
   private seen = new Map<string, string>();
   private reported = ""; // the timeline last fully reported
   private scans = 0;
@@ -251,6 +253,7 @@ export class FakeTimelines {
     if (!t) return { ok: false, error: "unknown-timeline" };
     const current = t.id === this.current;
     if (current && this.editing) return { ok: false, error: "user-editing" };
+    if (current && this.unreadable && type.startsWith("item.")) return { ok: false, error: "unreadable" };
     switch (type) {
       case "track.add": {
         if (!current) return { ok: false, error: "not-current" };

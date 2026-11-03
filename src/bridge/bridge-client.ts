@@ -11,6 +11,9 @@ export interface BridgeClientOptions {
   inboxDir: string;
   pollMs?: number;
   commandTimeoutMs?: number;
+  // Silence before the bridge counts as stopped. Resolve stops running
+  // scripts for several seconds while some controls are dragged (SPEC §3.2).
+  quietMs?: number;
 }
 
 export interface CommandResult {
@@ -35,6 +38,7 @@ export class BridgeClient extends EventEmitter {
   private readonly inboxDir: string;
   private readonly pollMs: number;
   private readonly commandTimeoutMs: number;
+  private readonly quietMs: number;
   private offset = 0;
   private partial = "";
   private timer: NodeJS.Timeout | undefined;
@@ -52,6 +56,7 @@ export class BridgeClient extends EventEmitter {
     this.inboxDir = options.inboxDir;
     this.pollMs = options.pollMs ?? 50;
     this.commandTimeoutMs = options.commandTimeoutMs ?? 5000;
+    this.quietMs = options.quietMs ?? 15_000;
   }
 
   // Starts reading from the current end of the log, so output from earlier
@@ -149,7 +154,7 @@ export class BridgeClient extends EventEmitter {
       }
       if (message) this.handle(message);
     }
-    const alive = this.bridgeId !== undefined && Date.now() - this.lastBeat < 3000;
+    const alive = this.bridgeId !== undefined && Date.now() - this.lastBeat < this.quietMs;
     if (alive !== this.alive) {
       this.alive = alive;
       this.emit("alive", alive);

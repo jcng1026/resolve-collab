@@ -242,6 +242,28 @@ function M.itemKind(facts)
   return "other"
 end
 
+-- An item's ID and where it sits from the timeline's start. While an item is
+-- being dropped Resolve reports no start or length for a moment: then only
+-- the ID (or nothing, if even that can't be read).
+function M.placeOf(item, base)
+  local okId, uid = pcall(function() return item:GetUniqueId() end)
+  if not okId or type(uid) ~= "string" then return nil end
+  local ok, start, duration = pcall(function() return item:GetStart(), item:GetDuration() end)
+  if not ok or type(start) ~= "number" or type(duration) ~= "number" then return uid end
+  return uid, start - base, duration
+end
+
+-- The synced properties out of GetProperties, or nil when Resolve returned
+-- none of them (it does for a moment after a drop).
+function M.pickProps(raw, keys)
+  if type(raw) ~= "table" then return nil end
+  local out, any = {}, false
+  for key, v in pairs(raw) do
+    if keys[key] and (type(v) == "number" or type(v) == "boolean") then out[key], any = v, true end
+  end
+  return any and out or nil
+end
+
 if MODE == "test" then return M end
 
 -- Runtime -------------------------------------------------------------------------
@@ -630,6 +652,10 @@ local tlItems, tlOrder, tlCursor = {}, {}, 1 -- current timeline: uid → { obj,
 local tlSettings = {} -- timeline uid → { at, fps, width, height }
 local SETTLE = 1.0 -- seconds the user's timeline edits must be still before they're reported
 local tlLastChange, tlHeld, tlHeldGone, tlHeldTracks = 0, {}, {}, false
+-- Items Resolve can't fully read yet (uid → since when) hold the settle wait
+-- for at most UNREAD_WAIT seconds; tlUnsure: since when an item's ID can't be read.
+local UNREAD_WAIT = 3.0
+local tlUnread, tlUnsure = {}, nil
 -- Items this bridge's own commands just changed (and their linked items):
 -- their changes are reported like any other but aren't the user editing.
 local OWN = 2.0
@@ -696,14 +722,16 @@ local function trackRecord(tl)
   return rec
 end
 
+-- nil while Resolve can't fully read the item yet (SPEC §20.4).
 local function itemRecord(tl, item, kind, index)
-  local base = tl:GetStartFrame()
+  local uid, start, duration = M.placeOf(item, tl:GetStartFrame())
+  if not start then return nil end
   local mpi = item:GetMediaPoolItem()
   local typ = item:GetType()
   local tool = (not mpi and typ == "video") and textPlusTool(item) or nil
   local k = M.itemKind({ type = typ, name = item:GetName(), mediaType = mpi and (mpi:GetClipProperty("Type") or "") or nil, textPlus = tool ~= nil })
-  local rec = { type = "tl.item", timeline = tl:GetUniqueId(), id = item:GetUniqueId(), kind = k, trackKind = kind, trackIndex = index,
-    start = item:GetStart() - base, duration = item:GetDuration(), enabled = item:GetClipEnabled() ~= false,
+  local rec = { type = "tl.item", timeline = tl:GetUniqueId(), id = uid, kind = k, trackKind = kind, trackIndex = index,
+    start = start, duration = duration, enabled = item:GetClipEnabled() ~= false,
     color = item:GetClipColor() or "", name = item:GetName() or "", media = mpi and mpi:GetUniqueId() or "", linked = {} }
   if k == "clip" then
     rec.srcStart = item:GetLeftOffset() or 0
@@ -716,10 +744,8 @@ local function itemRecord(tl, item, kind, index)
     rec.fadeIn, rec.fadeOut = fades.FadeIn or 0, fades.FadeOut or 0
   end
   if (k == "clip" and kind == "video") or k == "textplus" then
-    rec.props = {}
-    for key, v in pairs(item:GetProperties() or {}) do
-      if PROP_KEYS[key] and (type(v) == "number" or type(v) == "boolean") then rec.props[key] = v end
-    end
+    rec.props = M.pickProps(item:GetProperties(), PROP_KEYS)
+    if not rec.props then return nil end
   end
   if k == "title" or k == "generator" or k == "textplus" then rec.template = item:GetName() or "" end
   if k == "textplus" then
@@ -735,6 +761,7 @@ end
 
 local function keepItem(tl, item, kind, index)
   local rec = itemRecord(tl, item, kind, index)
+  if not rec then return nil end
   local light = rec.start .. ":" .. rec.duration .. ":" .. kind .. index
   local sig = M.jencode(rec)
   tlItems[rec.id] = { obj = item, light = light, sig = sig, seen = sig, kind = kind, index = index }
@@ -778,7 +805,7 @@ local function scanTimelines(full)
   local id = tl:GetUniqueId()
   if id ~= tlCurrent or full then
     tlCurrent, tlTracksSig, tlItems, tlOrder, tlCursor, full = id, nil, {}, {}, 1, true
-    tlHeld, tlHeldGone, tlHeldTracks = {}, {}, false
+    tlHeld, tlHeldGone, tlHeldTracks, tlUnread, tlUnsure = {}, {}, false, {}, nil
     found({ type = "tl.reset", timeline = id })
   end
   local now = bmd.gettime()
@@ -792,17 +819,37 @@ local function scanTimelines(full)
   end
   local base = tl:GetStartFrame()
   local seen, order = {}, {}
+  -- An item Resolve can't fully read yet (one being dropped) is still
+  -- moving: it's held, and holds the settle wait for up to UNREAD_WAIT.
+  local function unread(uid)
+    tlHeld[uid] = true
+    tlUnread[uid] = tlUnread[uid] or now
+    if now - tlUnread[uid] < UNREAD_WAIT then changed = true end
+  end
+  local unsure = false
   for _, kind in ipairs({ "video", "audio" }) do
     for index = 1, tl:GetTrackCount(kind) or 0 do
       for _, item in ipairs(tl:GetItemListInTrack(kind, index) or {}) do
-        local uid = item:GetUniqueId()
-        local light = (item:GetStart() - base) .. ":" .. item:GetDuration() .. ":" .. kind .. index
-        local known = tlItems[uid]
-        if full and (not known or known.light ~= light) then
+        local uid, start, duration = M.placeOf(item, base)
+        local known = uid and tlItems[uid]
+        local light = start and (start .. ":" .. duration .. ":" .. kind .. index)
+        if not uid then
+          unsure = true
+        elseif not start then
+          if known then known.obj, known.light = item, ""
+          else tlItems[uid] = { obj = item, light = "", sig = "", kind = kind, index = index } end
+          unread(uid)
+        elseif full and (not known or known.light ~= light) then
           local rec = itemRecord(tl, item, kind, index)
-          local s = M.jencode(rec)
-          if not known or known.sig ~= s then found(rec) end
-          tlItems[uid] = { obj = item, light = light, sig = s, seen = s, kind = kind, index = index }
+          if rec then
+            local s = M.jencode(rec)
+            if not known or known.sig ~= s then found(rec) end
+            tlItems[uid] = { obj = item, light = light, sig = s, seen = s, kind = kind, index = index }
+            tlUnread[uid] = nil
+          else
+            tlItems[uid] = { obj = item, light = light, sig = "", kind = kind, index = index }
+            unread(uid)
+          end
         elseif not known or known.light ~= light then
           tlItems[uid] = { obj = item, light = light, sig = known and known.sig or "", kind = kind, index = index }
           tlHeld[uid], tlHeldGone[uid] = true, nil
@@ -810,18 +857,29 @@ local function scanTimelines(full)
         else
           known.obj = item
         end
-        seen[uid] = true
-        order[#order + 1] = uid
+        if uid then
+          seen[uid] = true
+          order[#order + 1] = uid
+        end
       end
     end
   end
-  for uid in pairs(tlItems) do
-    if not seen[uid] then
-      tlItems[uid], tlHeld[uid] = nil, nil
-      if full then found({ type = "tl.gone", timeline = id, id = uid })
-      else
-        tlHeldGone[uid] = true
-        if not mine(uid) then changed = true end
+  -- An item whose ID can't be read might be any of them: nothing is taken
+  -- as deleted this time.
+  if unsure then
+    tlUnsure = tlUnsure or now
+    if now - tlUnsure < UNREAD_WAIT then changed = true end
+  else
+    tlUnsure = nil
+    for uid, k in pairs(tlItems) do
+      if not seen[uid] then
+        tlItems[uid], tlHeld[uid], tlUnread[uid] = nil, nil, nil
+        if full then found({ type = "tl.gone", timeline = id, id = uid })
+        -- (never reported: nothing to take back)
+        elseif k.sig ~= "" then
+          tlHeldGone[uid] = true
+          if not mine(uid) then changed = true end
+        end
       end
     end
   end
@@ -830,8 +888,10 @@ local function scanTimelines(full)
   for uid, at in pairs(tlOwn) do
     local k = tlItems[uid]
     if k and not tlHeld[uid] and now - at < OWN then
-      local s = M.jencode(itemRecord(tl, k.obj, k.kind, k.index))
-      if s ~= (k.seen or k.sig) then k.seen, tlHeld[uid] = s, true end
+      local rec = itemRecord(tl, k.obj, k.kind, k.index)
+      local s = rec and M.jencode(rec)
+      if not s then tlHeld[uid] = true
+      elseif s ~= (k.seen or k.sig) then k.seen, tlHeld[uid] = s, true end
     end
     if now - at >= OWN or k then tlOwn[uid] = nil end
   end
@@ -843,10 +903,14 @@ local function scanTimelines(full)
     local k = tlItems[uid]
     tlCursor = tlCursor + 1
     if not tlHeld[uid] then
-      local s = M.jencode(itemRecord(tl, k.obj, k.kind, k.index))
-      if s ~= (k.seen or k.sig) then
-        k.seen = s
-        tlHeld[uid], changed = true, true
+      local rec = itemRecord(tl, k.obj, k.kind, k.index)
+      if not rec then unread(uid)
+      else
+        local s = M.jencode(rec)
+        if s ~= (k.seen or k.sig) then
+          k.seen = s
+          tlHeld[uid], changed = true, true
+        end
       end
     end
   end
@@ -854,10 +918,13 @@ local function scanTimelines(full)
   if not full and now - tlLastChange >= SETTLE then
     if tlHeldTracks then found(tracks) end
     for uid in pairs(tlHeldGone) do found({ type = "tl.gone", timeline = id, id = uid }) end
+    local still = {}
     for uid in pairs(tlHeld) do
       local k = tlItems[uid]
-      if k then
-        local rec = itemRecord(tl, k.obj, k.kind, k.index)
+      local rec = k and itemRecord(tl, k.obj, k.kind, k.index)
+      if k and not rec then still[uid] = true
+      elseif rec then
+        tlUnread[uid] = nil
         local s = M.jencode(rec)
         k.seen = s
         if s ~= k.sig then
@@ -866,7 +933,7 @@ local function scanTimelines(full)
         end
       end
     end
-    tlHeld, tlHeldGone, tlHeldTracks = {}, {}, false
+    tlHeld, tlHeldGone, tlHeldTracks = still, {}, false
   end
   if full then found({ type = "tl.synced", timeline = id }) end
   flush()
@@ -1156,6 +1223,10 @@ handlers["item.add"] = function(cmd)
   if not item then return { ok = false, error = "add-failed" } end
   if cmd.kind ~= "transition" then setCommon(item, cmd) end
   local rec = keepItem(tl, item, kind, index)
+  if not rec then
+    if cmd.kind ~= "transition" then tl:DeleteClips({ item }, false) end
+    return { ok = false, error = "unreadable" }
+  end
   -- Read back. What came out wrong is removed again, so a retry can't pile
   -- up copies.
   if cmd.kind ~= "transition" and (rec.start ~= start or rec.duration ~= duration) then
@@ -1190,6 +1261,7 @@ handlers["item.set"] = function(cmd)
   end
   setCommon(item, cmd)
   local rec = keepItem(tl, item, kind, index)
+  if not rec then return { ok = false, error = "unreadable" } end
   if (cmd.start ~= nil and rec.start ~= tonumber(cmd.start)) or (cmd.duration ~= nil and rec.duration ~= tonumber(cmd.duration)) then
     return { ok = false, error = "readback", records = { rec } }
   end
@@ -1218,7 +1290,9 @@ handlers["item.link"] = function(cmd)
   if not tl:SetClipsLinked(items, cmd.linked ~= false) then return { ok = false, error = "link-failed" } end
   for _, it in ipairs(items) do
     local k = tlItems[it:GetUniqueId()]
-    records[#records + 1] = keepItem(tl, it, k.kind, k.index)
+    local rec = keepItem(tl, it, k.kind, k.index)
+    if not rec then return { ok = false, error = "unreadable" } end
+    records[#records + 1] = rec
   end
   return { ok = true, records = records }
 end

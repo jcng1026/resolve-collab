@@ -259,10 +259,11 @@ export function identifyTimelineState(input: TimelineIdentifyInput): TimelineIde
     const id = ids.get(it.id)!;
     const edge = edgeOf(it, input.items, ids);
     const item = out.model.items[id];
+    // No clip at its edge: its clip was just deleted, and Resolve removes the
+    // transition a moment later. Skipped, and not called unsupported.
     if (!edge || !item) {
       delete out.model.items[id];
       if (input.session.items[id]) out.notReady.add(id);
-      else out.unsupported.push(it);
       continue;
     }
     item.edge = edge;
