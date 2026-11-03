@@ -68,8 +68,11 @@ export class FakeTimelines {
   private reported = ""; // the timeline last fully reported
   private readonly hasMedia: (id: string) => boolean;
 
-  constructor(hasMedia: (id: string) => boolean) {
+  private readonly project: () => string;
+
+  constructor(hasMedia: (id: string) => boolean, project: () => string) {
     this.hasMedia = hasMedia;
+    this.project = project;
   }
 
   // --- the user's edits ---------------------------------------------------------
@@ -127,7 +130,9 @@ export class FakeTimelines {
 
   private item(fields: Partial<FakeItem>): FakeItem {
     return { id: localId(), kind: "clip", trackKind: "video", trackIndex: 1, start: 0, duration: 48, enabled: true, color: "", name: "",
-      media: "", srcStart: 0, linked: [], speed: 100, fadeIn: 0, fadeOut: 0, props: fields.kind === "title" || fields.kind === "generator" ? {} : { ...DEFAULT_PROPS },
+      media: "", srcStart: 0, linked: [], speed: 100, fadeIn: 0, fadeOut: 0,
+      // Resolve has transform properties for video clips and Text+ only.
+      props: fields.trackKind === "audio" || ["title", "generator", "transition"].includes(fields.kind ?? "") ? {} : { ...DEFAULT_PROPS },
       template: "", ...fields };
   }
 
@@ -139,7 +144,7 @@ export class FakeTimelines {
   }
 
   scan(emit: (payload: JsonValue) => void, full = false): void {
-    const list = { type: "tl.list", current: this.current,
+    const list = { type: "tl.list", project: this.project(), current: this.current,
       timelines: [...this.timelines.values()].map((t) => ({ id: t.id, rcId: t.rcId, name: t.name, fps: t.fps, width: t.width, height: t.height })) };
     const report = (key: string, payload: C) => {
       const encoded = JSON.stringify(payload);

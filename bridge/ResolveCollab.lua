@@ -652,7 +652,7 @@ local function listRecord()
     local s = settingsOf(t)
     list[#list + 1] = { id = t:GetUniqueId(), rcId = rcIdOf(t), name = t:GetName(), fps = s.fps, width = s.width, height = s.height }
   end
-  return { type = "tl.list", timelines = list, current = cur and cur:GetUniqueId() or "" }
+  return { type = "tl.list", project = p and p:GetUniqueId() or "", timelines = list, current = cur and cur:GetUniqueId() or "" }
 end
 
 local function textPlusTool(item)
@@ -1026,7 +1026,11 @@ handlers["item.add"] = function(cmd)
     local edge = type(cmd.edge) == "table" and itemOf(cmd.edge.item)
     if not edge then return { ok = false, error = "edge-missing" } end
     local position = cmd.edge.side == "end" and "end" or "start"
-    item = edge:AddTransition({ type = cmd.template, position = position, alignment = cmd.edge.alignment, duration = duration })
+    -- AddTransition needs the right category; the session only knows the name.
+    for _, category in ipairs({ "simple", "fusion", "ofx", "audio" }) do
+      item = edge:AddTransition({ type = cmd.template, category = category, position = position, alignment = cmd.edge.alignment, duration = duration })
+      if item then break end
+    end
   else
     item = withPlayhead(tl, function() return insertGenerated(tl, cmd) end)
   end

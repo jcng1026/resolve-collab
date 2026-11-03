@@ -95,7 +95,7 @@ export class Session {
       ask: options.ask,
       confirm: options.confirm,
       backup: () => this.backup(),
-      media: { get ready() { return sync.ready; }, collab: (l) => sync.mediaCollab(l), local: (c) => sync.mediaLocal(c) },
+      media: { get ready() { return sync.ready; }, get project() { return sync.projectId; }, collab: (l) => sync.mediaCollab(l), local: (c) => sync.mediaLocal(c) },
       log,
       store: join(options.storeDir, `${role}-timelines.json`),
       ...(options.forceTier ? { forceTier: options.forceTier } : {}),

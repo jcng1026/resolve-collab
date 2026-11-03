@@ -26,6 +26,7 @@ import { type Item, type TimelineOp, type Timelines, applyTimelineOp, emptyTimel
 
 export interface MediaLookup {
   readonly ready: boolean; // the media pool has been read
+  readonly project: string | undefined; // the Resolve project the session syncs
   collab(localClip: string): string | undefined;
   local(collabClip: string): string | undefined;
 }
@@ -69,6 +70,7 @@ export class TimelineSync {
   tracks: { video: LocalTrack[]; audio: LocalTrack[] } | null = null;
   readonly items = new Map<string, LocalItem>();
   private listed = false;
+  private listProject = ""; // the Resolve project the timeline list came from
   private synced = ""; // local ID of the timeline last fully reported
   private session: Timelines | null = null;
   private previous: Timelines | null = null;
@@ -78,6 +80,7 @@ export class TimelineSync {
   private readonly busy = new Set<string>();
   private readonly warned = new Set<string>();
   private readonly waiting = new Set<string>(); // timelines with changes waiting to be opened
+  private readonly failures = new Set<string>(); // failed commands already logged
   private running = false;
   private again = false;
   private timer: NodeJS.Timeout | undefined;
@@ -95,6 +98,7 @@ export class TimelineSync {
   bridgeEvent(event: Record<string, JsonValue>): void {
     switch (event.type) {
       case "tl.list": {
+        this.listProject = String(event.project ?? "");
         this.timelines = (Array.isArray(event.timelines) ? event.timelines : []) as unknown as LocalTimeline[];
         const current = String(event.current ?? "");
         if (current !== this.current) {
@@ -208,6 +212,10 @@ export class TimelineSync {
 
   private async passOnce(): Promise<void> {
     if (!this.session || !this.listed || !this.options.media.ready) return;
+    // Another project's timelines are never compared: switching projects
+    // must not look like deleting every timeline (SPEC §9.2). The timeline
+    // list can report the switch before the media pool does.
+    if (this.listProject !== this.options.media.project) return;
     if (this.current && this.synced !== this.current) return;
     const session = this.session;
     const now = Date.now();
@@ -356,11 +364,18 @@ export class TimelineSync {
       return;
     }
     let linksChanged = false;
+    let applied = 0;
     for (const op of apply) {
-      if (await this.applyOp(op, session, timeline)) this.agree(op, session);
+      if (await this.applyOp(op, session, timeline)) {
+        this.agree(op, session);
+        applied++;
+      }
       if (op.type === "item.create" || (op.type === "item.set" && op.link !== undefined)) linksChanged = true;
     }
     if (linksChanged && timeline) await this.applyLinks(session, timeline);
+    // Look again once Resolve holds the changes: what it reports back is
+    // compared, and warnings about new items are shown.
+    if (applied) this.schedule();
   }
 
   // Brings one session change into Resolve. Returns true when Resolve now
@@ -572,7 +587,11 @@ export class TimelineSync {
       if (tracks && typeof tracks === "object" && tracks.timeline === this.current) {
         this.tracks = { video: (tracks.video ?? []) as unknown as LocalTrack[], audio: (tracks.audio ?? []) as unknown as LocalTrack[] };
       }
-      if (!result.ok && result.error !== "not-current") this.options.log(`Resolve couldn't ${command.type} (${result.error})`);
+      const failure = `${command.type}:${key}:${result.error}`;
+      if (!result.ok && result.error !== "not-current" && !this.failures.has(failure)) {
+        this.failures.add(failure);
+        this.options.log(`Resolve couldn't ${command.type} for ${key.split(":")[0]} ${key.slice(-8)} (${result.error})`);
+      }
       return result;
     } finally {
       this.busy.delete(key);

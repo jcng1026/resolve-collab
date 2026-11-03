@@ -21,7 +21,10 @@ function setOp(kind: string, id: string, changes: Fields): TimelineOp {
   const props: Record<string, number | boolean> = {};
   const rest: Fields = {};
   for (const [field, value] of Object.entries(changes)) {
-    if (field.startsWith("prop:")) props[field.slice(5)] = value as number | boolean;
+    if (field.startsWith("prop:")) {
+      // A property Resolve doesn't report can't be unset; leave it out.
+      if (value !== undefined) props[field.slice(5)] = value as number | boolean;
+    }
     else rest[field] = value;
   }
   return { type: "item.set", id, ...rest, ...(Object.keys(props).length ? { props } : {}) } as TimelineOp;

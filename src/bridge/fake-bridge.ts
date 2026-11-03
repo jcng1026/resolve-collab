@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, readdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { type JsonValue, decodeInbox, readyFolder } from "../bridge-protocol/wire.ts";
-import { FakeTimelines } from "./fake-timelines.ts";
+import { type FakeTimeline, FakeTimelines } from "./fake-timelines.ts";
 
 export interface FakeClip {
   timeline: string;
@@ -51,8 +51,9 @@ export class FakeBridge {
   readonly rootId = localId();
   readonly commands: Record<string, JsonValue>[] = [];
   project = { id: "fake-project", name: "Fake Project" };
-  readonly timelines = new FakeTimelines((id) => this.poolClips.has(id));
+  readonly timelines = new FakeTimelines((id) => this.poolClips.has(id), () => this.project.id);
   private readonly seen = new Map<string, string>(); // "bin:<id>" → last reported encoding
+  private readonly projectTimelines = new Map<string, { timelines: Map<string, FakeTimeline>; current: string }>();
   private lastHandled = 0;
   private timer: NodeJS.Timeout | undefined;
   private readonly logPath: string;
@@ -105,6 +106,21 @@ export class FakeBridge {
 
   binByName(name: string): FakeBin | undefined {
     return [...this.bins.values()].find((b) => b.name === name);
+  }
+
+  // Opening another project in Resolve: each project keeps its own
+  // timelines. Like the real bridge, the timeline scan reports the switch
+  // a moment before the media pool does.
+  switchProject(project: { id: string; name: string }): void {
+    this.projectTimelines.set(this.project.id, { timelines: new Map(this.timelines.timelines), current: this.timelines.current });
+    const next = this.projectTimelines.get(project.id);
+    this.timelines.timelines.clear();
+    for (const [k, v] of next?.timelines ?? []) this.timelines.timelines.set(k, v);
+    this.timelines.current = next?.current ?? "";
+    this.project = project;
+    this.timelines.scan((payload) => this.emit("EVT", payload));
+    // The real bridge scans the media pool half as often as timelines.
+    setTimeout(() => this.snapshot(), 300);
   }
 
   // --- wire -----------------------------------------------------------------

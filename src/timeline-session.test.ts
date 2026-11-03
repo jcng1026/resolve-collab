@@ -179,6 +179,20 @@ describe("timeline sync between two companions", () => {
     expect(clip(member, "Solid Color")!.trackIndex).toBe(2);
     expect(clip(member, "Text+")).toBeUndefined();
   }, 30_000);
+
+  it("never takes opening another project for deleting its timelines", async () => {
+    const original = host.fake.project;
+    host.fake.switchProject({ id: "other-project", name: "Other" });
+    await waitFor("host paused", () => host.logs.some((l) => l.includes("You switched to another project")));
+    await new Promise((r) => setTimeout(r, 500));
+    expect(tl(member)).toBeDefined();
+    expect(member.logs.some((l) => l.includes("a timeline was deleted"))).toBe(false);
+    host.fake.switchProject(original);
+    await waitFor("host back", () => host.logs.some((l) => l.includes(`Back on "${original.name}"`)));
+    clip(host, "a.mp4")!.start = 200;
+    await waitFor("edits sync again", () => clip(member, "a.mp4")?.start === 200);
+    expect(tl(member, "Second")).toBeDefined();
+  }, 30_000);
 });
 
 describe("forced tiers", () => {

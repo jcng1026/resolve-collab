@@ -152,6 +152,12 @@ export function reconcileWith<M, O>(domain: Domain<M, O>, input: Input<M>): Plan
           agreed[field] = lv;
           continue;
         }
+        // A field one side doesn't report at all (e.g. transform properties
+        // of an audio clip in Resolve) is neither proposed nor applied.
+        if (lv === undefined || sv === undefined) {
+          agreed[field] = sv ?? lv;
+          continue;
+        }
         // Nothing agreed yet (first join, or not yet seen on both sides):
         // the session's value wins.
         const bv = bf && !firstJoin ? get(bf, field) : lv;
