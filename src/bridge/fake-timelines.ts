@@ -66,6 +66,7 @@ export class FakeTimelines {
   readonly failing = new Set<string>();
   private seen = new Map<string, string>();
   private reported = ""; // the timeline last fully reported
+  private scans = 0;
   private readonly hasMedia: (id: string) => boolean;
 
   private readonly project: () => string;
@@ -153,7 +154,9 @@ export class FakeTimelines {
       emit(payload);
       return true;
     };
-    report("list", list);
+    // Like the real bridge, the timeline list is read about every 0.3 s (15
+    // scans at the fake's 20 ms), so it can lag behind a command's result.
+    if (full || this.reported !== this.current || this.scans++ % 15 === 0) report("list", list);
     const t = this.open;
     if (!t) return;
     if (full || this.reported !== t.id) {

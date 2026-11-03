@@ -118,7 +118,7 @@ export class FakeBridge {
     for (const [k, v] of next?.timelines ?? []) this.timelines.timelines.set(k, v);
     this.timelines.current = next?.current ?? "";
     this.project = project;
-    this.timelines.scan((payload) => this.emit("EVT", payload));
+    this.timelines.scan((payload) => this.emit("EVT", payload), true);
     // The real bridge scans the media pool half as often as timelines.
     setTimeout(() => this.snapshot(), 300);
   }

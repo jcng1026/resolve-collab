@@ -226,7 +226,10 @@ export class TimelineSync {
       previous: this.previous, itemMap: this.itemMap, trackMap: this.trackMap, media: (l) => this.options.media.collab(l), newId,
     });
     this.localTimelines = ids.localTimelines;
-    for (const link of ids.links) await this.run(`timeline:${link.rcId}`, { type: "tl.link", id: link.local, rcId: link.rcId });
+    for (const link of ids.links) {
+      const result = await this.run(`timeline:${link.rcId}`, { type: "tl.link", id: link.local, rcId: link.rcId });
+      if (result.ok) this.timelines = this.timelines.map((t) => (t.id === link.local ? { ...t, rcId: link.rcId } : t));
+    }
     if (ids.links.length) this.again = true;
     this.warnUnsupported(ids.unsupported, ids.model);
 
@@ -387,18 +390,29 @@ export class TimelineSync {
     switch (op.type) {
       case "timeline.create": {
         const result = await this.run(key, { type: "tl.create", name: op.name, fps: op.fps, width: op.width, height: op.height, rcId: op.id });
-        if (result.ok && typeof result.id === "string") this.localTimelines.set(op.id, result.id);
+        if (result.ok && typeof result.id === "string") {
+          this.localTimelines.set(op.id, result.id);
+          // Resolve's next timeline list comes a moment later; until then the
+          // new timeline must not look deleted here.
+          this.timelines = [...this.timelines.filter((t) => t.id !== result.id),
+            { id: result.id, rcId: op.id, name: op.name, fps: op.fps, width: op.width, height: op.height }];
+        }
         return result.ok;
       }
       case "timeline.set": {
         const local = this.localTimelines.get(op.id);
         if (!local) return false;
         const { type: _, id: __, ...fields } = op;
-        return (await this.run(key, { type: "tl.set", id: local, ...(fields as Record<string, JsonValue>) })).ok;
+        const ok = (await this.run(key, { type: "tl.set", id: local, ...(fields as Record<string, JsonValue>) })).ok;
+        if (ok) this.timelines = this.timelines.map((t) => (t.id === local ? { ...t, ...fields } : t));
+        return ok;
       }
       case "timeline.delete": {
         const local = this.localTimelines.get(op.id);
-        return !local || (await this.run(key, { type: "tl.delete", id: local })).ok;
+        if (!local) return true;
+        const ok = (await this.run(key, { type: "tl.delete", id: local })).ok;
+        if (ok) this.timelines = this.timelines.filter((t) => t.id !== local);
+        return ok;
       }
       case "track.create": {
         if (!localTimeline || !this.tracks) return false;
