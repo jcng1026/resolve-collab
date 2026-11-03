@@ -334,9 +334,17 @@ local function isTimelineClip(clip)
   return ok and t == "Timeline"
 end
 
+-- Resolve keeps running this loop while it loads another project, so the
+-- project can change in the middle of a walk. Findings are held back and
+-- reported only if the project was the same before and after; otherwise
+-- nothing is reported and the next loop takes a fresh snapshot. (Reporting
+-- them once made another project's bins look like local edits and this
+-- project's clips look deleted.)
 local function scanMediaPool(report)
   local project = pm:GetCurrentProject()
-  if not project then return end
+  if not project or project:GetUniqueId() ~= mpProject then return false end
+  local out = {}
+  local function found(rec) if report then out[#out + 1] = rec end end
   local root = project:GetMediaPool():GetRootFolder()
   local seenBins, seenClips, order = {}, {}, {}
   local function walk(folder, parentId)
@@ -346,7 +354,7 @@ local function scanMediaPool(report)
     local sig = M.jencode(rec)
     if not known or known.sig ~= sig then
       mpBins[rec.id] = { obj = folder, sig = sig }
-      if report then emit("EVT", rec) end
+      found(rec)
     else
       known.obj = folder
     end
@@ -361,7 +369,7 @@ local function scanMediaPool(report)
           local s = M.jencode(r)
           if not kc or kc.sig ~= s then
             mpClips[uid] = { obj = clip, sig = s, bin = rec.id }
-            if report then emit("EVT", r) end
+            found(r)
           end
         else
           kc.obj = clip
@@ -378,13 +386,13 @@ local function scanMediaPool(report)
   for id in pairs(mpBins) do
     if not seenBins[id] then
       mpBins[id] = nil
-      if report then emit("EVT", { type = "mp.gone", kind = "bin", id = id }) end
+      found({ type = "mp.gone", kind = "bin", id = id })
     end
   end
   for id in pairs(mpClips) do
     if not seenClips[id] then
       mpClips[id] = nil
-      if report then emit("EVT", { type = "mp.gone", kind = "clip", id = id }) end
+      found({ type = "mp.gone", kind = "clip", id = id })
     end
   end
   -- Names, colours, flags and metadata: a rotating share of clips per scan.
@@ -397,9 +405,17 @@ local function scanMediaPool(report)
     local s = M.jencode(r)
     if s ~= kc.sig then
       kc.sig = s
-      if report then emit("EVT", r) end
+      found(r)
     end
   end
+  local now = pm:GetCurrentProject()
+  if not now or now:GetUniqueId() ~= mpProject then
+    -- Switched while walking: what was read may belong to either project.
+    mpBins, mpClips, mpOrder, mpCursor, mpProject = {}, {}, {}, 1, nil
+    return false
+  end
+  for _, rec in ipairs(out) do emit("EVT", rec) end
+  return true
 end
 
 -- mp.reset with the project, everything as new, then mp.synced.
@@ -408,7 +424,8 @@ local function snapshotMediaPool()
   mpBins, mpClips, mpOrder, mpCursor = {}, {}, {}, 1
   mpProject = project and project:GetUniqueId()
   emit("EVT", { type = "mp.reset", project = project and { id = project:GetUniqueId(), name = project:GetName() } or nil })
-  scanMediaPool(true)
+  -- A switch during the walk: the next loop snapshots again.
+  if project and not scanMediaPool(true) then return end
   local bins, clips = 0, 0
   for _ in pairs(mpBins) do bins = bins + 1 end
   for _ in pairs(mpClips) do clips = clips + 1 end
@@ -717,29 +734,43 @@ local function keepItem(tl, item, kind, index)
   return rec
 end
 
+-- Like the media pool scan: held back, and dropped if the project changed
+-- during the scan.
 local function scanTimelines(full)
+  local p0 = project()
+  local before = p0 and p0:GetUniqueId() or ""
+  local out = {}
+  local function found(rec) out[#out + 1] = rec end
+  local function flush()
+    local p1 = project()
+    if (p1 and p1:GetUniqueId() or "") ~= before then
+      tlListSig, tlCurrent = nil, nil
+      return
+    end
+    for _, rec in ipairs(out) do emit("EVT", rec) end
+  end
   local list = listRecord()
   local sig = M.jencode(list)
   if sig ~= tlListSig then
     tlListSig = sig
-    emit("EVT", list)
+    found(list)
   end
   local p = project()
   local tl = p and p:GetCurrentTimeline()
   if not tl then
     tlCurrent = nil
-    return
+    return flush()
   end
   local id = tl:GetUniqueId()
   if id ~= tlCurrent or full then
     tlCurrent, tlTracksSig, tlItems, tlOrder, tlCursor, full = id, nil, {}, {}, 1, true
-    emit("EVT", { type = "tl.reset", timeline = id })
+    found({ type = "tl.reset", timeline = id })
   end
   local tracks = trackRecord(tl)
   local tsig = M.jencode(tracks)
   if tsig ~= tlTracksSig then
     tlTracksSig = tsig
-    emit("EVT", tracks)
+    found(tracks)
   end
   local base = tl:GetStartFrame()
   local seen, order = {}, {}
@@ -752,7 +783,7 @@ local function scanTimelines(full)
         if not known or known.light ~= light then
           local rec = itemRecord(tl, item, kind, index)
           local s = M.jencode(rec)
-          if not known or known.sig ~= s then emit("EVT", rec) end
+          if not known or known.sig ~= s then found(rec) end
           tlItems[uid] = { obj = item, light = light, sig = s, kind = kind, index = index }
         else
           known.obj = item
@@ -765,7 +796,7 @@ local function scanTimelines(full)
   for uid in pairs(tlItems) do
     if not seen[uid] then
       tlItems[uid] = nil
-      emit("EVT", { type = "tl.gone", timeline = id, id = uid })
+      found({ type = "tl.gone", timeline = id, id = uid })
     end
   end
   -- Names, colours, properties, fades and text: a rotating share of items.
@@ -778,10 +809,11 @@ local function scanTimelines(full)
     local s = M.jencode(rec)
     if s ~= k.sig then
       k.sig = s
-      emit("EVT", rec)
+      found(rec)
     end
   end
-  if full then emit("EVT", { type = "tl.synced", timeline = id }) end
+  if full then found({ type = "tl.synced", timeline = id }) end
+  flush()
 end
 
 -- Timeline commands -------------------------------------------------------------------
