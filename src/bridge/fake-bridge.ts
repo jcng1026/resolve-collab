@@ -52,6 +52,7 @@ export class FakeBridge {
   readonly rootId = localId();
   readonly commands: Record<string, JsonValue>[] = [];
   project = { id: "fake-project", name: "Fake Project" };
+  build = ""; // reported like the real bridge's stamped build (bridge-build.ts)
   readonly timelines = new FakeTimelines((id) => this.poolClips.has(id), () => this.project.id, (id) => this.poolClips.get(id)?.markers ?? []);
   private readonly seen = new Map<string, string>(); // "bin:<id>" → last reported encoding
   private readonly projectTimelines = new Map<string, { timelines: Map<string, FakeTimeline>; current: string }>();
@@ -67,7 +68,7 @@ export class FakeBridge {
   }
 
   start(pollMs = 20): void {
-    this.emit("HELLO", { product: "Fake Resolve", studio: false, inbox: this.inboxDir, handled: this.lastHandled });
+    this.emit("HELLO", { product: "Fake Resolve", studio: false, inbox: this.inboxDir, handled: this.lastHandled, build: this.build });
     this.snapshot();
     this.timer = setInterval(() => this.tick(), pollMs);
   }
@@ -175,7 +176,7 @@ export class FakeBridge {
   }
 
   private tick(): void {
-    this.emit("HB", { handled: this.lastHandled });
+    this.emit("HB", { handled: this.lastHandled, build: this.build });
     // Like the real bridge, list the inbox only once the next message is ready.
     let names: string[] = [];
     if (existsSync(join(this.inboxDir, readyFolder(this.lastHandled + 1)))) {

@@ -365,6 +365,7 @@ Goal: on two PCs, a clip appended to the current timeline on one appears on the 
 - **Outbound log line:** `RC|<bridgeId>|<kind>|<hex(JSON)>`, raised through `fusion:Execute('error("…")')`. `bridgeId` is random per bridge start, so lines from older runs are ignored. Kinds:
   - `HELLO` (product, version, Studio flag, inbox, and `handled` = 0: a new run counts inbox messages from its own start)
   - `HB` (heartbeat, every 1 s; carries `handled`, see §19.4)
+  - `HELLO` and `HB` also carry `build`: a hash of the bridge file, stamped by `tools/install-bridge.ts`. The companion compares it with the hash of the bridge file in its own checkout. On a mismatch it says to run `install-bridge` and start the bridge again, because a bridge Resolve is still running from before an update doesn't know the newer commands (it answered `unknown-command` in the M5 two-PC test, 2026-11-04).
   - `ACK` (highest inbox sequence handled)
   - `EVT` (detected local change)
   - `RES` (result of a command)

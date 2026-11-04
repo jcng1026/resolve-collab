@@ -29,10 +29,15 @@ interface Pending {
 }
 
 const inboxSeq = (name: string): number | null => parseInboxFolder(name)?.seq ?? parseReadyFolder(name);
+// The bridge's build, from HELLO or a heartbeat (see bridge-build.ts).
+const buildOf = (payload: JsonValue): string | undefined => {
+  const build = (payload as Record<string, JsonValue> | null)?.build;
+  return typeof build === "string" ? build : undefined;
+};
 
 // Events: "hello" (payload), "attached" (a bridge that was already running
-// when this client started), "event" (payload), "error" (payload),
-// "alive" (boolean).
+// when this client started), "build" (the bridge's build, or undefined),
+// "event" (payload), "error" (payload), "alive" (boolean).
 export class BridgeClient extends EventEmitter {
   private readonly logPath: string;
   private readonly inboxDir: string;
@@ -191,6 +196,7 @@ export class BridgeClient extends EventEmitter {
       this.nextSeq = (typeof handled === "number" && Number.isSafeInteger(handled) && handled >= 0 ? handled : 0) + 1;
       this.flushWaiting();
       this.emit("hello", payload);
+      this.emit("build", buildOf(payload));
       return;
     }
     // A bridge already running when this client started: its heartbeat says
@@ -200,6 +206,7 @@ export class BridgeClient extends EventEmitter {
       this.seeHandled(payload);
       this.flushWaiting();
       this.emit("attached");
+      this.emit("build", buildOf(payload));
     }
     if (bridgeId !== this.bridgeId) return; // output of an older bridge run
     this.lastBeat = Date.now();

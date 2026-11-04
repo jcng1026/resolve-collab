@@ -14,6 +14,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { JsonValue } from "./bridge-protocol/wire.ts";
+import { buildWarning } from "./bridge/bridge-build.ts";
 import type { BridgeClient } from "./bridge/bridge-client.ts";
 import { type Commit, HostLog, MemberLog, type SessionState } from "./sync/host-log.ts";
 import { type Fingerprint, newId } from "./sync/media-pool.ts";
@@ -36,6 +37,9 @@ export interface SessionOptions {
   log: (message: string) => void;
   forceTier?: 1 | 2 | 3;
   userBusy?: () => boolean; // see TimelineSyncOptions
+  // The build of the bridge this companion was installed with: a bridge in
+  // Resolve reporting another one is out of date (bridge-build.ts).
+  bridgeBuild?: string;
 }
 
 type Message = Record<string, JsonValue>;
@@ -106,6 +110,12 @@ export class Session {
     if (this.host) this.reset(this.host.model);
 
     bridge.on("hello", (hello: Message) => log(`bridge connected: ${hello.product} ${hello.version ?? ""}`));
+    let warnedBuild: string | undefined;
+    bridge.on("build", (build: string | undefined) => {
+      const warning = options.bridgeBuild && buildWarning(options.bridgeBuild, build);
+      if (warning && warnedBuild !== String(build)) log(warning);
+      warnedBuild = String(build);
+    });
     // A bridge that was already running sent its state before we were
     // listening; ask for it again.
     bridge.on("attached", () => {

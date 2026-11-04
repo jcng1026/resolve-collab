@@ -20,6 +20,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
+import { localBridgeBuild } from "./bridge/bridge-build.ts";
 import { BridgeClient } from "./bridge/bridge-client.ts";
 import { FakeBridge } from "./bridge/fake-bridge.ts";
 import { findFile, fingerprint, userFolders } from "./media/fingerprint.ts";
@@ -147,6 +148,7 @@ const session = new Session({
   log,
   ...(forceTier ? { forceTier: forceTier as 2 | 3 } : {}),
   userBusy: () => mouse.held,
+  ...(values.fake ? {} : { bridgeBuild: localBridgeBuild() }),
 });
 
 let fake: FakeBridge | undefined;

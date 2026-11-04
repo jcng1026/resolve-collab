@@ -13,6 +13,8 @@
 local MODE = ...
 
 local INBOX = [[__INBOX__]]
+-- A hash of this file, stamped by tools/install-bridge.ts (src/bridge/bridge-build.ts).
+local BUILD = [[__BUILD__]]
 local TICK = 0.05
 local SNAPSHOT_EVERY = 0.3
 local MEDIA_POOL_EVERY = 0.6
@@ -1614,7 +1616,7 @@ end
 F:SetPrefs(ACTIVE_PREF, bridgeId) -- a newer bridge run takes over from this one
 -- handled: this run counts inbox messages from 0 (a companion that wrote
 -- for an earlier run starts again from here).
-emit("HELLO", { product = R:GetProductName(), version = R:GetVersionString(), studio = R:IsStudio(), inbox = INBOX, handled = 0 })
+emit("HELLO", { product = R:GetProductName(), version = R:GetVersionString(), studio = R:IsStudio(), inbox = INBOX, handled = 0, build = BUILD })
 snapshotMediaPool()
 
 local lastHandled, lastBeat, lastScan, lastPoolScan = 0, 0, 0, 0
@@ -1655,7 +1657,7 @@ while F:GetPrefs(ACTIVE_PREF) == bridgeId do
   end
   if now - lastBeat >= HEARTBEAT_EVERY then
     lastBeat = now
-    emit("HB", { t = now, handled = lastHandled })
+    emit("HB", { t = now, handled = lastHandled, build = BUILD })
   end
 end
 emit("ERR", { error = "bridge-stopped" })
