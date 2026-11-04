@@ -77,7 +77,7 @@ const hostPeers = new PeerLink(code, { bootstrap: testnet.bootstrap });
 const mouse = new MouseWatch((m) => say(`host    ${m}`));
 mouse.start();
 const host = new Session({
-  role: "host", bridge: hostBridge, peers: hostPeers,
+  role: "host", bridge: hostBridge, peers: hostPeers, name: "Resolve", approve: async () => "yes",
   storeDir: join(home, "sessions", `m5check-${Date.now()}`), backupsDir: join(home, "backups"),
   ask: async () => new Map(), // the host is never asked in this check
   confirm: async () => true,
@@ -93,7 +93,7 @@ const memberLogs: string[] = [];
 const memberBridge = new BridgeClient({ logPath: join(dir, "ResolveDebug.txt"), inboxDir: join(dir, "inbox"), pollMs: 20 });
 const memberPeers = new PeerLink(code, { bootstrap: testnet.bootstrap });
 const member = new Session({
-  role: "member", bridge: memberBridge, peers: memberPeers,
+  role: "member", bridge: memberBridge, peers: memberPeers, name: "Fake member",
   storeDir: join(dir, "member-store"), backupsDir: join(dir, "backups"),
   ask: async (conflicts) => new Map(conflicts.map((c) => [c.key, "theirs"])),
   confirm: async () => true,

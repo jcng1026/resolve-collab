@@ -55,7 +55,11 @@ export class FakeBridge {
   build = ""; // reported like the real bridge's stamped build (bridge-build.ts)
   readonly timelines = new FakeTimelines((id) => this.poolClips.has(id), () => this.project.id, (id) => this.poolClips.get(id)?.markers ?? []);
   private readonly seen = new Map<string, string>(); // "bin:<id>" → last reported encoding
-  private readonly projectTimelines = new Map<string, { timelines: Map<string, FakeTimeline>; current: string }>();
+  private readonly projectTimelines = new Map<string, {
+    timelines: Map<string, FakeTimeline>; current: string; bins: Map<string, FakeBin>; clips: Map<string, FakePoolClip>;
+  }>();
+  readonly projectNames = new Set<string>(["Fake Project"]);
+  private poolProject = ""; // the project the media pool was last reported for
   private lastHandled = 0;
   private timer: NodeJS.Timeout | undefined;
   private readonly logPath: string;
@@ -110,15 +114,22 @@ export class FakeBridge {
     return [...this.bins.values()].find((b) => b.name === name);
   }
 
-  // Opening another project in Resolve: each project keeps its own
-  // timelines. Like the real bridge, the timeline scan reports the switch
-  // a moment before the media pool does.
+  // Opening another project in Resolve: each project keeps its own media
+  // pool and timelines (a project not seen before is empty). Like the real
+  // bridge, the timeline scan reports the switch a moment before the media
+  // pool does.
   switchProject(project: { id: string; name: string }): void {
-    this.projectTimelines.set(this.project.id, { timelines: new Map(this.timelines.timelines), current: this.timelines.current });
+    this.projectTimelines.set(this.project.id, {
+      timelines: new Map(this.timelines.timelines), current: this.timelines.current, bins: new Map(this.bins), clips: new Map(this.poolClips),
+    });
     const next = this.projectTimelines.get(project.id);
     this.timelines.timelines.clear();
     for (const [k, v] of next?.timelines ?? []) this.timelines.timelines.set(k, v);
     this.timelines.current = next?.current ?? "";
+    this.bins.clear();
+    for (const [k, v] of next?.bins ?? [[this.rootId, { id: this.rootId, name: "Master", parent: "" }]]) this.bins.set(k, v);
+    this.poolClips.clear();
+    for (const [k, v] of next?.clips ?? []) this.poolClips.set(k, v);
     this.project = project;
     this.timelines.scan((payload) => this.emit("EVT", payload), true);
     // The real bridge scans the media pool half as often as timelines.
@@ -134,6 +145,7 @@ export class FakeBridge {
 
   private snapshot(): void {
     this.seen.clear();
+    this.poolProject = this.project.id;
     this.emit("EVT", { type: "mp.reset", project: this.project });
     this.scan();
     this.emit("EVT", { type: "mp.synced", bins: this.bins.size, clips: this.poolClips.size, project: this.project });
@@ -153,8 +165,14 @@ export class FakeBridge {
     return record;
   }
 
-  // Reports added, changed and removed items since the last scan.
+  // Reports added, changed and removed items since the last scan. Like the
+  // real bridge, never across a project switch: until the switch is reported
+  // (mp.reset), another project's pool isn't compared with this one's.
   private scan(): void {
+    if (this.poolProject !== this.project.id) {
+      this.timelines.scan((payload) => this.emit("EVT", payload));
+      return;
+    }
     const present = new Set<string>();
     const report = (key: string, record: Record<string, JsonValue>) => {
       present.add(key);
@@ -206,6 +224,16 @@ export class FakeBridge {
         if (!this.media.has(clip.media.name)) return { ok: false, error: "media-missing" };
         this.clips.push(clip);
         return { ok: true };
+      }
+      // A new empty project, opened, as the bridge's CreateProject (SPEC §22.3).
+      case "project.create": {
+        let name = String(command.name ?? "");
+        if (!name) return { ok: false, error: "bad-name" };
+        for (let n = 2; this.projectNames.has(name); n++) name = `${String(command.name)} (${n})`;
+        this.projectNames.add(name);
+        const project = { id: localId(), name };
+        this.switchProject(project);
+        return { ok: true, id: project.id, name };
       }
       case "project.backup":
         return { ok: true, path: command.path ?? "" };

@@ -1,13 +1,21 @@
-// One ResolveCollab session on this PC (SPEC §19.3, §20): connects the
-// bridge, the peers, and the media pool and timeline syncs. The host orders
-// every change; members propose to the host and apply its commits in order.
+// One ResolveCollab session on this PC (SPEC §19.3, §20, §22): connects the
+// bridge, the peers, and the media pool and timeline syncs. The host lets
+// people in and orders every change; members propose to the host and apply
+// its commits in order.
 //
-// Peer messages (all JSON, all checked before use):
-//   host → peer    welcome    { host, state }          on connect, or when asked
+// Peer messages (all JSON, all checked before use). The host sends session
+// data only to members it has let in:
+//   member → host  join       { name }                  on connect, again until answered
+//   host → member  waiting                              the host is being asked
+//   host → member  refused-join { blocked }
+//   host → member  welcome    { session, host, state }  once let in, or when asked
 //   member → host  propose    { op, proposal }
-//   host → all     commit     { commit }
+//   host → members commit     { commit }
 //   host → member  refused    { proposal, error }
 //   member → host  want-state                         after a gap in commits
+//   host → members closing                             the host closed its companion
+//   host → members ended                               ended for good
+//   host → member  removed                             this PC was removed
 //   anyone → peer  want-drt   { request, timeline }    tier 3: a copy of a timeline
 //   peer → asker   drt        { request, part, parts, data } or { request, error }
 
@@ -16,20 +24,33 @@ import { dirname, join } from "node:path";
 import type { JsonValue } from "./bridge-protocol/wire.ts";
 import { buildWarning } from "./bridge/bridge-build.ts";
 import type { BridgeClient } from "./bridge/bridge-client.ts";
+import type { PeerLink } from "./peer/peer-link.ts";
+import { type SessionRecord, findHostSession, isSessionId, loadRecord, newRecord, saveRecord, sessionDir } from "./session-record.ts";
 import { type Commit, HostLog, MemberLog, type SessionState } from "./sync/host-log.ts";
 import { type Fingerprint, newId } from "./sync/media-pool.ts";
 import { type BridgeResult, MediaPoolSync } from "./sync/media-pool-sync.ts";
 import type { Answer, Conflict } from "./sync/reconcile.ts";
 import { type SessionModel, type SessionOp, validateModel } from "./sync/session-model.ts";
 import { TimelineSync } from "./sync/timeline-sync.ts";
-import type { PeerLink } from "./peer/peer-link.ts";
+
+export type Approval = "yes" | "no" | "block";
 
 export interface SessionOptions {
   role: "host" | "member";
   bridge: BridgeClient;
   peers: PeerLink;
-  storeDir: string; // per-session state files
+  storeDir: string; // every session's state, by session ID (SPEC §22.1)
   backupsDir: string;
+  name: string; // this person's name
+  // Host: reopen the session the project open in Resolve belongs to, rather
+  // than start a new one (SPEC §22.2).
+  resume?: boolean;
+  // Host: is this PC let in? Asked once per PC per session (SPEC §22.3).
+  approve?: (name: string, peer: string) => Promise<Approval>;
+  // Member: how long to wait for a host whose connection dropped (SPEC §22.4).
+  graceMs?: number;
+  // The session is over on this PC: closed, ended, removed, or not found.
+  onEnded?: (why: string) => void;
   ask: (conflicts: Conflict[]) => Promise<Map<string, Answer>>;
   confirm: (question: string) => Promise<boolean>;
   fingerprint: (path: string) => Promise<Fingerprint | null>;
@@ -47,6 +68,8 @@ type Message = Record<string, JsonValue>;
 const DRT_CHUNK = 256 * 1024; // base64 characters per message
 const DRT_MAX_PARTS = 200; // ~50 MB
 const DRT_TIMEOUT_MS = 30_000;
+const GRACE_MS = 10 * 60_000;
+const JOIN_AGAIN_MS = 3000;
 
 interface DrtRequest {
   parts: string[];
@@ -62,52 +85,43 @@ function timelineOf(op: SessionOp, model: SessionModel): string | undefined {
   return undefined;
 }
 
+const cleanName = (v: JsonValue | undefined) => (typeof v === "string" ? v.replace(/[\u0000-\u001f]/g, "").slice(0, 40).trim() : "") || "someone";
+
 export class Session {
-  readonly sync: MediaPoolSync;
-  readonly timelines: TimelineSync;
+  // Made once the session is known: at once for a new host session, when the
+  // open project is reported for a resumed one, when let in for a member.
+  sync!: MediaPoolSync;
+  timelines!: TimelineSync;
+  record: SessionRecord | undefined;
   private readonly options: SessionOptions;
-  private readonly host: HostLog | undefined;
+  private host: HostLog | undefined;
   private readonly member = new MemberLog();
   private hostId: string | undefined;
   private saveTimer: NodeJS.Timeout | undefined;
-  private readonly hostStore: string;
+  private hostStore = "";
   private readonly lastAuthor = new Map<string, string>(); // timeline → peer who last changed it
   private readonly drtRequests = new Map<string, DrtRequest>();
+  private project: { id: string; name: string } | undefined; // open in Resolve, as last reported
+  private readonly connected = new Set<string>();
+  // Host: members let in and connected now (short ID → name), and PCs being asked about.
+  private readonly admitted = new Map<string, string>();
+  private readonly asking = new Set<string>();
+  private approvals: Promise<void> = Promise.resolve();
+  // Member.
+  private joining = false;
+  private joinTimer: NodeJS.Timeout | undefined;
+  private graceTimer: NodeJS.Timeout | undefined;
+  private told = new Set<string>();
+  private over = false;
 
   constructor(options: SessionOptions) {
     this.options = options;
     const { bridge, peers, role, log } = options;
-    this.hostStore = join(options.storeDir, "host-log.json");
-    if (role === "host") this.host = new HostLog(this.loadHost());
-
-    const send = (command: { type: string } & Record<string, JsonValue>) => bridge.send(command) as Promise<BridgeResult>;
-    this.sync = new MediaPoolSync({
-      me: peers.id,
-      send,
-      propose: (op, proposal) => this.propose(op, proposal),
-      ask: options.ask,
-      fingerprint: options.fingerprint,
-      findFile: options.findFile,
-      backup: () => this.backup(),
-      log,
-      store: join(options.storeDir, `${role}.json`),
-    });
-    const sync = this.sync;
-    this.timelines = new TimelineSync({
-      me: peers.id,
-      send,
-      propose: (op, proposal) => this.propose(op, proposal),
-      ask: options.ask,
-      confirm: options.confirm,
-      backup: () => this.backup(),
-      media: { get ready() { return sync.ready; }, get project() { return sync.projectId; }, collab: (l) => sync.mediaCollab(l), local: (c) => sync.mediaLocal(c) },
-      log,
-      store: join(options.storeDir, `${role}-timelines.json`),
-      ...(options.forceTier ? { forceTier: options.forceTier } : {}),
-      swap: (timeline, local) => this.swap(timeline, local),
-      ...(options.userBusy ? { userBusy: options.userBusy } : {}),
-    });
-    if (this.host) this.reset(this.host.model);
+    if (role === "host" && !options.resume) {
+      const record = newRecord(newId(), "host", peers.publicKey, options.name);
+      saveRecord(options.storeDir, record);
+      this.begin(record);
+    }
 
     bridge.on("hello", (hello: Message) => log(`bridge connected: ${hello.product} ${hello.version ?? ""}`));
     let warnedBuild: string | undefined;
@@ -131,22 +145,62 @@ export class Session {
     bridge.on("error", (error: JsonValue) => log(`bridge error: ${JSON.stringify(error)}`));
     bridge.on("event", (event: Message) => this.bridgeEvent(event));
     peers.on("peer", (id: string) => this.peerJoined(id));
-    peers.on("peer-left", (id: string) => {
-      log(`peer ${id} left`);
-      if (id !== this.hostId) return;
-      log("Offline: the host is unreachable; your changes will be merged when it's back.");
-      // The host gets a new peer ID when it restarts; accept its next welcome.
-      // (Until M6 anyone with the invite code is trusted.)
-      this.hostId = undefined;
-    });
+    peers.on("peer-left", (id: string) => this.peerLeft(id));
     peers.on("message", (message: JsonValue, from: string) => {
       if (typeof message === "object" && message !== null && !Array.isArray(message)) void this.peerMessage(message, from);
     });
   }
 
+  get begun(): boolean {
+    return this.record !== undefined && this.sync !== undefined;
+  }
+
+  // The syncs and stores for this session.
+  private begin(record: SessionRecord): void {
+    this.record = record;
+    const { bridge, peers, role, log } = this.options;
+    const dir = sessionDir(this.options.storeDir, record.id);
+    this.hostStore = join(dir, "host-log.json");
+    if (role === "host") this.host = new HostLog(this.loadHost());
+    const send = (command: { type: string } & Record<string, JsonValue>) => bridge.send(command) as Promise<BridgeResult>;
+    this.sync = new MediaPoolSync({
+      me: peers.id,
+      send,
+      propose: (op, proposal) => this.propose(op, proposal),
+      ask: this.options.ask,
+      fingerprint: this.options.fingerprint,
+      findFile: this.options.findFile,
+      backup: () => this.backup(),
+      log,
+      store: join(dir, `${role}.json`),
+    });
+    if (record.project) this.sync.expectProject(record.project, record.projectName);
+    const sync = this.sync;
+    this.timelines = new TimelineSync({
+      me: peers.id,
+      send,
+      propose: (op, proposal) => this.propose(op, proposal),
+      ask: this.options.ask,
+      confirm: this.options.confirm,
+      backup: () => this.backup(),
+      media: { get ready() { return sync.ready; }, get project() { return sync.projectId; }, collab: (l) => sync.mediaCollab(l), local: (c) => sync.mediaLocal(c) },
+      log,
+      store: join(dir, `${role}-timelines.json`),
+      ...(this.options.forceTier ? { forceTier: this.options.forceTier } : {}),
+      swap: (timeline, local) => this.swap(timeline, local),
+      ...(this.options.userBusy ? { userBusy: this.options.userBusy } : {}),
+    });
+    if (this.host) this.reset(this.host.model);
+  }
+
   stop(): void {
-    this.sync.stop();
-    this.timelines.stop();
+    this.over = true;
+    clearInterval(this.joinTimer);
+    clearTimeout(this.graceTimer);
+    if (this.begun) {
+      this.sync.stop();
+      this.timelines.stop();
+    }
     for (const r of this.drtRequests.values()) {
       clearTimeout(r.timer);
       r.resolve(null);
@@ -157,10 +211,33 @@ export class Session {
     }
   }
 
+  // Closing the companion: the host tells members the session is closed
+  // (SPEC §22.4), then waits a moment for that to go out.
+  async close(): Promise<void> {
+    if (this.host) {
+      this.toMembers({ type: "closing" });
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    this.stop();
+  }
+
+  private end(why: string): void {
+    if (this.over) return;
+    this.over = true;
+    this.options.log(why);
+    this.options.onEnded?.(why);
+  }
+
   // --- bridge -------------------------------------------------------------------
 
   private bridgeEvent(event: Message): void {
     const type = typeof event.type === "string" ? event.type : "";
+    if (type === "mp.reset") {
+      const p = event.project as { id?: unknown; name?: unknown } | null;
+      this.project = p && typeof p.id === "string" ? { id: p.id, name: String(p.name ?? "") } : undefined;
+      this.projectKnown();
+    }
+    if (!this.begun) return;
     if (type.startsWith("mp.")) {
       this.sync.bridgeEvent(event);
       // Timeline clips refer to media pool clips.
@@ -168,6 +245,28 @@ export class Session {
     } else if (type.startsWith("tl.")) {
       this.timelines.bridgeEvent(event);
     }
+  }
+
+  // The host learns which project its session is about: a new session takes
+  // the open one; `--resume` looks up the session that project belongs to.
+  private projectKnown(): void {
+    if (this.options.role !== "host" || !this.project) return;
+    if (this.record && !this.record.project) {
+      Object.assign(this.record, { project: this.project.id, projectName: this.project.name, updated: Date.now() });
+      saveRecord(this.options.storeDir, this.record);
+    }
+    if (this.record || !this.options.resume) return;
+    const found = findHostSession(this.options.storeDir, this.project.id);
+    if (!found) {
+      this.end(`"${this.project.name}" isn't a session you host (or it was ended for good). Run host to start a new one.`);
+      return;
+    }
+    found.updated = Date.now();
+    saveRecord(this.options.storeDir, found);
+    this.options.log(`resuming the session for "${found.projectName}"`);
+    this.begin(found);
+    // Everything again, now that the syncs listen.
+    void this.options.bridge.send({ type: "mp.snapshot" });
   }
 
   private async backup(): Promise<boolean> {
@@ -199,9 +298,14 @@ export class Session {
       return;
     }
     if (timeline) this.lastAuthor.set(timeline, author);
-    this.options.peers.send({ type: "commit", commit: result as unknown as JsonValue });
+    this.toMembers({ type: "commit", commit: result as unknown as JsonValue });
     this.changed(host.model, result);
     this.scheduleHostSave();
+  }
+
+  // Only members let in hear about the session.
+  private toMembers(message: JsonValue): void {
+    for (const id of this.admitted.keys()) this.options.peers.sendTo(id, message);
   }
 
   private reset(model: SessionModel): void {
@@ -219,35 +323,201 @@ export class Session {
     this.timelines.refused(proposal);
   }
 
+  // --- peers ----------------------------------------------------------------------
+
   private peerJoined(id: string): void {
-    this.options.log(`peer ${id} connected`);
-    if (this.host) this.options.peers.sendTo(id, { type: "welcome", host: this.options.peers.id, state: this.host.state() as unknown as JsonValue });
+    this.connected.add(id);
+    if (this.options.role === "member") {
+      this.options.peers.sendTo(id, { type: "join", name: this.options.name });
+      // Asked again until someone answers as the host (it may still be starting).
+      if (!this.joinTimer && !this.hostId) {
+        this.joinTimer = setInterval(() => {
+          if (this.hostId || this.over) return;
+          for (const peer of this.connected) this.options.peers.sendTo(peer, { type: "join", name: this.options.name });
+        }, JOIN_AGAIN_MS);
+      }
+    }
+  }
+
+  private peerLeft(id: string): void {
+    this.connected.delete(id);
+    const { log } = this.options;
+    if (this.host) {
+      const name = this.admitted.get(id);
+      if (name !== undefined) {
+        this.admitted.delete(id);
+        log(`${name} (${id}) left`);
+      }
+      return;
+    }
+    if (id !== this.hostId) return;
+    this.hostId = undefined;
+    if (this.over) return;
+    log("Offline: the host is unreachable; your changes will be merged when it's back.");
+    clearTimeout(this.graceTimer);
+    this.graceTimer = setTimeout(() => {
+      this.end(`The host didn't come back within ${Math.round((this.options.graceMs ?? GRACE_MS) / 60_000)} minutes, so the session ended here. `
+        + "Your changes are kept on this PC and merged when you rejoin.");
+    }, this.options.graceMs ?? GRACE_MS);
   }
 
   private async peerMessage(message: Message, from: string): Promise<void> {
+    if (this.over) return;
+    if (this.host) return this.hostMessage(message, from);
+    return this.memberMessage(message, from);
+  }
+
+  // --- host side ------------------------------------------------------------------
+
+  private async hostMessage(message: Message, from: string): Promise<void> {
+    const host = this.host!;
+    if (message.type === "join") return this.joinRequest(cleanName(message.name), from);
+    if (!this.admitted.has(from)) return; // nothing from PCs not let in
     switch (message.type) {
       case "propose":
-        if (this.host && typeof message.proposal === "string") this.commitLocally(message.op, from, message.proposal);
+        if (typeof message.proposal === "string") this.commitLocally(message.op, from, message.proposal);
         return;
       case "want-state":
-        if (this.host) this.peerJoined(from);
+        this.options.peers.sendTo(from, this.welcome(host));
         return;
-      case "welcome": {
-        if (this.host || (this.hostId && this.hostId !== from)) return;
-        const state = message.state as unknown as SessionState;
-        const model = validateModel(state?.model);
-        if (!Number.isSafeInteger(state?.seq) || !model) {
-          this.options.log(`ignored a malformed session state from ${from}`);
-          return;
-        }
-        if (!this.hostId) this.options.log(`joined the session hosted by ${from}`);
-        this.hostId = from;
-        this.member.reset({ seq: state.seq, model });
-        this.reset(this.member.model);
+      case "want-drt":
+        if (typeof message.request === "string" && typeof message.timeline === "string") await this.sendDrt(message.request, message.timeline, from);
         return;
+      case "drt":
+        this.receiveDrt(message);
+        return;
+    }
+  }
+
+  private welcome(host: HostLog): Message {
+    const r = this.record!;
+    return {
+      type: "welcome", host: this.options.peers.id, state: host.state() as unknown as JsonValue,
+      session: { id: r.id, hostName: r.hostName, projectName: r.projectName },
+    };
+  }
+
+  private joinRequest(name: string, from: string): void {
+    const record = this.record;
+    const key = this.options.peers.keyOf(from);
+    // Not before the host knows its project: the joiner's new project is named after it (they ask again).
+    if (!record || !record.project || !key || !this.host || this.admitted.has(from) || this.asking.has(from)) return;
+    if (record.blocked.some((m) => m.key === key)) {
+      this.options.peers.sendTo(from, { type: "refused-join", blocked: true });
+      return;
+    }
+    const known = record.members.find((m) => m.key === key);
+    if (known) {
+      if (known.name !== name) {
+        known.name = name;
+        saveRecord(this.options.storeDir, record);
       }
+      this.admit(from, name, "rejoined");
+      return;
+    }
+    // One question at a time.
+    this.asking.add(from);
+    this.options.peers.sendTo(from, { type: "waiting", host: record.hostName });
+    this.approvals = this.approvals.then(async () => {
+      const answer = this.options.approve ? await this.options.approve(name, from) : "no";
+      this.asking.delete(from);
+      if (this.over) return;
+      if (answer === "yes") {
+        record.members.push({ key, name });
+        saveRecord(this.options.storeDir, record);
+        this.admit(from, name, "joined");
+      } else {
+        if (answer === "block") {
+          record.blocked.push({ key, name });
+          saveRecord(this.options.storeDir, record);
+        }
+        this.options.peers.sendTo(from, { type: "refused-join", blocked: answer === "block" });
+        this.options.log(answer === "block" ? `${name} (${from}) is blocked from this session` : `${name} (${from}) wasn't let in`);
+      }
+    });
+  }
+
+  private admit(id: string, name: string, how: string): void {
+    this.admitted.set(id, name);
+    this.options.log(`${name} (${id}) ${how}`);
+    this.options.peers.sendTo(id, this.welcome(this.host!));
+  }
+
+  // Ends the session for good (SPEC §22.2).
+  endForGood(): void {
+    if (!this.host || !this.record) return;
+    this.record.ended = true;
+    saveRecord(this.options.storeDir, this.record);
+    this.toMembers({ type: "ended" });
+    setTimeout(() => this.end("The session is ended for good; it can't be resumed."), 400);
+  }
+
+  // `members` (SPEC §22.5): who's in, and who's blocked.
+  memberList(): string[] {
+    const r = this.record;
+    if (!this.host || !r) return [];
+    const online = new Set([...this.admitted.keys()].map((id) => this.options.peers.keyOf(id)));
+    return [
+      ...r.members.map((m) => `${m.name} (${m.key.slice(0, 8)})${online.has(m.key) ? " online" : ""}`),
+      ...r.blocked.map((m) => `${m.name} (${m.key.slice(0, 8)}) blocked`),
+    ];
+  }
+
+  private find(list: { key: string; name: string }[], query: string) {
+    const q = query.trim().toLowerCase();
+    const hits = list.filter((m) => m.name.toLowerCase() === q || (q.length >= 4 && m.key.startsWith(q)));
+    return hits.length === 1 ? hits[0] : undefined;
+  }
+
+  // `remove <name or short ID>`: disconnects that PC and blocks it.
+  remove(query: string): string {
+    const r = this.record;
+    if (!this.host || !r) return "only the host can remove someone";
+    const m = this.find(r.members, query);
+    if (!m) return `no single member matches "${query}" (members lists them)`;
+    r.members = r.members.filter((x) => x.key !== m.key);
+    r.blocked.push(m);
+    saveRecord(this.options.storeDir, r);
+    const id = m.key.slice(0, 8);
+    if (this.admitted.has(id)) {
+      this.options.peers.sendTo(id, { type: "removed" });
+      this.admitted.delete(id);
+      setTimeout(() => this.options.peers.disconnect(id), 400);
+    }
+    return `${m.name} (${id}) removed and blocked`;
+  }
+
+  // `unblock <name or short ID>`: lets a blocked PC ask again.
+  unblock(query: string): string {
+    const r = this.record;
+    if (!this.host || !r) return "only the host can unblock someone";
+    const m = this.find(r.blocked, query);
+    if (!m) return `no single blocked PC matches "${query}"`;
+    r.blocked = r.blocked.filter((x) => x.key !== m.key);
+    saveRecord(this.options.storeDir, r);
+    return `${m.name} (${m.key.slice(0, 8)}) can ask to join again`;
+  }
+
+  // --- member side ----------------------------------------------------------------
+
+  private async memberMessage(message: Message, from: string): Promise<void> {
+    const { log } = this.options;
+    switch (message.type) {
+      case "waiting":
+        if (!this.told.has("waiting")) log(`waiting for ${cleanName(message.host)} to let you in`);
+        this.told.add("waiting");
+        return;
+      case "refused-join":
+        if (this.hostId) return;
+        this.end(message.blocked === true ? "The host has blocked this PC from the session." : "The host didn't let you in.");
+        return;
+      case "welcome":
+        await this.welcomed(message, from);
+        return;
+    }
+    if (!this.begun || from !== this.hostId) return; // the rest only from the host
+    switch (message.type) {
       case "commit": {
-        if (from !== this.hostId) return;
         const commit = message.commit as unknown as Commit;
         if (typeof commit?.seq !== "number" || typeof commit.op?.type !== "string") return;
         const timeline = timelineOf(commit.op, this.member.model);
@@ -261,8 +531,19 @@ export class Session {
         return;
       }
       case "refused":
-        if (from === this.hostId && typeof message.proposal === "string") this.refused(message.proposal, String(message.error));
+        if (typeof message.proposal === "string") this.refused(message.proposal, String(message.error));
         return;
+      case "closing":
+        this.end(`${this.record!.hostName} closed the session. Changes you make now stay on this PC; rejoin with the code ${this.record!.hostName} sends next time.`);
+        return;
+      case "ended":
+      case "removed": {
+        const record = this.record!;
+        record.ended = true;
+        saveRecord(this.options.storeDir, record);
+        this.end(message.type === "ended" ? `${record.hostName} ended the session for good.` : `${record.hostName} removed this PC from the session.`);
+        return;
+      }
       case "want-drt":
         if (typeof message.request === "string" && typeof message.timeline === "string") await this.sendDrt(message.request, message.timeline, from);
         return;
@@ -270,6 +551,68 @@ export class Session {
         this.receiveDrt(message);
         return;
     }
+  }
+
+  private async welcomed(message: Message, from: string): Promise<void> {
+    const { log } = this.options;
+    const key = this.options.peers.keyOf(from);
+    const s = message.session as { id?: unknown; hostName?: unknown; projectName?: unknown } | undefined;
+    const state = message.state as unknown as SessionState;
+    const model = validateModel(state?.model);
+    if (!key || !s || !isSessionId(s.id) || !Number.isSafeInteger(state?.seq) || !model) {
+      log(`ignored a malformed session state from ${from}`);
+      return;
+    }
+    // The host is the one this PC was let in by before (SPEC §22.3).
+    if (this.record && (this.record.id !== s.id || this.record.hostKey !== key)) return;
+    if (!this.record) {
+      if (this.joining) return;
+      this.joining = true;
+      const known = loadRecord(this.options.storeDir, s.id);
+      if (known && known.hostKey !== key) {
+        this.joining = false;
+        if (!this.told.has(`impostor:${key}`)) log(`ignored ${from}: it answered as the host of this session, but it isn't the PC that hosts it`);
+        this.told.add(`impostor:${key}`);
+        return;
+      }
+      if (known?.ended) {
+        this.joining = false;
+        this.end("This session was ended, or this PC was removed from it.");
+        return;
+      }
+      const record = known ?? (await this.firstJoin(s.id, key, cleanName(s.hostName as JsonValue), String(s.projectName ?? "")));
+      this.joining = false;
+      if (!record) return;
+      record.updated = Date.now();
+      saveRecord(this.options.storeDir, record);
+      this.begin(record);
+      if (known) log(`rejoined the session for "${record.projectName}"`);
+      // Everything again, now that the syncs listen.
+      void this.options.bridge.send({ type: "mp.snapshot" });
+    }
+    clearTimeout(this.graceTimer);
+    clearInterval(this.joinTimer);
+    this.joinTimer = undefined;
+    if (!this.hostId) log(`joined the session hosted by ${this.record!.hostName} (${from})`);
+    this.hostId = from;
+    this.member.reset({ seq: state.seq, model });
+    this.reset(this.member.model);
+  }
+
+  // A first join: a new project, filled by sync (SPEC §22.3). The project open
+  // until now is left as it was.
+  private async firstJoin(id: string, hostKey: string, hostName: string, projectName: string): Promise<SessionRecord | undefined> {
+    const name = `${projectName || "Project"} (collab · hosted by ${hostName})`.slice(0, 200);
+    const result = await this.options.bridge.send({ type: "project.create", name });
+    if (!result.ok || typeof result.id !== "string") {
+      this.end(`Resolve couldn't make a new project for the session (${result.error ?? "no project"}).`);
+      return undefined;
+    }
+    const record = newRecord(id, "member", hostKey, hostName);
+    record.project = result.id;
+    record.projectName = String(result.name ?? name);
+    this.options.log(`made the project "${record.projectName}" for this session`);
+    return record;
   }
 
   // --- tier 3: timeline swap (SPEC §20.6) ----------------------------------------
@@ -297,8 +640,9 @@ export class Session {
       this.options.log("couldn't get a copy of the timeline from the other PC");
       return false;
     }
-    const path = join(this.options.storeDir, `swap-${timeline}.drt`);
-    mkdirSync(this.options.storeDir, { recursive: true });
+    const dir = sessionDir(this.options.storeDir, this.record!.id);
+    const path = join(dir, `swap-${timeline}.drt`);
+    mkdirSync(dir, { recursive: true });
     writeFileSync(path, data);
     const name = this.host?.model.timelines.timelines[timeline]?.name ?? this.member.model.timelines.timelines[timeline]?.name ?? "";
     const result = await this.options.bridge.send({ type: "tl.swap", id: local, path, rcId: timeline, name });
@@ -308,13 +652,14 @@ export class Session {
   }
 
   private async sendDrt(request: string, timeline: string, to: string): Promise<void> {
-    const local = this.isId(timeline) ? this.timelines.localTimelineOf(timeline) : undefined;
+    const local = this.begun && this.isId(timeline) ? this.timelines.localTimelineOf(timeline) : undefined;
     if (!local) {
       this.options.peers.sendTo(to, { type: "drt", request, error: "no such timeline here" });
       return;
     }
-    const path = join(this.options.storeDir, `export-${timeline}.drt`);
-    mkdirSync(this.options.storeDir, { recursive: true });
+    const dir = sessionDir(this.options.storeDir, this.record!.id);
+    const path = join(dir, `export-${timeline}.drt`);
+    mkdirSync(dir, { recursive: true });
     const result = await this.options.bridge.send({ type: "tl.export", id: local, path });
     if (!result.ok || !existsSync(path)) {
       this.options.peers.sendTo(to, { type: "drt", request, error: String(result.error ?? "export failed") });
@@ -375,4 +720,3 @@ export class Session {
     renameSync(`${this.hostStore}.tmp`, this.hostStore);
   }
 }
-

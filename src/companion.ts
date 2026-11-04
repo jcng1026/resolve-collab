@@ -1,10 +1,14 @@
-// ResolveCollab companion command line (SPEC §18–§20): connects the local
+// ResolveCollab companion command line (SPEC §18–§22): connects the local
 // bridge to the session and keeps the media pool and timelines in sync.
 //
-//   node src/companion.ts host [--code <invite-code>]   start a session (or resume one with its code)
-//   node src/companion.ts join <invite-code>            join a session
+//   node src/companion.ts host               start a new session from the project open in Resolve
+//   node src/companion.ts host --resume      reopen the session that project belongs to
+//   node src/companion.ts join <invite-code> join a session (a first join makes a new project)
+//
+// Every opening of a session has a new invite code (SPEC §22.1).
 //
 // Options:
+//   --name <name>        your name, shown to others (asked once otherwise)
 //   --inbox <dir>        bridge inbox (default: %USERPROFILE%\ResolveCollab\inbox)
 //   --log <file>         Resolve's ResolveDebug.txt (default: the standard location)
 //   --fake               use an in-process fake bridge instead of Resolve
@@ -14,6 +18,10 @@
 // Type while it runs:
 //   missing                    list clips whose media this PC lacks
 //   locate <clip> <path>       use your own copy of a missing clip's file
+//   members                    (host) who's in, and who's blocked
+//   remove <name or ID>        (host) disconnect and block a member
+//   unblock <name or ID>       (host) let a blocked PC ask again
+//   end                        (host) end the session for good
 
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -24,9 +32,10 @@ import { localBridgeBuild } from "./bridge/bridge-build.ts";
 import { BridgeClient } from "./bridge/bridge-client.ts";
 import { FakeBridge } from "./bridge/fake-bridge.ts";
 import { findFile, fingerprint, userFolders } from "./media/fingerprint.ts";
-import { PeerLink, newInviteCode, topicFor } from "./peer/peer-link.ts";
+import { loadIdentity, saveName, validName } from "./peer/identity.ts";
+import { PeerLink, newInviteCode } from "./peer/peer-link.ts";
 import { MouseWatch } from "./bridge/mouse-watch.ts";
-import { Session } from "./session.ts";
+import { type Approval, Session } from "./session.ts";
 import type { Answer, Conflict } from "./sync/reconcile.ts";
 
 const RESOLVE_LOG = join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"),
@@ -36,7 +45,8 @@ export const DEFAULT_INBOX = join(homedir(), "ResolveCollab", "inbox");
 const { positionals, values } = parseArgs({
   allowPositionals: true,
   options: {
-    code: { type: "string" },
+    resume: { type: "boolean", default: false },
+    name: { type: "string" },
     inbox: { type: "string" },
     log: { type: "string" },
     fake: { type: "boolean", default: false },
@@ -45,11 +55,11 @@ const { positionals, values } = parseArgs({
 });
 
 const [mode, codeArg] = positionals;
-if ((mode !== "host" && mode !== "join") || (mode === "join" && !codeArg)) {
-  console.error("usage: node src/companion.ts host [--code <invite-code>] | join <invite-code> [--fake] [--inbox dir] [--log file]");
+if ((mode !== "host" && mode !== "join") || (mode === "join" && !codeArg) || (mode === "join" && values.resume)) {
+  console.error("usage: node src/companion.ts host [--resume] | join <invite-code>   [--name you] [--fake] [--inbox dir] [--log file]");
   process.exit(2);
 }
-const inviteCode = mode === "host" ? (values.code ?? newInviteCode()) : codeArg!;
+const inviteCode = mode === "host" ? newInviteCode() : codeArg!;
 if (!/^[0-9a-f]{32}$/.test(inviteCode)) {
   console.error("an invite code is 32 hex characters");
   process.exit(2);
@@ -73,10 +83,6 @@ if (values.fake) {
 }
 // The bridge only writes backups under <inbox parent>\backups (SPEC §19.4).
 const home = dirname(inboxDir);
-const topic = topicFor(inviteCode).toString("hex").slice(0, 16);
-
-const bridge = new BridgeClient({ logPath, inboxDir });
-const peers = new PeerLink(inviteCode);
 
 // --- terminal -------------------------------------------------------------------
 
@@ -132,6 +138,37 @@ async function confirm(question: string): Promise<boolean> {
   }
 }
 
+// Asked when someone not let in before asks to join (SPEC §22.3).
+async function approve(name: string, peer: string): Promise<Approval> {
+  for (;;) {
+    console.log(`  ${name} (${peer}) wants to join.  y = let in, n = not now, b = block this PC`);
+    const line = (await nextLine()).trim().toLowerCase();
+    if (line === "y") return "yes";
+    if (line === "n") return "no";
+    if (line === "b") return "block";
+  }
+}
+
+// This PC's lasting identity and the person's name (SPEC §22.1).
+if (values.name !== undefined) {
+  if (!validName(values.name)) {
+    console.error("a name is 1 to 40 characters");
+    process.exit(2);
+  }
+  saveName(home, values.name);
+}
+let identity = loadIdentity(home);
+while (!identity.name) {
+  const line = (await new Promise<string>((resolve) => terminal.question("  Your name, shown to the others in the session: ", resolve))).trim();
+  if (validName(line)) {
+    saveName(home, line);
+    identity = loadIdentity(home);
+  }
+}
+
+const bridge = new BridgeClient({ logPath, inboxDir });
+const peers = new PeerLink(inviteCode, { seed: identity.seed });
+
 const mouse = new MouseWatch(log);
 mouse.start();
 
@@ -139,8 +176,12 @@ const session = new Session({
   role: mode === "host" ? "host" : "member",
   bridge,
   peers,
-  storeDir: join(home, "sessions", topic),
+  storeDir: join(home, "sessions"),
   backupsDir: join(home, "backups"),
+  name: identity.name,
+  resume: values.resume,
+  approve,
+  onEnded: () => void shutdown(),
   ask,
   confirm,
   fingerprint,
@@ -167,8 +208,17 @@ terminal.on("line", async (line) => {
   } else if (command === "locate" && rest.length >= 2) {
     // The path may contain spaces; quotes from Explorer's "Copy as path" are dropped.
     log(await session.sync.locate(rest[0]!, rest.slice(1).join(" ").replace(/^"(.*)"$/, "$1")));
+  } else if (command === "members" && mode === "host") {
+    const list = session.memberList();
+    log(list.length ? `members:\n    ${list.join("\n    ")}` : "nobody has joined yet");
+  } else if (command === "remove" && mode === "host" && rest.length) {
+    log(session.remove(rest.join(" ")));
+  } else if (command === "unblock" && mode === "host" && rest.length) {
+    log(session.unblock(rest.join(" ")));
+  } else if (command === "end" && mode === "host") {
+    if (await confirm("End this session for good? It can't be resumed afterwards.")) session.endForGood();
   } else if (command) {
-    log("commands: missing | locate <clip> <path>");
+    log(mode === "host" ? "commands: missing | locate <clip> <path> | members | remove <name> | unblock <name> | end" : "commands: missing | locate <clip> <path>");
   }
 });
 
@@ -179,17 +229,25 @@ if (values.fake) {
 }
 
 await peers.start();
-log(`${mode === "host" ? "hosting" : "joined"} session as ${peers.id}`);
-if (mode === "host") log(`invite code: ${inviteCode}  (to resume this session later: host --code ${inviteCode})`);
+log(`you are ${identity.name} (${peers.id})`);
+if (mode === "host") {
+  log(`invite code: ${inviteCode}`);
+  log("Share it with the people joining. It works until you close this companion; next time, host --resume gives a new one.");
+} else {
+  log("looking for the host ...");
+}
 log(`bridge inbox: ${inboxDir}`);
 
-const shutdown = async () => {
-  session.stop();
+let stopping = false;
+async function shutdown(): Promise<void> {
+  if (stopping) return;
+  stopping = true;
+  await session.close();
   mouse.stop();
   bridge.stop();
   fake?.stop();
   await peers.stop();
   process.exit(0);
-};
+}
 process.on("SIGINT", shutdown);
 process.on("SIGTERM", shutdown);

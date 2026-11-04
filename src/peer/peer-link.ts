@@ -39,6 +39,8 @@ export interface PeerLinkOptions {
   // DHT bootstrap nodes; defaults to the public Hyperswarm network. Tests
   // pass a local testnet, since public discovery takes ~10–60 s.
   bootstrap?: { host: string; port: number }[];
+  // This PC's lasting identity (identity.ts): the same key pair every run.
+  seed?: Buffer;
 }
 
 interface Outgoing {
@@ -51,27 +53,47 @@ interface Peer {
   sockets: NoiseSocket[];
   outstanding: Map<number, Outgoing>;
   seen: Set<number>;
+  run: string; // the peer's run its seen numbers belong to
 }
 
 // Events: "peer" (id), "peer-left" (id), "message" (message, fromId).
 export class PeerLink extends EventEmitter {
   private readonly swarm: Hyperswarm;
   private readonly peers = new Map<string, Peer>();
+  private readonly keys = new Map<string, string>(); // short ID → full public key
   private readonly topic: Buffer;
   private discovery: Discovery | undefined;
   private timers: NodeJS.Timeout[] = [];
   private nextId = 1;
+  // Numbers start again with every run, and a restarted companion keeps its
+  // key (identity.ts): the run tells the receiver which numbers it has seen.
+  private readonly run = randomBytes(4).toString("hex");
   private held: (Outgoing & { id: number })[] = [];
 
   constructor(inviteCode: string, options: PeerLinkOptions = {}) {
     super();
     this.topic = topicFor(inviteCode);
-    this.swarm = new Hyperswarm(options.bootstrap ? { bootstrap: options.bootstrap } : {});
+    this.swarm = new Hyperswarm({ ...(options.bootstrap ? { bootstrap: options.bootstrap } : {}), ...(options.seed ? { seed: options.seed } : {}) });
     this.swarm.on("connection", (socket) => this.accept(socket));
   }
 
+  // Short form, for messages and logs; publicKey is the identity.
   get id(): string {
-    return this.swarm.keyPair.publicKey.toString("hex").slice(0, 8);
+    return this.publicKey.slice(0, 8);
+  }
+
+  get publicKey(): string {
+    return this.swarm.keyPair.publicKey.toString("hex");
+  }
+
+  // A connected peer's full public key.
+  keyOf(peerId: string): string | undefined {
+    return this.keys.get(peerId);
+  }
+
+  // Closes every connection to a peer (a removed member, SPEC §22.5).
+  disconnect(peerId: string): void {
+    for (const socket of this.peers.get(peerId)?.sockets ?? []) socket.destroy();
   }
 
   get peerCount(): number {
@@ -99,7 +121,7 @@ export class PeerLink extends EventEmitter {
 
   send(message: JsonValue): void {
     const id = this.nextId++;
-    const outgoing = { line: `${JSON.stringify({ m: id, d: message })}\n`, at: Date.now() };
+    const outgoing = { line: `${JSON.stringify({ r: this.run, m: id, d: message })}\n`, at: Date.now() };
     let queued = false;
     for (const peer of this.peers.values()) {
       if (peer.sockets.length === 0) continue;
@@ -116,7 +138,7 @@ export class PeerLink extends EventEmitter {
     const peer = this.peers.get(peerId);
     if (!peer || peer.sockets.length === 0) return false;
     const id = this.nextId++;
-    const outgoing = { line: `${JSON.stringify({ m: id, d: message })}\n`, at: Date.now() };
+    const outgoing = { line: `${JSON.stringify({ r: this.run, m: id, d: message })}\n`, at: Date.now() };
     peer.outstanding.set(id, outgoing);
     this.write(peer, outgoing.line);
     return true;
@@ -138,10 +160,12 @@ export class PeerLink extends EventEmitter {
   }
 
   private accept(socket: NoiseSocket): void {
-    const id = socket.remotePublicKey.toString("hex").slice(0, 8);
+    const key = socket.remotePublicKey.toString("hex");
+    const id = key.slice(0, 8);
+    this.keys.set(id, key);
     let peer = this.peers.get(id);
     if (!peer) {
-      peer = { sockets: [], outstanding: new Map(), seen: new Set() };
+      peer = { sockets: [], outstanding: new Map(), seen: new Set(), run: "" };
       this.peers.set(id, peer);
     }
     peer.sockets.push(socket);
@@ -175,7 +199,7 @@ export class PeerLink extends EventEmitter {
   }
 
   private receive(peer: Peer, id: string, socket: NoiseSocket, line: string): void {
-    let frame: { m?: unknown; a?: unknown; d?: JsonValue };
+    let frame: { r?: unknown; m?: unknown; a?: unknown; d?: JsonValue };
     try {
       frame = JSON.parse(line);
     } catch {
@@ -187,6 +211,11 @@ export class PeerLink extends EventEmitter {
     }
     if (typeof frame.m !== "number") return;
     if (!socket.destroyed) socket.write(`${JSON.stringify({ a: frame.m })}\n`);
+    const run = typeof frame.r === "string" ? frame.r : "";
+    if (run !== peer.run) {
+      peer.run = run;
+      peer.seen.clear();
+    }
     if (peer.seen.has(frame.m)) return;
     peer.seen.add(frame.m);
     if (peer.seen.size > SEEN_MAX) peer.seen.delete(peer.seen.values().next().value!);

@@ -1553,6 +1553,23 @@ end
 -- Backups go next to the inbox only: %USERPROFILE%\ResolveCollab\backups\.
 local BACKUPS = INBOX:gsub("[\\/][^\\/]+$", "") .. "\\backups\\"
 
+-- A new empty project for a first join (SPEC §22.3), opened. The project
+-- that was open is saved first and left as it was. A taken name gets a number.
+handlers["project.create"] = function(cmd)
+  if not validName(cmd.name) or #cmd.name > 200 then return { ok = false, error = "bad-name" } end
+  pm:SaveProject()
+  local p, name
+  for n = 1, 50 do
+    name = n == 1 and cmd.name or (cmd.name .. " (" .. n .. ")")
+    p = pm:CreateProject(name)
+    if p then break end
+  end
+  if not p then return { ok = false, error = "create-failed" } end
+  local open = pm:GetCurrentProject()
+  if not open or open:GetUniqueId() ~= p:GetUniqueId() then return { ok = false, error = "not-opened" } end
+  return { ok = true, id = p:GetUniqueId(), name = p:GetName() }
+end
+
 handlers["project.backup"] = function(cmd)
   local path = cmd.path
   if type(path) ~= "string" or path:sub(1, #BACKUPS) ~= BACKUPS or path:find("%.%.") or not path:match("%.drp$") then

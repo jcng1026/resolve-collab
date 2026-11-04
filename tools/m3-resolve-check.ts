@@ -66,7 +66,7 @@ const hostLogs: string[] = [];
 const hostBridge = new BridgeClient({ logPath: RESOLVE_LOG, inboxDir: DEFAULT_INBOX });
 const hostPeers = new PeerLink(code, { bootstrap: testnet.bootstrap });
 const host = new Session({
-  role: "host", bridge: hostBridge, peers: hostPeers,
+  role: "host", bridge: hostBridge, peers: hostPeers, name: "Resolve", approve: async () => "yes",
   storeDir: join(dir, "host-store"), backupsDir: join(home, "backups"),
   ask: async () => new Map(), // the host is never asked in this check
   confirm: async () => true,
@@ -80,7 +80,7 @@ const memberLogs: string[] = [];
 const memberBridge = new BridgeClient({ logPath: join(dir, "ResolveDebug.txt"), inboxDir: join(dir, "inbox"), pollMs: 20 });
 const memberPeers = new PeerLink(code, { bootstrap: testnet.bootstrap });
 const member = new Session({
-  role: "member", bridge: memberBridge, peers: memberPeers,
+  role: "member", bridge: memberBridge, peers: memberPeers, name: "Fake member",
   storeDir: join(dir, "member-store"), backupsDir: join(dir, "backups"),
   ask: async (conflicts) => new Map(conflicts.map((c) => [c.key, "theirs"])),
   confirm: async () => true,

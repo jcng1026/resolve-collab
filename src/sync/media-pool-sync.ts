@@ -54,6 +54,7 @@ export class MediaPoolSync {
   binMap = new Map<string, string>();
   projectId: string | undefined; // the Resolve project this session syncs
   paused = false; // another project is open (SPEC §9.2)
+  private projectName = ""; // for telling the user which project to open
   private session: MediaPool | null = null;
   private markerSpots = new Map<string, MarkerSpot>();
   private readonly gaveUp = new Map<string, string>(); // markers that couldn't be placed, with the value tried
@@ -116,12 +117,22 @@ export class MediaPoolSync {
 
   // The bridge is about to report everything (it started, or the project
   // changed), then mp.synced.
+  // This session's project, when it's known before the bridge reports one
+  // (SPEC §22.3: a first join's new project, a rejoin's from last time).
+  expectProject(id: string, name: string): void {
+    this.projectId = id;
+    this.projectName = name;
+  }
+
   private reset(project: { id: string; name: string } | null): void {
     this.local.bins.clear();
     this.local.clips.clear();
     this.bridgeSynced = false;
     const paused = !project || (this.projectId !== undefined && project.id !== this.projectId);
-    if (paused && !this.paused) this.options.log("You switched to another project: sync is paused until you switch back.");
+    if (paused && !this.paused) {
+      this.options.log(this.projectName ? `Open "${this.projectName}" in Resolve to sync this session; sync is paused until then.`
+        : "You switched to another project: sync is paused until you switch back.");
+    }
     if (!paused && this.paused) this.options.log(`Back on "${project!.name}": sync resumes.`);
     this.paused = paused;
     if (!paused) this.projectId = project!.id;

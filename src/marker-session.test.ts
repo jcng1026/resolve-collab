@@ -4,6 +4,7 @@
 // duplicated timeline, the pool clip's markers Resolve copies onto new items,
 // and an offline merge.
 
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -61,9 +62,10 @@ function makePc(name: string, forceTier?: 2): Pc {
 // keepBridge: the bridge in Resolve keeps running while the companion restarts.
 async function connect(pc: Pc, role: "host" | "member", code: string, keepBridge = false, answer: Answer = "mine"): Promise<void> {
   pc.bridge = new BridgeClient({ logPath: join(pc.dir, "ResolveDebug.txt"), inboxDir: join(pc.dir, "inbox"), pollMs: 20 });
-  pc.peers = new PeerLink(code, { bootstrap: testnet.bootstrap });
+  pc.peers = new PeerLink(code, { bootstrap: testnet.bootstrap, seed: createHash("sha256").update(pc.dir).digest() });
   pc.session = new Session({
     role, bridge: pc.bridge, peers: pc.peers, storeDir: join(pc.dir, "store"), backupsDir: join(pc.dir, "backups"),
+    name: pc.name, approve: async () => "yes", ...(role === "host" && keepBridge ? { resume: true } : {}),
     confirm: async () => true,
     ask: async (conflicts) => {
       pc.questions.push(conflicts);
