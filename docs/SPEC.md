@@ -355,6 +355,7 @@ Every feature follows: spec section → automated tests (using a **fake bridge**
 | Markers | Timeline, item and media pool clip markers all sync; each carries its collab ID in its hidden `customData`; markers on a timeline that isn't open arrive when it's opened (2026-11-04, §21) |
 | Two markers on one frame | A clash: in catch-up the returning person picks Keep mine / Keep theirs; live, first to the host wins; no "keep both" (2026-11-04, §21.5) |
 | Sessions (M6) | Joiners get a fresh project built by syncing, no `.drp` import; a new invite code every time the host opens the session, with a hidden session ID; first join = new project made by the companion, rejoin = last time's project; removal blocks that PC (2026-11-04, §22) |
+| Racing edits, undo, notices (M7) | Second change undone only when it hit the same property; the companion claims Ctrl+Z / Ctrl+Shift+Z on the Media, Cut and Edit pages (after a probe); notices with Reapply / Restore mine are terminal lines for now (2026-11-04, §23) |
 
 ---
 
@@ -783,3 +784,41 @@ Goal (§16): §4 complete. Decisions of 2026-11-04 (asked before building): a jo
   - **Result, 2026-11-04, Free 21.1.2 on both PCs: passed in full** (after the fixes below). First joins made and filled "Test0/Test1 (collab · hosted by PC 1)" and left the open project alone; edits synced both ways; the host closing ended the session for PC 2, `host --resume` gave a new code and PC 2 rejoined its project without the host being asked, bringing a change made while closed; a minute offline on the host, then PC 2 reconnected by itself; remove, refuse, unblock, let back in; `end`, and `--resume` refusing it.
   - Found and fixed: the first-run name question wasn't printed (the companion looked blank); **an old invite code still reached the resumed host** (its DHT announcement lingers and the host's key is lasting): join requests now carry the code and the host refuses older ones (§22.1); the companion crashed when a join was refused while it was still starting; a removed PC that was unblocked and let in refused the welcome by itself, and now rejoins its project from before (§22.5).
   - Tidied after the test: no backups of a project made for a first join until this PC changes something of its own (they protected nothing; there were three per join); "you are / looking for the host" is printed before the host can answer, and a rejoin no longer also says "joined".
+
+---
+
+## 23. M7 design: racing edits, undo, notices
+
+Goal (§16): §5, §7 and §9.3 point 7 complete, proven by simulator tests with 5 PCs. Decisions of 2026-11-04 (asked before building): a change is undone only when someone else changed the **same property** at the same moment; the companion **takes over Ctrl+Z** on the Media, Cut and Edit pages; notices are **lines in the terminal** for now, with numbered commands (buttons in M8's window).
+
+### 23.1 Racing edits: first to the host wins (§5)
+- **Every proposal says what it was based on:** `base` = the sequence number of the newest commit this PC's Resolve had applied when the change was seen. The host's own changes carry one too: the host's Resolve can lag behind its own log.
+- **The host remembers, for every property of every object**, the sequence number and author of the commit that last changed it (a property = one field: a clip's colour, an item's start, a marker's frame and so on; creating an object counts for all its properties).
+- **A proposal loses a property** when that property was changed by **someone else** in a commit newer than the proposal's `base`: they reached the host first. Properties of the same proposal that didn't race are still committed. The host tells the loser which properties lost, and who won.
+- **A delete races** with any change by someone else to that object (or to what it holds: a timeline's items and markers) newer than its `base`: the delete is refused and the object stays. A deletion never wins silently (§9.3). A change to an object someone else deleted is refused as today (unknown ID).
+- Changes by the **same person** never race with each other (quick edits in a row).
+- **On the loser's PC** Resolve shows the winner's value (the winner's commit arrives as usual, and the refused property is put back to the session's value), and the terminal says, once per user action:
+  `[3] Alex changed the colour of "Interview_03" at the same moment, so your change was undone.  reapply 3 = send yours again`
+  `reapply <n>` proposes the loser's values again as a new edit (new `base`), so it wins unless it races again. A linked video and audio pair is one notice.
+- This replaces the M3 behaviour ("the later commit wins", §19.3) and is the "lock" of §5: a change is protected from the moment it reaches the host, and nothing blocks editing.
+
+### 23.2 Undo and redo of your own changes (§7)
+- **Each PC keeps its own history** of the changes it made that the host committed, newest first, the **last 100 steps**, in `sessions/<id>/undo.json`, so it survives reconnects and restarts of the companion. One **step** is one user action: everything this PC proposed from one detected change (a drag that moves a linked video and audio pair is one step); a catch-up merge (§9.3) is one step.
+- **Each entry holds the inverse:** for a change, the property values before it; for a create, a delete; for a delete, everything it removed (the object and, for timelines, tracks and clips, what was cascaded with it), so it can be created again with the same IDs. Undoing a media pool clip's delete brings it back like an incoming clip (§19.6: found by fingerprint, or listed as missing).
+- **Undo** proposes the inverse as a normal new edit (first-to-host, §23.1) and moves the step to the redo list; **redo** proposes the step again. A new change of yours clears the redo list.
+- **If someone else has since changed** anything the undo would put back, it asks first: `Alex has since changed the colour of "Interview_03". Undo anyway?  y = yes, n = no`. If the object was deleted by someone else, it says so and skips that part.
+- **Keys:** while Resolve is the window in front **and** its page is Media, Cut or Edit, the companion **claims Ctrl+Z (undo) and Ctrl+Shift+Z (redo)** with Windows' hotkey registration (`RegisterHotKey`), so Resolve doesn't receive them. It doesn't read any other keys. It releases them when another window comes to the front or Resolve is on another page (Fusion, Color, Fairlight, Deliver keep Resolve's own undo, since those pages aren't synced). The bridge reports the page in its heartbeat (`GetCurrentPage`, works on Free: F8). The terminal commands `undo` and `redo` do the same.
+- **Probe first** (§23.4): that Windows lets the companion claim Ctrl+Z while Resolve is in front, that Resolve then doesn't undo, and that releasing gives it back. If it can't, I come back with the "separate shortcut" option (Ctrl+Alt+Z) instead of building it.
+- **Known limits:** Resolve's **Edit ▸ Undo** menu still uses Resolve's own undo, which can take back other people's changes; what it changes syncs as your edit (as today). Ctrl+Z while typing in a Resolve text box (a clip name, say) goes to the companion too, as long as the page is Media, Cut or Edit.
+
+### 23.3 "Restore mine" after Keep mine (§9.3 point 7)
+- When a returning person's **Keep mine** replaces a property that someone else set last, the host adds to that commit who was replaced and their value. Only the person whose value was replaced (the latest author, §9.3 point 6) is told:
+  `[4] Sam's offline changes replaced your colour on "Interview_03" (Timeline 1).  restore 4 = put yours back`
+- `restore <n>` is a normal new edit (first-to-host), so answers can't loop. Notices are kept until the companion closes.
+
+### 23.4 Verification
+- **Probe on genuine Free 21.1** (`tools/feasibility/`): claim Ctrl+Z / Ctrl+Shift+Z while Resolve is in front; check Resolve doesn't undo, the companion sees the keys, and Resolve's own undo works again after releasing; check the page in the heartbeat.
+- **Unit tests:** the host's race rule (same property, other property, same author, delete vs change, cascades); inverse operations for every operation type; history steps, its limit of 100 and saving; asking before undoing over someone's change; Restore mine notices.
+- **Simulator test with 5 PCs** (fake bridges, local testnet, with delays, reordering and a cut): random edits at the same moments on all five; every PC ends with the same model, every race has exactly one winner and the losers are told; undo and redo on several PCs at once.
+- **Real Resolve on one PC:** a race between Resolve and a fake PC, the notice and `reapply`; Ctrl+Z and Ctrl+Shift+Z on the Edit page undoing and redoing only Resolve's own changes; the Color page keeping Resolve's undo.
+- **Two PCs:** a checklist like the earlier ones (`docs/m7-two-pc-test.md`).
