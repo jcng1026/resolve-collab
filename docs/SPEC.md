@@ -818,6 +818,7 @@ Goal (§16): §5, §7 and §9.3 point 7 complete, proven by simulator tests with
 
 ### 23.4 Verification
 - **Probe on genuine Free 21.1** (`tools/feasibility/`): claim Ctrl+Z / Ctrl+Shift+Z while Resolve is in front; check Resolve doesn't undo, the companion sees the keys, and Resolve's own undo works again after releasing; check the page in the heartbeat.
+  - **Result, 2026-11-04, Free 21.1.2: works** (`tools/feasibility/undo-keys-probe.ts`, findings "M7 undo keys probe"): claimed within 30 ms of Resolve coming to the front, Resolve didn't undo or redo, the keys were given back when another window came to the front and when no longer allowed. Claiming them whenever Resolve runs (asked by the user) was dropped: a hotkey is claimed for all of Windows, so every other program would lose Ctrl+Z.
 - **Unit tests:** the host's race rule (same property, other property, same author, delete vs change, cascades); inverse operations for every operation type; history steps, its limit of 100 and saving; asking before undoing over someone's change; Restore mine notices.
 - **Simulator test with 5 PCs** (fake bridges, local testnet, with delays, reordering and a cut): random edits at the same moments on all five; every PC ends with the same model, every race has exactly one winner and the losers are told; undo and redo on several PCs at once.
 - **Real Resolve on one PC:** a race between Resolve and a fake PC, the notice and `reapply`; Ctrl+Z and Ctrl+Shift+Z on the Edit page undoing and redoing only Resolve's own changes; the Color page keeping Resolve's undo.
