@@ -159,7 +159,10 @@ if (values.name !== undefined) {
 }
 let identity = loadIdentity(home);
 while (!identity.name) {
-  const line = (await new Promise<string>((resolve) => terminal.question("  Your name, shown to the others in the session: ", resolve))).trim();
+  // The interface has no output stream, so question() prints nothing: write
+  // the question ourselves.
+  process.stdout.write("  Your name, shown to the others in the session: ");
+  const line = (await new Promise<string>((resolve) => terminal.question("", resolve))).trim();
   if (validName(line)) {
     saveName(home, line);
     identity = loadIdentity(home);
