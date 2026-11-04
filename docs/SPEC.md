@@ -771,7 +771,7 @@ Goal (§16): §4 complete. Decisions of 2026-11-04 (asked before building): a jo
 ### 22.5 Removing a member
 - Typing `members` in the host's companion lists who's in (name, short ID, online or not). `remove <name or short ID>` disconnects that PC, tells it it was removed, and **blocks its key** for this session: it's refused from then on, whatever code it uses. Everyone else keeps going with the same code.
 - The removed PC's project and media stay on it (§4.5). Its companion marks the session ended there.
-- `unblock <name or short ID>` lets a blocked PC ask again.
+- `unblock <name or short ID>` lets a blocked PC ask again. The host is asked as for a new joiner; once let in, the PC goes back into **its project from before** and catches up and merges as a rejoin (§22.3.5), including anything changed there after it was removed (decision 2026-11-04, found in the two-PC test: it used to refuse by itself).
 
 ### 22.6 Verification
 - **Unit tests:** identity file, session records, the join handshake (pending, let in, refused, blocked, known PC), host key pinning, store paths for old sessions.

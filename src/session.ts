@@ -590,18 +590,18 @@ export class Session {
         this.told.add(`impostor:${key}`);
         return;
       }
-      if (known?.ended) {
-        this.joining = false;
-        this.end("This session was ended, or this PC was removed from it.");
-        return;
-      }
+      // Marked over here when this PC was removed. A session ended for good is
+      // never hosted again, so a welcome from its host means this PC was
+      // unblocked and let in again: back into the project from before (§22.5).
+      const letBack = known?.ended === true;
+      if (known) known.ended = false;
       const record = known ?? (await this.firstJoin(s.id, key, cleanName(s.hostName as JsonValue), String(s.projectName ?? "")));
       this.joining = false;
       if (!record) return;
       record.updated = Date.now();
       saveRecord(this.options.storeDir, record);
       this.begin(record);
-      if (known) log(`rejoined the session for "${record.projectName}"`);
+      if (known) log(`${letBack ? "let back in: " : ""}rejoined the session for "${record.projectName}"`);
       // Everything again, now that the syncs listen.
       void this.options.bridge.send({ type: "mp.snapshot" });
     }

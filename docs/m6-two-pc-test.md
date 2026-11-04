@@ -40,7 +40,7 @@ Checks SPEC §22: joining with approval, a fresh project on the first join, a ne
 
 ### Removing and ending
 10. PC 1: type `members`: PC 2 is listed as online. Type `remove <PC 2's name>`. PC 2's companion says it was removed, and stops. Running `join` with the code again on PC 2 is refused.
-11. PC 1: type `unblock <PC 2's name>`, and let PC 2 join again (`y`).
+11. PC 1: type `unblock <PC 2's name>`, and let PC 2 join again (`y`, it's asked again). PC 2 says `let back in: rejoined the session ...` and is back in its collab project from before.
 12. PC 1: type `end` and answer `y`. PC 2 says the session was ended for good. PC 1's `host --resume` then says the project isn't a session it hosts.
 
 Send me both companions' output if anything fails.

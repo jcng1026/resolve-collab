@@ -285,6 +285,17 @@ describe("ending for good and removing (SPEC §22.2, §22.5)", () => {
     await waitFor("Jo refused", () => jo.ended !== undefined);
     await close(jo, false);
     expect(host.session!.unblock("Jo")).toMatch(/can ask to join again$/);
+    // Unblocked and let in again: the host asks, and Jo goes back into the
+    // project from before and catches up (decision 2026-11-04, §22.5).
+    const project = jo.fake.project.id;
+    const asked = host.asked.length;
+    host.fake.clipByName("c.mp4")!.color = "Pink";
+    await connect(jo, "member", code);
+    await waitFor("Jo back", () => jo.logs.some((l) => l.startsWith("let back in: rejoined the session")));
+    expect(host.asked.length).toBe(asked + 1);
+    expect(jo.fake.project.id).toBe(project);
+    await waitFor("Jo caught up", () => jo.fake.clipByName("c.mp4")?.color === "Pink");
+    expect(loadRecord(join(jo.dir, "store"), jo.session!.record!.id)?.ended).toBe(false);
   }, 40_000);
 
   it("ends the session for good: members are told, and it can't be resumed", async () => {
