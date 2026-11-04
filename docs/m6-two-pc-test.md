@@ -30,7 +30,7 @@ Checks SPEC §22: joining with approval, a fresh project on the first join, a ne
 5. PC 1: close the companion (Ctrl+C). PC 2's companion says PC 1 closed the session, and stops.
 6. PC 2: make a change in its project while the session is closed (for example a clip colour).
 7. PC 1: with the same project open, run `node src/companion.ts host --resume`. It says it's resuming, and shows a **new** invite code.
-8. PC 2: try the **old** code first: nothing is found (stop it with Ctrl+C after a few seconds). Then run `join <new code>`.
+8. PC 2: try the **old** code first: either nothing is found (stop it with Ctrl+C after about 20 seconds), or it says the code is from an earlier opening and stops; PC 1 says PC 2 used an old code. Either way PC 2 is **not** let in. Then run `join <new code>`.
    - PC 1 is **not** asked again;
    - PC 2's companion says it rejoined, in the same collab project (if another project is open, it says which one to open);
    - PC 2's change from step 6 reaches PC 1.

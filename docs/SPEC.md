@@ -747,6 +747,7 @@ Goal (§16): §4 complete. Decisions of 2026-11-04 (asked before building): a jo
 - **Each PC has a lasting key pair**, made on first run and kept in `%USERPROFILE%\ResolveCollab\identity.json` (with the person's name). The companion asks for the name once. Hyperswarm uses the key pair, so a PC's public key is its identity on the peer link. The short ID in the terminal is its first 8 hex digits.
 - **Each session has a session ID** (32 hex digits), made by the host's companion when the session is created and **never shared in the invite code**. The host tells it to a member only after letting them in.
 - **The invite code only lets you in.** Every time the host opens the session (`host` or `host --resume`), there's a new invite code (as today, random). Yesterday's code finds nobody. This replaces §4.4's "same invite code".
+  - An old code can still lead to the host for a while (the code's announcement lingers on the DHT for minutes, and the host's key is lasting), so **the join request carries the code it was made with**, and the host refuses any join whose code isn't the current one, without asking: the joiner is told the code is from an earlier opening, and stops (found in the M6 two-PC test, 2026-11-04).
 - **Stores are kept per session ID** (today: per invite code): `sessions/<session ID>/` on every PC. Sessions saved before M6 (keyed by invite code) are still read: their folder becomes the session ID.
 
 ### 22.2 Starting and resuming (host)
@@ -755,7 +756,7 @@ Goal (§16): §4 complete. Decisions of 2026-11-04 (asked before building): a jo
 - **Ending permanently:** typing `end` in the host's companion ends the session for good. Members are told, the session is marked ended on every PC, and `--resume` refuses it. (Chat history, deleted at that point, comes in M8.)
 
 ### 22.3 Joining
-1. `join <code>`: the companion finds the host on the code's topic and sends a **join request** with the person's name.
+1. `join <code>`: the companion finds the host on the code's topic and sends a **join request** with the person's name and the code. A request with an older code is refused (§22.1).
 2. **The host is asked** in the terminal: `Jo (a1b2c3d4) wants to join: y = let in, n = not now, b = block`. Until then the joiner is told it's waiting, and the host sends it nothing about the session. A PC the host already let in for this session is let in without asking; a blocked one is refused without asking.
 3. **Once let in**, the joiner learns the session ID and the host's key, and remembers both (`sessions/<id>/session.json`). From then on it accepts session data only from that host key (today: whoever answers first), so a stranger with a leaked code can't pose as the host to a member who has joined before.
 4. **First join** (the joiner's PC has never been in this session): the companion has Resolve **create and open a new project**, named `<host's project> (collab · hosted by <host>)` (with a number if that name is taken), and sync fills it as a first join. The project that was open is left exactly as it was. This replaces §4.2's `.drp` import: nothing made on another PC is imported into Resolve, and only what v1 syncs arrives (§6.1). It also replaces "match and combine" on first join (§17).

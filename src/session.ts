@@ -5,9 +5,9 @@
 //
 // Peer messages (all JSON, all checked before use). The host sends session
 // data only to members it has let in:
-//   member → host  join       { name }                  on connect, again until answered
+//   member → host  join       { name, code }            on connect, again until answered
 //   host → member  waiting                              the host is being asked
-//   host → member  refused-join { blocked }
+//   host → member  refused-join { blocked, old-code? }
 //   host → member  welcome    { session, host, state }  once let in, or when asked
 //   member → host  propose    { op, proposal }
 //   host → members commit     { commit }
@@ -325,15 +325,20 @@ export class Session {
 
   // --- peers ----------------------------------------------------------------------
 
+  // The code says which opening of the session this PC was invited to (§22.1).
+  private joinMessage(): Message {
+    return { type: "join", name: this.options.name, code: this.options.peers.code };
+  }
+
   private peerJoined(id: string): void {
     this.connected.add(id);
     if (this.options.role === "member") {
-      this.options.peers.sendTo(id, { type: "join", name: this.options.name });
+      this.options.peers.sendTo(id, this.joinMessage());
       // Asked again until someone answers as the host (it may still be starting).
       if (!this.joinTimer && !this.hostId) {
         this.joinTimer = setInterval(() => {
           if (this.hostId || this.over) return;
-          for (const peer of this.connected) this.options.peers.sendTo(peer, { type: "join", name: this.options.name });
+          for (const peer of this.connected) this.options.peers.sendTo(peer, this.joinMessage());
         }, JOIN_AGAIN_MS);
       }
     }
@@ -371,7 +376,7 @@ export class Session {
 
   private async hostMessage(message: Message, from: string): Promise<void> {
     const host = this.host!;
-    if (message.type === "join") return this.joinRequest(cleanName(message.name), from);
+    if (message.type === "join") return this.joinRequest(cleanName(message.name), from, message.code);
     if (!this.admitted.has(from)) return; // nothing from PCs not let in
     switch (message.type) {
       case "propose":
@@ -397,11 +402,19 @@ export class Session {
     };
   }
 
-  private joinRequest(name: string, from: string): void {
+  private joinRequest(name: string, from: string, code: JsonValue | undefined): void {
     const record = this.record;
     const key = this.options.peers.keyOf(from);
     // Not before the host knows its project: the joiner's new project is named after it (they ask again).
     if (!record || !record.project || !key || !this.host || this.admitted.has(from) || this.asking.has(from)) return;
+    // Only today's code lets anyone in: an old one can still lead here while
+    // its announcement lingers on the DHT, and this PC's key is lasting (§22.1).
+    if (code !== this.options.peers.code) {
+      this.options.peers.sendTo(from, { type: "refused-join", blocked: false, "old-code": true });
+      if (!this.told.has(`old-code:${key}`)) this.options.log(`${name} (${from}) used an invite code from an earlier opening, and wasn't let in`);
+      this.told.add(`old-code:${key}`);
+      return;
+    }
     if (record.blocked.some((m) => m.key === key)) {
       this.options.peers.sendTo(from, { type: "refused-join", blocked: true });
       return;
@@ -509,7 +522,9 @@ export class Session {
         return;
       case "refused-join":
         if (this.hostId) return;
-        this.end(message.blocked === true ? "The host has blocked this PC from the session." : "The host didn't let you in.");
+        this.end(message["old-code"] === true
+          ? "That invite code is from an earlier opening of the session. Ask the host for the new one."
+          : message.blocked === true ? "The host has blocked this PC from the session." : "The host didn't let you in.");
         return;
       case "welcome":
         await this.welcomed(message, from);

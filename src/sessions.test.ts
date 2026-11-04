@@ -12,7 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BridgeClient } from "./bridge/bridge-client.ts";
 import { FakeBridge } from "./bridge/fake-bridge.ts";
 import { findFile, fingerprint } from "./media/fingerprint.ts";
-import { PeerLink, newInviteCode } from "./peer/peer-link.ts";
+import { PeerLink, newInviteCode, topicFor } from "./peer/peer-link.ts";
 import { type Approval, Session } from "./session.ts";
 import { loadRecord } from "./session-record.ts";
 
@@ -202,6 +202,36 @@ describe("closing, resuming and dropping out (SPEC §22.2, §22.4)", () => {
     await waitFor("edits sync again", () => jo.fake.clipByName("b.mp4")?.color === "Blue");
     // The old code finds nobody.
     expect(first).not.toBe(second);
+  }, 60_000);
+
+  it("refuses a PC that reaches the host with an older code (§22.1)", async () => {
+    // Opened once with the first code (Jo was let in then), then resumed with
+    // a new one. The old code's announcement can linger on the DHT and the
+    // host's key is lasting, so the resumed host is still reachable on the
+    // old topic: here it listens on it too, as that stale announcement would.
+    const host2 = makePc("Kim");
+    const ann = makePc("Ann");
+    footage(host2, [ann], "c.mp4");
+    const first = newInviteCode();
+    await connect(host2, "host", first);
+    await connect(ann, "member", first);
+    await waitFor("Ann in", () => clipIn(ann, "c.mp4"));
+    await close(host2);
+    await waitFor("Ann told", () => ann.ended !== undefined);
+    await close(ann, false);
+
+    const second = newInviteCode();
+    await connect(host2, "host", second, { resume: true });
+    await waitFor("resumed", () => host2.logs.some((l) => l.startsWith("resuming the session")));
+    const swarm = (host2.peers as unknown as { swarm: { join(topic: Buffer, o: object): { flushed(): Promise<void> } } }).swarm;
+    await swarm.join(topicFor(first), { server: true, client: false }).flushed();
+    await connect(ann, "member", first);
+    await waitFor("Ann refused", () => ann.ended !== undefined, 20_000);
+    expect(ann.ended).toContain("earlier opening");
+    expect(ann.logs.some((l) => l.startsWith("rejoined"))).toBe(false);
+    expect(host2.logs.some((l) => l.includes("rejoined"))).toBe(false);
+    await close(ann, false);
+    await close(host2);
   }, 60_000);
 
   it("waits for a host whose connection dropped, and ends after the grace time", async () => {

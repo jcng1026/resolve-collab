@@ -70,8 +70,12 @@ export class PeerLink extends EventEmitter {
   private readonly run = randomBytes(4).toString("hex");
   private held: (Outgoing & { id: number })[] = [];
 
+  // The invite code this link was opened with (a join request carries it, SPEC §22.1).
+  readonly code: string;
+
   constructor(inviteCode: string, options: PeerLinkOptions = {}) {
     super();
+    this.code = inviteCode;
     this.topic = topicFor(inviteCode);
     this.swarm = new Hyperswarm({ ...(options.bootstrap ? { bootstrap: options.bootstrap } : {}), ...(options.seed ? { seed: options.seed } : {}) });
     this.swarm.on("connection", (socket) => this.accept(socket));
