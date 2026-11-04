@@ -144,9 +144,11 @@ export function reconcileTimelines(input: Input<Timelines>): TimelinePlan {
 // the rest of the group.
 export function groupLinked(conflicts: Conflict[], ...models: Timelines[]): Conflict[][] {
   const linkOf = (id: string) => models.map((m) => m.items[id]?.link).find((l) => l) ?? "";
+  // A marker on a linked item goes with its item's link (SPEC §21.5).
+  const markerItem = (id: string) => models.map((m) => m.markers[id]?.item).find((i) => i) ?? "";
   const groups = new Map<string, Conflict[]>();
   for (const c of conflicts) {
-    const link = c.item === "item" ? linkOf(c.id) : "";
+    const link = c.item === "item" ? linkOf(c.id) : c.item === "marker" && markerItem(c.id) ? linkOf(markerItem(c.id)) : "";
     const key = link ? JSON.stringify([link, c.kind, c.field ?? "", c.mine ?? null, c.theirs ?? null]) : c.key;
     groups.set(key, [...(groups.get(key) ?? []), c]);
   }

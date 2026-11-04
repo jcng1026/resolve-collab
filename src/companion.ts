@@ -85,6 +85,11 @@ const nextLine = () => new Promise<string>((resolve) => { answerLine = resolve; 
 
 function describe(c: Conflict): string {
   const what = `${c.item} "${c.label}"`;
+  if (c.kind === "clash") {
+    const m = (v: unknown) => { const x = v as { name: string; color: string }; return `"${x.name}" (${x.color})`; };
+    const frame = (c.mine as { frame: number }).frame;
+    return `two markers on frame ${frame}, and only one fits: yours ${m(c.mine)}, theirs ${m(c.theirs)}.  mine = keep yours, theirs = keep theirs`;
+  }
   if (c.kind === "field") return `${what}: ${c.field} is ${JSON.stringify(c.mine)} here, ${JSON.stringify(c.theirs)} in the session`;
   if (c.kind === "deleted-here") return `${what}: you deleted it; someone changed it.  mine = keep it deleted, theirs = bring it back`;
   return `${what}: you changed it; someone deleted it.  mine = keep your version, theirs = delete it`;

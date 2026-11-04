@@ -22,10 +22,10 @@ import type { Commit } from "./host-log.ts";
 import { newId } from "./media-pool.ts";
 import { type LocalMarker, localMarkers, markerFailure, markerValues, tagOf } from "./marker.ts";
 import type { BridgeResult } from "./media-pool-sync.ts";
-import { type Answer, type Conflict, EXISTS, fieldKey, itemKey, resolveWith } from "./reconcile.ts";
+import { type Answer, type Conflict, EXISTS, fieldKey, frameClashes, itemKey, overwriteMessage, resolveWith } from "./reconcile.ts";
 import { type LocalItem, type LocalTimeline, type LocalTrack, type TimelineMarkerSpot, type TrackLists, identifyTimelineState } from "./timeline-identify.ts";
 import { groupLinked, reconcileTimelines, timelineDomain } from "./timeline-reconcile.ts";
-import { type Item, type TimelineOp, type Timelines, applyTimelineOp, emptyTimelines } from "./timeline.ts";
+import { type Item, type Marker, type TimelineOp, type Timelines, applyTimelineOp, emptyTimelines } from "./timeline.ts";
 
 export interface MediaLookup {
   readonly ready: boolean; // the media pool has been read
@@ -64,8 +64,9 @@ const PENDING_EXPIRE_MS = 10_000;
 // in Resolve, are retried this often: the clip may be imported by a command,
 // which the bridge doesn't report as an event.
 const RETRY_MS = 1000;
-// Errors that only mean "not now": no rebuild, no warning.
-const TRANSIENT = new Set(["not-current", "user-editing", "unreadable"]);
+// Errors that only mean "not now": no rebuild, no warning. "stopped": this
+// companion is shutting down.
+const TRANSIENT = new Set(["not-current", "user-editing", "unreadable", "stopped"]);
 
 type Command = { type: string } & Record<string, JsonValue>;
 
@@ -280,6 +281,8 @@ export class TimelineSync {
     const pendingValues = new Map([...this.pending].map(([k, p]) => [k, p.value]));
     const mode = this.catchUp ? "catch-up" : "live";
     const plan = reconcileTimelines({ base: this.base && scope(this.base), local: ids.model, session: scope(session), mode, pending: pendingValues, busy });
+    // Two markers on one frame (SPEC §21.5).
+    frameClashes(timelineDomain, "marker", plan, ids.model, scope(session), mode, (m: Marker) => `${m.timeline}/${m.item}`);
 
     let { propose, apply } = plan;
     if (plan.conflicts.length) {
@@ -293,9 +296,7 @@ export class TimelineSync {
       propose = [...propose, ...resolved.propose];
       apply = [...apply, ...resolved.apply];
     }
-    for (const c of plan.overwritten) {
-      this.options.log(`someone changed ${c.field} of "${c.label}" at the same moment; their ${JSON.stringify(c.theirs)} replaced your ${JSON.stringify(c.mine)}`);
-    }
+    for (const c of plan.overwritten) this.options.log(overwriteMessage(c));
 
     // A timeline deleted here: confirm before deleting it for everyone.
     const keep: TimelineOp[] = [];

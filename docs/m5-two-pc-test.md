@@ -58,14 +58,15 @@ Wait 2–3 seconds after each change before checking the other PC.
 10. While it's closed, on `Edit`:
     - PC 2 changes the colour of the named ruler marker;
     - PC 1 changes its name;
-    - **both** add a ruler marker at the **same** place (put the playhead at the same timecode on both, for example by typing it into the timecode box above the timeline, and press **M**).
-11. PC 2: start the companion again with the same `join` command. No question is asked.
-    - The named marker has PC 2's colour and PC 1's name, on both PCs.
-    - Each companion says once that the other PC's marker couldn't be placed, because there's already one on that frame. Each PC keeps its own.
+    - **both** add a ruler marker at the **same** frame (put the playhead at the same timecode on both, for example by typing it into the timecode box above the timeline, check it moved, and press **M**), then double-click it and give it a **different colour on each PC**. Two markers alike in every value count as one marker, so they must differ.
+11. PC 2: start the companion again with the same `join` command. PC 2 saves a backup and asks **one** question, about the two markers on that frame (only one fits). Answer `m`.
+    - The named marker has PC 2's colour and PC 1's name, on both PCs (that wasn't a question: they changed different things).
+    - On that frame, both PCs have **PC 2's** marker. (With `t`, both would have PC 1's.)
 
 Send me both companions' output if anything fails.
 
 ## Known M5 limits
 - Markers on a timeline you don't have open arrive when you open it, like clips.
-- Two markers on the same frame can't both exist in Resolve: the other PC's one is reported and left out.
+- Two markers on the same frame can't both exist in Resolve. After time offline, the returning person picks which stays; live, the first to reach the host stays and the other PC is told. The person whose marker was replaced gets a notice with Restore mine in M7.
+- A timeline duplicated before a session starts: whichever of the two is opened first in the session keeps the markers' hidden IDs, and the other's markers get new ones. Both keep the right markers.
 - A marker whose hidden data was written by another tool or script keeps that data; if you move it, it syncs as removed here and added there.

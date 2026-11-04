@@ -191,7 +191,9 @@ function checkItemFields(model: Timelines, pool: MediaPool, timeline: string, ki
 
 // Returns why op can't be applied, or null when it can. Deleting something
 // already gone is allowed (a no-op), since deletes cascade.
-export function validateTimelineOp(model: Timelines, pool: MediaPool, op: unknown, anyMedia = false): string | null {
+// `frames`: one marker per frame per owner (SPEC §21.2); whole models aren't
+// held to it.
+export function validateTimelineOp(model: Timelines, pool: MediaPool, op: unknown, anyMedia = false, frames = true): string | null {
   const o = op as TimelineOp;
   if (typeof o !== "object" || o === null) return "not an object";
   switch (o.type) {
@@ -238,13 +240,18 @@ export function validateTimelineOp(model: Timelines, pool: MediaPool, op: unknow
       if (!isId(o.id) || model.markers[o.id]) return "bad or existing marker id";
       if (!model.timelines[o.timeline]) return "unknown timeline";
       if (o.item !== "" && model.items[o.item]?.timeline !== o.timeline) return "unknown item";
-      const count = Object.values(model.markers).filter((m) => m.timeline === o.timeline && m.item === o.item).length;
-      if (count >= MAX_MARKERS_PER_OWNER) return "too many markers";
+      const same = Object.values(model.markers).filter((m) => m.timeline === o.timeline && m.item === o.item);
+      if (same.length >= MAX_MARKERS_PER_OWNER) return "too many markers";
+      if (frames && same.some((m) => m.frame === o.frame)) return "occupied";
       return checkMarker(o);
     }
-    case "marker.set":
-      if (!isId(o.id) || !model.markers[o.id]) return "unknown marker";
+    case "marker.set": {
+      const marker = isId(o.id) ? model.markers[o.id] : undefined;
+      if (!marker) return "unknown marker";
+      const taken = (m: Marker) => m.id !== marker.id && m.timeline === marker.timeline && m.item === marker.item && m.frame === o.frame;
+      if (frames && o.frame !== undefined && Object.values(model.markers).some(taken)) return "occupied";
       return checkMarkerFields(o);
+    }
     case "marker.delete":
       return isId(o.id) ? null : "bad marker id";
     default:
@@ -339,7 +346,7 @@ export function validateTimelines(input: unknown, pool: MediaPool): Timelines | 
   if (typeof raw !== "object" || raw === null) return null;
   const model = emptyTimelines();
   const add = (op: TimelineOp) => {
-    if (validateTimelineOp(model, pool, op, true)) return false;
+    if (validateTimelineOp(model, pool, op, true, false)) return false;
     applyTimelineOp(model, op);
     return true;
   };

@@ -9,8 +9,8 @@ import type { JsonValue } from "../bridge-protocol/wire.ts";
 import type { Commit } from "./host-log.ts";
 import { type LocalBin, type LocalClip, type LocalState, type MarkerSpot, identify } from "./identify.ts";
 import { POOL_TAG, localMarkers, markerFailure, markerValues, tagOf } from "./marker.ts";
-import { type Clip, type Fingerprint, type MediaPool, type Op, ROOT, applyOp, newId } from "./media-pool.ts";
-import { type Answer, type Conflict, EXISTS, fieldKey, itemKey, mediaPoolDomain, reconcile, resolveConflicts } from "./reconcile.ts";
+import { type Clip, type Fingerprint, type MediaPool, type Op, type PoolMarker, ROOT, applyOp, newId } from "./media-pool.ts";
+import { type Answer, type Conflict, EXISTS, fieldKey, frameClashes, itemKey, mediaPoolDomain, overwriteMessage, reconcile, resolveConflicts } from "./reconcile.ts";
 
 export interface BridgeResult {
   ok: boolean;
@@ -212,6 +212,8 @@ export class MediaPoolSync {
     const pendingValues = new Map([...this.pending].map(([k, p]) => [k, p.value]));
     const mode = this.catchUp ? "catch-up" : "live";
     const plan = reconcile({ base: this.base, local: ids.model, session, mode, pending: pendingValues, busy });
+    // Two markers on one frame (SPEC §21.5).
+    frameClashes(mediaPoolDomain, "poolmarker", plan, ids.model, session, mode, (m: PoolMarker) => m.clip);
 
     let { propose, apply } = plan;
     if (plan.conflicts.length) {
@@ -220,9 +222,7 @@ export class MediaPoolSync {
       propose = [...propose, ...resolved.propose];
       apply = [...apply, ...resolved.apply];
     }
-    for (const c of plan.overwritten) {
-      this.options.log(`someone changed ${c.field} of "${c.label}" at the same moment; their ${JSON.stringify(c.theirs)} replaced your ${JSON.stringify(c.mine)}`);
-    }
+    for (const c of plan.overwritten) this.options.log(overwriteMessage(c));
     const changesHere = apply.some((op) => op.type !== "clip.create" || !this.missing.has(op.id));
     if (mode === "catch-up" && changesHere) {
       this.options.log("catching up: saving a backup of the project first");
@@ -360,7 +360,7 @@ export class MediaPoolSync {
           : { type: "marker.add", owner: { kind: "clip", id: owner }, ...values };
         const result = await this.run(key, command, true);
         if (result.ok) this.gaveUp.delete(op.id);
-        else {
+        else if (result.error !== "stopped") { // "stopped": this companion is shutting down
           this.gaveUp.set(op.id, tried);
           this.options.log(markerFailure(marker, String(result.error)));
         }

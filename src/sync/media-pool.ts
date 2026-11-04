@@ -117,7 +117,9 @@ function isInside(pool: MediaPool, bin: string, ancestor: string): boolean {
 
 // Returns why op can't be applied to pool, or null when it can. Deleting
 // something already gone is allowed (a no-op), since deletes cascade.
-export function validateOp(pool: MediaPool, op: unknown): string | null {
+// `frames`: one marker per frame per clip (SPEC §21.2); whole models aren't
+// held to it.
+export function validateOp(pool: MediaPool, op: unknown, frames = true): string | null {
   const o = op as Op;
   if (typeof o !== "object" || o === null) return "not an object";
   switch (o.type) {
@@ -153,13 +155,18 @@ export function validateOp(pool: MediaPool, op: unknown): string | null {
     case "poolmarker.create": {
       if (!isId(o.id) || pool.markers[o.id]) return "bad or existing marker id";
       if (!pool.clips[o.clip]) return "unknown clip";
-      const count = Object.values(pool.markers).filter((m) => m.clip === o.clip).length;
-      if (count >= MAX_MARKERS_PER_OWNER) return "too many markers";
+      const same = Object.values(pool.markers).filter((m) => m.clip === o.clip);
+      if (same.length >= MAX_MARKERS_PER_OWNER) return "too many markers";
+      if (frames && same.some((m) => m.frame === o.frame)) return "occupied";
       return checkMarker(o);
     }
-    case "poolmarker.set":
-      if (!isId(o.id) || !pool.markers[o.id]) return "unknown marker";
+    case "poolmarker.set": {
+      const marker = isId(o.id) ? pool.markers[o.id] : undefined;
+      if (!marker) return "unknown marker";
+      const taken = (m: PoolMarker) => m.id !== marker.id && m.clip === marker.clip && m.frame === o.frame;
+      if (frames && o.frame !== undefined && Object.values(pool.markers).some(taken)) return "occupied";
       return checkMarkerFields(o);
+    }
     case "poolmarker.delete":
       return isId(o.id) ? null : "bad marker id";
     default:
@@ -266,7 +273,7 @@ export function validatePool(input: unknown): MediaPool | null {
   // Saved before M5: no markers.
   for (const m of Object.values(raw.markers ?? {})) {
     const op = { type: "poolmarker.create", id: m?.id, clip: m?.clip, frame: m?.frame, duration: m?.duration, color: m?.color, name: m?.name, note: m?.note } as Op;
-    if (validateOp(pool, op)) return null;
+    if (validateOp(pool, op, false)) return null;
     applyOp(pool, op);
   }
   return pool;

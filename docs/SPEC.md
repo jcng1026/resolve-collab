@@ -353,6 +353,7 @@ Every feature follows: spec section → automated tests (using a **fake bridge**
 | Apply tiers | All three built; tier 1 used whenever it works; a test switch forces tiers 2 and 3 (2026-11-03) |
 | Tier 3 (timeline swap) | Off in normal use, only with `--force-tier 3`: importing another PC's `.drt` could run scripts hidden in Fusion comps. A change that would need it is reported, to be made by hand (2026-11-03) |
 | Markers | Timeline, item and media pool clip markers all sync; each carries its collab ID in its hidden `customData`; markers on a timeline that isn't open arrive when it's opened (2026-11-04, §21) |
+| Two markers on one frame | A clash: in catch-up the returning person picks Keep mine / Keep theirs; live, first to the host wins; no "keep both" (2026-11-04, §21.5) |
 
 ---
 
@@ -686,7 +687,7 @@ Goal (§16): §6.1 markers sync both ways, live and after offline or bridge-off 
 - **Operations:** `marker.create/set/delete` (timelines) and `poolmarker.create/set/delete` (media pool), through the same host-ordered log (§19.3). Session models saved before M5 are accepted (no markers).
 - **Deletes cascade:** a timeline or item takes its markers, a pool clip its clip markers.
 - **Checks:** colour is one of Resolve's 16 marker colours; frames are 0 to 100,000,000 and durations 1 or more; names up to 255 characters and notes up to 10,000; up to 5,000 markers per owner.
-- Two markers on the same owner and frame are allowed in the model (two people adding one at the same moment). The PC that can't place the second one says so once.
+- **One marker per frame per owner**, as in Resolve: the host refuses a `create` or `set` that would put a marker on a frame where the same owner already has another (`occupied`). Whole models from a peer or from disk aren't checked for this (sessions saved before 2026-11-04 may hold two).
 
 ### 21.3 Identity
 - `customData` holds `rc:<collab ID>` for timeline and item markers, and `rc:p:<collab ID>` for clip markers: adding a clip to a timeline copies the pool clip's markers onto the item, and those copies must not pass for the pool clip's own markers.
@@ -718,7 +719,12 @@ Goal (§16): §6.1 markers sync both ways, live and after offline or bridge-off 
 ### 21.5 Companion side
 - **The same reconciler**, with markers as another kind in each domain. Within a batch, markers come after the items and clips they belong to are created, and before those are deleted.
 - **Timeline and item markers** follow the open-timeline rule (§20.5). **Clip markers** sync whenever the media pool does.
-- **A marker that couldn't be placed** (another marker on that frame, or Resolve refused it) is said once and not tried again until someone changes it.
+- **Two markers on one frame** (decided 2026-11-04, the §9.3 rules applied to a frame): when this PC would add or move a marker onto a frame where the session has another marker on the same owner, it's a clash on that frame, because Resolve holds only one.
+  - **Catch-up:** the returning person is asked, like any same-field conflict: *keep mine* replaces the other marker with theirs for everyone; *keep theirs* removes theirs (or moves it back) and brings the other marker in. The notice to the person whose marker was replaced (with Restore mine) comes with M7, as for every conflict.
+  - **Live:** first to reach the host wins (§5). The other PC's marker is removed (or moved back), the winner's comes in, and it's told its marker was replaced. A clash the host itself refuses (`occupied`, both sent at the same moment) is resolved the same way on the next pass.
+  - A linked video and audio pair that clashes the same way is one question.
+  - Keeping both (moving one to the next free frame) was offered and turned down.
+- **A marker that couldn't be placed** (Resolve refused it) is said once and not tried again until someone changes it.
 - **A rebuilt item's markers** (§20.6) are still to add, not deleted on this PC.
 
 ### 21.6 Verification

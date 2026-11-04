@@ -14,13 +14,17 @@ export type Mode = "live" | "catch-up";
 
 export interface Conflict {
   key: string;
-  kind: "field" | "deleted-here" | "deleted-there";
+  // "clash": two markers on one frame (SPEC §21.5); `id` is mine.
+  kind: "field" | "deleted-here" | "deleted-there" | "clash";
   item: string; // entity kind, e.g. "clip" or "item"
   id: string;
   label: string; // the entity's name, for the question
   field?: string;
   mine?: unknown;
   theirs?: unknown;
+  // A clash's operations for each answer: proposed for "mine", applied here for "theirs".
+  mineOps?: unknown[];
+  theirsOps?: unknown[];
 }
 
 export type Answer = "mine" | "theirs";
@@ -208,6 +212,12 @@ export function resolveWith<M, O>(
     if (!answer) continue;
     const l = domain.table(local, c.item)[c.id];
     const s = domain.table(session, c.item)[c.id];
+    if (c.kind === "clash") {
+      // Already in order: what makes room first, then what goes on the frame.
+      if (answer === "mine") propose.push(...(c.mineOps as O[]));
+      else apply.push(...(c.theirsOps as O[]));
+      continue;
+    }
     if (c.kind === "field") {
       const changes = { [c.field!]: answer === "mine" ? c.mine : c.theirs };
       (answer === "mine" ? propose : apply).push(domain.set(c.item, c.id, changes));
@@ -223,6 +233,75 @@ export function resolveWith<M, O>(
   }
   const none: Deleted = Object.fromEntries(domain.kinds.map((k) => [k, new Set<string>()]));
   return { propose: domain.order(propose, local, local, none), apply: domain.order(apply, session, local, none) };
+}
+
+// What a live race the session won tells the person it overwrote.
+export function overwriteMessage(c: Conflict): string {
+  if (c.kind === "clash") {
+    const m = (v: unknown) => `"${(v as FrameMarker).name}" (${(v as FrameMarker).color})`;
+    return `someone put a marker on frame ${(c.theirs as FrameMarker).frame} at the same moment; theirs, ${m(c.theirs)}, replaced yours, ${m(c.mine)}`;
+  }
+  return `someone changed ${c.field} of "${c.label}" at the same moment; their ${JSON.stringify(c.theirs)} replaced your ${JSON.stringify(c.mine)}`;
+}
+
+interface FrameMarker {
+  id: string;
+  frame: number;
+  duration: number;
+  color: string;
+  name: string;
+  note: string;
+}
+
+// Two markers on one frame (SPEC §21.5): Resolve holds one per frame per
+// owner. A marker this plan would add or move onto a frame where the session
+// has another marker on the same owner is a clash, not a proposal: in
+// catch-up the user is asked, live the session's marker wins. Changes the
+// plan in place. `ownerOf` gives a marker's owner key.
+export function frameClashes<M, O extends { type: string; id: string }>(
+  domain: Domain<M, O>, kind: string, plan: PlanOf<M, O>, local: M, session: M, mode: Mode, ownerOf: (marker: never) => string,
+): void {
+  const owner = ownerOf as (marker: FrameMarker) => string;
+  const mineTable = domain.table(local, kind) as Record<string, FrameMarker>;
+  const sessionTable = domain.table(session, kind) as Record<string, FrameMarker>;
+  const handled = new Set<string>(); // their markers dealt with here
+  for (const op of [...plan.propose]) {
+    const isSet = op.type === `${kind}.set`;
+    if (op.type !== `${kind}.create` && !(isSet && (op as unknown as { frame?: number }).frame !== undefined)) continue;
+    const mine = mineTable[op.id];
+    if (!mine) continue;
+    const theirs = Object.values(sessionTable).find((s) => s.id !== mine.id && s.frame === mine.frame && owner(s) === owner(mine));
+    if (!theirs) continue;
+    handled.add(theirs.id);
+    // Whatever the plan brings in for their marker waits for the answer.
+    const theirsIn = plan.apply.filter((o) => o.id === theirs.id);
+    plan.propose = plan.propose.filter((o) => o !== op);
+    plan.apply = plan.apply.filter((o) => o.id !== theirs.id);
+    const before = sessionTable[mine.id]; // mine as everyone has it, when it was moved
+    const makeRoom = before ? domain.set(kind, mine.id, { frame: before.frame }) : domain.remove(kind, mine.id);
+    const values = (m: FrameMarker) => ({ frame: m.frame, duration: m.duration, color: m.color, name: m.name, note: m.note });
+    const clash: Conflict = {
+      key: fieldKey(kind, mine.id, "frame"), kind: "clash", item: kind, id: mine.id, label: domain.label(kind, mine), field: "frame",
+      mine: values(mine), theirs: values(theirs),
+      mineOps: [domain.remove(kind, theirs.id), op],
+      theirsOps: [makeRoom, ...(theirsIn.length ? theirsIn : [domain.create(kind, theirs)])],
+    };
+    if (mode === "live") {
+      plan.apply.push(...(clash.theirsOps as O[]));
+      plan.overwritten.push(clash);
+    } else {
+      plan.conflicts.push(clash);
+    }
+  }
+  // Their marker coming onto a frame where this PC has one the session
+  // doesn't know yet (its proposal, or the answer that replaces theirs, is
+  // on its way): it waits, rather than failing in Resolve.
+  plan.apply = plan.apply.filter((op) => {
+    if (handled.has(op.id) || (op.type !== `${kind}.create` && op.type !== `${kind}.set`)) return true;
+    const theirs = sessionTable[op.id];
+    if (!theirs) return true;
+    return !Object.values(mineTable).some((m) => m.id !== theirs.id && !sessionTable[m.id] && m.frame === theirs.frame && owner(m) === owner(theirs));
+  });
 }
 
 // --- media pool (SPEC §19.5) ----------------------------------------------------

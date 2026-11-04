@@ -215,24 +215,19 @@ describe("marker sync between two companions", () => {
     expect(member.questions).toEqual([]);
   }, 40_000);
 
-  it("says once when another PC's marker can't go on a frame that already has one", async () => {
+  it("asks the returning person once about two markers on one frame, and keeps theirs or mine for everyone", async () => {
     await disconnect(member, true);
-    tl(member)!.markers.push(marker(200, { name: "member's" }));
-    tl(host)!.markers.push(marker(200, { name: "host's" }));
+    tl(member)!.markers.push(marker(200, { name: "member's", color: "Green" }));
+    tl(host)!.markers.push(marker(200, { name: "host's", color: "Red" }));
     await sleep(500);
-    await connect(member, "member", code, true);
-    const said = (pc: Pc) => pc.logs.filter((l) => l.includes("already a marker on that frame")).length;
-    await waitFor("both told", () => said(host) === 1 && said(member) === 1);
-    const tries = (pc: Pc) => pc.fake.commands.filter((c) => c.type === "marker.add" && c.frame === 200).length;
-    const before = [tries(host), tries(member)];
-    for (let i = 0; i < 5; i++) {
-      host.session!.timelines.schedule();
-      member.session!.timelines.schedule();
-      await sleep(150);
-    }
-    expect([tries(host), tries(member)]).toEqual(before);
-    expect(tl(host)!.markers.find((m) => m.frame === 200)!.name).toBe("host's");
-    expect(tl(member)!.markers.find((m) => m.frame === 200)!.name).toBe("member's");
+    member.questions.length = 0;
+    await connect(member, "member", code, true); // answers "mine"
+    await waitFor("member asked", () => member.questions.length > 0);
+    expect(member.questions[0]).toEqual([expect.objectContaining({ kind: "clash", item: "marker", label: "member's" })]);
+    await waitFor("the member's marker on both", () =>
+      [host, member].every((pc) => tl(pc)!.markers.filter((m) => m.frame === 200).map((m) => m.name).join() === "member's"));
+    expect(host.questions).toEqual([]);
+    expect([host, member].flatMap((pc) => pc.logs.filter((l) => l.includes("couldn't be placed")).map((l) => `${pc.name}: ${l}`))).toEqual([]);
   }, 40_000);
 });
 

@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { type LocalMarker, matchMarkers, tagOf } from "./marker.ts";
 import { type MediaPool, applyOp, emptyPool, validateOp, validatePool } from "./media-pool.ts";
-import { reconcile } from "./reconcile.ts";
-import { reconcileTimelines } from "./timeline-reconcile.ts";
+import { type Mode, frameClashes, reconcile, resolveWith } from "./reconcile.ts";
+import { groupLinked, reconcileTimelines, timelineDomain } from "./timeline-reconcile.ts";
 import { type Marker, type TimelineOp, type Timelines, applyTimelineOp, emptyTimelines, validateTimelineOp, validateTimelines } from "./timeline.ts";
 
 const id = (n: number) => n.toString(16).padStart(32, "0");
@@ -38,7 +38,7 @@ describe("marker model", () => {
   it("checks timeline and item markers", () => {
     const m = timelines();
     const ok = (op: Partial<Marker> & { type: string }) => validateTimelineOp(m, emptyPool(), op);
-    const base = { type: "marker.create", id: id(42), timeline: id(1), item: "", ...values };
+    const base = { type: "marker.create", id: id(42), timeline: id(1), item: "", ...values, frame: 11 };
     expect(ok(base)).toBeNull();
     expect(ok({ ...base, item: id(30) })).toBeNull();
     expect(ok({ ...base, item: id(99) })).toBe("unknown item");
@@ -68,7 +68,7 @@ describe("marker model", () => {
 
   it("checks pool clip markers and deletes them with their clip or bin", () => {
     const p = pool();
-    expect(validateOp(p, { type: "poolmarker.create", id: id(51), clip: id(20), ...values })).toBeNull();
+    expect(validateOp(p, { type: "poolmarker.create", id: id(51), clip: id(20), ...values, frame: 11 })).toBeNull();
     expect(validateOp(p, { type: "poolmarker.create", id: id(51), clip: id(99), ...values })).toBe("unknown clip");
     applyOp(p, { type: "clip.delete", id: id(20) });
     expect(p.markers).toEqual({});
@@ -159,5 +159,83 @@ describe("marker identity", () => {
     const out = matchMarkers([local(10, tagOf(id(40))), local(11, tagOf(id(40)))], "tl", session, ownerOf, claimed, newId);
     expect(out.map((m) => m.id)[0]).toBe(id(40));
     expect(out[1]!.id).not.toBe(id(40));
+  });
+});
+
+describe("two markers on one frame (SPEC §21.5)", () => {
+  const owner = (m: Marker) => `${m.timeline}/${m.item}`;
+  const mine = { id: id(60), timeline: id(1), item: "", ...values, frame: 70, color: "Green", name: "mine" };
+  const theirs = { id: id(61), timeline: id(1), item: "", ...values, frame: 70, color: "Red", name: "theirs" };
+  const plan = (local: Timelines, session: Timelines, mode: Mode) => {
+    const p = reconcileTimelines({ base: timelines(), local, session, mode, pending: new Map(), busy: new Set() });
+    frameClashes(timelineDomain, "marker", p, local, session, mode, owner);
+    return p;
+  };
+
+  it("is refused by the host, on the same owner only", () => {
+    const m = edit(timelines(), (x) => { x.markers[id(61)] = theirs; });
+    expect(validateTimelineOp(m, emptyPool(), { type: "marker.create", ...mine })).toBe("occupied");
+    expect(validateTimelineOp(m, emptyPool(), { type: "marker.create", ...mine, item: id(30) })).toBeNull();
+    expect(validateTimelineOp(m, emptyPool(), { type: "marker.set", id: id(40), frame: 70 })).toBe("occupied");
+    expect(validateTimelineOp(m, emptyPool(), { type: "marker.set", id: id(61), frame: 70, color: "Blue" })).toBeNull(); // itself
+    // Whole models (saved before this rule) aren't checked for it.
+    const both = edit(m, (x) => { x.markers[id(60)] = mine; });
+    expect(Object.keys(validateTimelines(both, emptyPool())!.markers)).toHaveLength(4);
+    const p = edit(pool(), (x) => { x.markers[id(51)] = { id: id(51), clip: id(20), ...values, frame: 10, name: "other" }; });
+    expect(validateOp(pool(), { type: "poolmarker.create", id: id(51), clip: id(20), ...values })).toBe("occupied");
+    expect(validatePool(p)).not.toBeNull();
+  });
+
+  it("asks the returning person in catch-up, and either answer leaves one marker for everyone", () => {
+    const local = edit(timelines(), (x) => { x.markers[id(60)] = mine; });
+    const session = edit(timelines(), (x) => { x.markers[id(61)] = theirs; });
+    const p = plan(local, session, "catch-up");
+    expect(p.propose).toEqual([]);
+    expect(p.apply).toEqual([]);
+    expect(p.conflicts).toEqual([expect.objectContaining({ kind: "clash", item: "marker", id: id(60), label: "mine",
+      mine: expect.objectContaining({ color: "Green" }), theirs: expect.objectContaining({ color: "Red" }) })]);
+    const key = p.conflicts[0]!.key;
+    const keepMine = resolveWith(timelineDomain, p.conflicts, new Map([[key, "mine"]]), local, session);
+    expect(keepMine.propose.map((o) => `${o.type} ${o.id}`)).toEqual([`marker.delete ${id(61)}`, `marker.create ${id(60)}`]);
+    expect(keepMine.apply).toEqual([]);
+    const keepTheirs = resolveWith(timelineDomain, p.conflicts, new Map([[key, "theirs"]]), local, session);
+    expect(keepTheirs.propose).toEqual([]);
+    expect(keepTheirs.apply.map((o) => `${o.type} ${o.id}`)).toEqual([`marker.delete ${id(60)}`, `marker.create ${id(61)}`]);
+  });
+
+  it("lets the session win live, and moves a marker back that was moved onto the other", () => {
+    const local = edit(timelines(), (x) => { x.markers[id(60)] = mine; });
+    const session = edit(timelines(), (x) => { x.markers[id(61)] = theirs; });
+    const live = plan(local, session, "live");
+    expect(live.propose).toEqual([]);
+    expect(live.apply.map((o) => `${o.type} ${o.id}`)).toEqual([`marker.delete ${id(60)}`, `marker.create ${id(61)}`]);
+    expect(live.overwritten).toEqual([expect.objectContaining({ kind: "clash", id: id(60) })]);
+    // Moving an existing marker (40, at frame 10) onto theirs.
+    const moved = edit(timelines(), (x) => { x.markers[id(40)]!.frame = 70; });
+    const both = edit(session, () => {});
+    const p = plan(moved, both, "live");
+    expect(p.propose).toEqual([]);
+    expect(p.apply).toEqual(expect.arrayContaining([{ type: "marker.set", id: id(40), frame: 10 }]));
+  });
+
+  it("asks once for a linked video and audio pair", () => {
+    const linked = (x: Timelines) => {
+      x.tracks[id(12)] = { id: id(12), timeline: id(1), kind: "audio", order: 1, name: "", enabled: true, locked: false, subType: "" };
+      x.items[id(31)] = { ...x.items[id(30)]!, id: id(31), track: id(12), link: id(30) };
+      x.items[id(30)]!.link = id(30);
+    };
+    const base = edit(timelines(), linked);
+    const local = edit(base, (x) => {
+      x.markers[id(62)] = { ...mine, id: id(62), item: id(30) };
+      x.markers[id(63)] = { ...mine, id: id(63), item: id(31) };
+    });
+    const session = edit(base, (x) => {
+      x.markers[id(64)] = { ...theirs, id: id(64), item: id(30) };
+      x.markers[id(65)] = { ...theirs, id: id(65), item: id(31) };
+    });
+    const p = reconcileTimelines({ base, local, session, mode: "catch-up", pending: new Map(), busy: new Set() });
+    frameClashes(timelineDomain, "marker", p, local, session, "catch-up", owner);
+    expect(p.conflicts).toHaveLength(2);
+    expect(groupLinked(p.conflicts, local, session)).toHaveLength(1);
   });
 });
