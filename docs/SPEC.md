@@ -111,7 +111,7 @@ All three tiers are built (decision 2026-11-03), although Free 21.1.2 needs only
 ### 4.2 Starting and joining
 1. The host opens their Resolve project, starts the bridge, and clicks **Start session** in the companion. They get an **invite code**, which they share however they like (WhatsApp, Discord, …).
 2. A joiner enters the code. The **host approves each join request** (shown with the joiner's name).
-3. A new joiner receives the project as a `.drp`, imported as a normal project in their library named `<Project> (collab · hosted by <Host>)`, then goes live.
+3. A new joiner receives the project as a `.drp`, imported as a normal project in their library named `<Project> (collab · hosted by <Host>)`, then goes live. *Superseded 2026-11-04 (§22.3): the joiner's companion creates that project empty and sync fills it; no `.drp` is imported.*
 4. A joiner who already has a copy of this session's project only receives the changes they missed (§9).
 
 ### 4.3 Host connection lost vs host leaving
@@ -119,7 +119,7 @@ All three tiers are built (decision 2026-11-03), although Free 21.1.2 needs only
 - **Host ends the session, closes the app, or the 10 minutes pass:** the session ends for everyone. Members keep their local copies. Any queued changes are kept locally and flagged as **not synced to the host**.
 
 ### 4.4 Resuming another day
-- **Only the host** can reopen their session, with the **same invite code**. Members rejoin with that code and catch up (§9).
+- **Only the host** can reopen their session, with the **same invite code**. Members rejoin with that code and catch up (§9). *Superseded 2026-11-04 (§22.1): every opening gets a new invite code; a hidden session ID says which session it is.*
 - The host can **end the session permanently**. The invite code becomes invalid and the session's chat history is deleted.
 - If the host's PC is gone for good, anyone can **start a new session from their own copy**. People who join it with an older copy get that copy backed up, then replaced with the new host's version.
 
@@ -354,6 +354,7 @@ Every feature follows: spec section → automated tests (using a **fake bridge**
 | Tier 3 (timeline swap) | Off in normal use, only with `--force-tier 3`: importing another PC's `.drt` could run scripts hidden in Fusion comps. A change that would need it is reported, to be made by hand (2026-11-03) |
 | Markers | Timeline, item and media pool clip markers all sync; each carries its collab ID in its hidden `customData`; markers on a timeline that isn't open arrive when it's opened (2026-11-04, §21) |
 | Two markers on one frame | A clash: in catch-up the returning person picks Keep mine / Keep theirs; live, first to the host wins; no "keep both" (2026-11-04, §21.5) |
+| Sessions (M6) | Joiners get a fresh project built by syncing, no `.drp` import; a new invite code every time the host opens the session, with a hidden session ID; first join = new project made by the companion, rejoin = last time's project; removal blocks that PC (2026-11-04, §22) |
 
 ---
 
@@ -735,3 +736,44 @@ Goal (§16): §6.1 markers sync both ways, live and after offline or bridge-off 
   - **Result, 2026-11-04, Free 21.1.2: all checks passed** in "RC M5 Check 1" (`--auto`), "2" (`--auto --force-tier 2`) and "3" (every step). That covers timeline, item and pool clip markers sent to Resolve (all values, a 3,000-character note with emoji, a marker past the end), tags, a move and recolour keeping the tag, deletes, the pool marker's copy on a clip the companion added, a rebuilt item's marker, and by hand in Resolve: a marker added with M, dragged and recoloured, and one removed in its dialog.
 - **Two PCs:** the checklist in `docs/m5-two-pc-test.md`.
   - **Run 2026-11-03/04, Free 21.1.2 on both PCs: every step passed** after three fixes it led to: pool marker copies between frames are snapped (§21.4); two markers on one frame are a clash, asked or won by the host (§21.5); a companion shutting down no longer counts its last command as refused. Checked on both PCs from their bridge logs (PC 2 through a Claude session over Remote Control): ruler, clip and pool markers both ways with the same hidden IDs; a move and recolour as the same marker; a clip added again with one copy; a timeline that wasn't open; a duplicated timeline (opened before the original in a new session, so the copy kept the old IDs: a known limit); an offline merge of a name and a colour without a question; two different markers on one frame, asked once, with "keep mine" leaving the returning PC's marker on both.
+
+---
+
+## 22. M6 design: sessions
+
+Goal (§16): §4 complete. Decisions of 2026-11-04 (asked before building): a joiner's project is **built by syncing**, not imported from a `.drp`; **every opening of a session gets a new invite code**; a **first join always gets a fresh project**, made by the companion; rejoining uses the project from last time; a removed member's **PC is blocked**. These replace parts of §4.2 and §4.4, as noted below.
+
+### 22.1 Identity
+- **Each PC has a lasting key pair**, made on first run and kept in `%USERPROFILE%\ResolveCollab\identity.json` (with the person's name). The companion asks for the name once. Hyperswarm uses the key pair, so a PC's public key is its identity on the peer link. The short ID in the terminal is its first 8 hex digits.
+- **Each session has a session ID** (32 hex digits), made by the host's companion when the session is created and **never shared in the invite code**. The host tells it to a member only after letting them in.
+- **The invite code only lets you in.** Every time the host opens the session (`host` or `host --resume`), there's a new invite code (as today, random). Yesterday's code finds nobody. This replaces §4.4's "same invite code".
+- **Stores are kept per session ID** (today: per invite code): `sessions/<session ID>/` on every PC. Sessions saved before M6 (keyed by invite code) are still read: their folder becomes the session ID.
+
+### 22.2 Starting and resuming (host)
+- `host`: a new session from the project open in Resolve. The companion remembers which local project belongs to which session (`sessions/<id>/session.json`: project ID, name, host key, members).
+- `host --resume`: reopens the session that the open project belongs to, with a new invite code. If the open project belongs to none, or to an ended one, it says so and starts nothing.
+- **Ending permanently:** typing `end` in the host's companion ends the session for good. Members are told, the session is marked ended on every PC, and `--resume` refuses it. (Chat history, deleted at that point, comes in M8.)
+
+### 22.3 Joining
+1. `join <code>`: the companion finds the host on the code's topic and sends a **join request** with the person's name.
+2. **The host is asked** in the terminal: `Jo (a1b2c3d4) wants to join: y = let in, n = not now, b = block`. Until then the joiner is told it's waiting, and the host sends it nothing about the session. A PC the host already let in for this session is let in without asking; a blocked one is refused without asking.
+3. **Once let in**, the joiner learns the session ID and the host's key, and remembers both (`sessions/<id>/session.json`). From then on it accepts session data only from that host key (today: whoever answers first), so a stranger with a leaked code can't pose as the host to a member who has joined before.
+4. **First join** (the joiner's PC has never been in this session): the companion has Resolve **create and open a new project**, named `<host's project> (collab · hosted by <host>)` (with a number if that name is taken), and sync fills it as a first join. The project that was open is left exactly as it was. This replaces §4.2's `.drp` import: nothing made on another PC is imported into Resolve, and only what v1 syncs arrives (§6.1). It also replaces "match and combine" on first join (§17).
+5. **Rejoin** (the PC has been in this session before): if this session's project is open, it catches up and merges as today (§9.3). If another project is open, it says which one to open and waits; it never switches project by itself.
+- A PC whose records were lost (for example a reinstalled Windows) counts as a first join: it gets a fresh project, and its old one is left alone.
+
+### 22.4 Leaving and dropping out
+- **The host closes the companion** (Ctrl+C): before going, it tells members the session is closed. Members say so, stop, and exit; changes made afterwards stay on their PC and are merged at the next rejoin (§9.3). This is "ended" in §4.3; the host can still resume it another day (§22.2).
+- **The host's connection drops** (no goodbye): members go offline (§9.1) and keep trying for **10 minutes**. If the host comes back in that time, they reconnect and merge on their own. After 10 minutes they say the session ended, and exit. A host whose companion crashed and was started again (`--resume`) has a new code, so members rejoin with it.
+- **A member leaves** (Ctrl+C): the host and others are told.
+
+### 22.5 Removing a member
+- Typing `members` in the host's companion lists who's in (name, short ID, online or not). `remove <name or short ID>` disconnects that PC, tells it it was removed, and **blocks its key** for this session: it's refused from then on, whatever code it uses. Everyone else keeps going with the same code.
+- The removed PC's project and media stay on it (§4.5). Its companion marks the session ended there.
+- `unblock <name or short ID>` lets a blocked PC ask again.
+
+### 22.6 Verification
+- **Unit tests:** identity file, session records, the join handshake (pending, let in, refused, blocked, known PC), host key pinning, store paths for old sessions.
+- **Pipeline test** (fake bridges, local testnet): first join creates a project and fills it; a second PC waits until let in; refuse and block; a known PC rejoins with a new code without asking; host closing ends the session for members; a dropped host within the grace time, and after it; `end`; `remove`; a stranger answering on the topic is ignored by a member who joined before.
+- **Real Resolve on one PC:** the bridge's project creation and naming (`tools/m6-resolve-check.ts`).
+- **Two PCs:** a checklist like the earlier ones (`docs/m6-two-pc-test.md`).
