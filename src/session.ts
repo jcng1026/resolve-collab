@@ -112,6 +112,7 @@ export class Session {
   private joinTimer: NodeJS.Timeout | undefined;
   private graceTimer: NodeJS.Timeout | undefined;
   private told = new Set<string>();
+  private freshProject = false;
   private over = false;
 
   constructor(options: SessionOptions) {
@@ -171,6 +172,7 @@ export class Session {
       fingerprint: this.options.fingerprint,
       findFile: this.options.findFile,
       backup: () => this.backup(),
+      backupNeeded: () => !this.freshProject,
       log,
       store: join(dir, `${role}.json`),
     });
@@ -183,6 +185,7 @@ export class Session {
       ask: this.options.ask,
       confirm: this.options.confirm,
       backup: () => this.backup(),
+      backupNeeded: () => !this.freshProject,
       media: { get ready() { return sync.ready; }, get project() { return sync.projectId; }, collab: (l) => sync.mediaCollab(l), local: (c) => sync.mediaLocal(c) },
       log,
       store: join(dir, `${role}-timelines.json`),
@@ -280,6 +283,7 @@ export class Session {
   // --- ordering -----------------------------------------------------------------
 
   private propose(op: SessionOp, proposal: string): void {
+    this.freshProject = false; // a change of this PC's own: from now on, worth a backup
     if (this.host) {
       this.commitLocally(op, this.options.peers.id, proposal);
     } else if (this.hostId) {
@@ -580,6 +584,7 @@ export class Session {
     }
     // The host is the one this PC was let in by before (SPEC §22.3).
     if (this.record && (this.record.id !== s.id || this.record.hostKey !== key)) return;
+    let said = false;
     if (!this.record) {
       if (this.joining) return;
       this.joining = true;
@@ -601,14 +606,17 @@ export class Session {
       record.updated = Date.now();
       saveRecord(this.options.storeDir, record);
       this.begin(record);
-      if (known) log(`${letBack ? "let back in: " : ""}rejoined the session for "${record.projectName}"`);
+      if (known) {
+        log(`${letBack ? "let back in: " : ""}rejoined the session for "${record.projectName}"`);
+        said = true; // no "joined" line as well
+      }
       // Everything again, now that the syncs listen.
       void this.options.bridge.send({ type: "mp.snapshot" });
     }
     clearTimeout(this.graceTimer);
     clearInterval(this.joinTimer);
     this.joinTimer = undefined;
-    if (!this.hostId) log(`joined the session hosted by ${this.record!.hostName} (${from})`);
+    if (!this.hostId && !said) log(`joined the session hosted by ${this.record!.hostName} (${from})`);
     this.hostId = from;
     this.member.reset({ seq: state.seq, model });
     this.reset(this.member.model);
@@ -627,6 +635,9 @@ export class Session {
     record.project = result.id;
     record.projectName = String(result.name ?? name);
     this.options.log(`made the project "${record.projectName}" for this session`);
+    // Only the session's content will be in it until this PC changes something:
+    // no backups of it before that (they'd protect nothing).
+    this.freshProject = true;
     return record;
   }
 

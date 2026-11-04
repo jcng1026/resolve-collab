@@ -235,15 +235,15 @@ if (values.fake) {
   fake.start();
 }
 
-await peers.start();
+// Said before the peer link starts: the host can answer while it's still starting.
 log(`you are ${identity.name} (${peers.id})`);
+log(`bridge inbox: ${inboxDir}`);
+if (mode === "join") log("looking for the host ...");
+await peers.start();
 if (mode === "host") {
   log(`invite code: ${inviteCode}`);
   log("Share it with the people joining. It works until you close this companion; next time, host --resume gives a new one.");
-} else {
-  log("looking for the host ...");
 }
-log(`bridge inbox: ${inboxDir}`);
 
 async function shutdown(): Promise<void> {
   if (stopping) return;

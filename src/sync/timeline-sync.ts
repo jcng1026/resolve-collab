@@ -41,6 +41,8 @@ export interface TimelineSyncOptions {
   ask: (conflicts: Conflict[]) => Promise<Map<string, Answer>>;
   confirm: (question: string) => Promise<boolean>;
   backup: () => Promise<boolean>;
+  // False while there's nothing of this PC's own to protect (a project just made for a first join).
+  backupNeeded?: () => boolean;
   media: MediaLookup;
   log: (message: string) => void;
   store?: string; // JSON file for base and ID maps
@@ -310,7 +312,7 @@ export class TimelineSync {
     if (keep.length) propose = propose.filter((o) => o.type !== "timeline.delete" || !keep.some((k) => (k as { id: string }).id === o.id));
 
     const deletesTimeline = apply.some((op) => op.type === "timeline.delete");
-    if ((mode === "catch-up" && apply.length) || deletesTimeline) {
+    if (((mode === "catch-up" && apply.length) || deletesTimeline) && this.options.backupNeeded?.() !== false) {
       this.options.log(deletesTimeline ? "a timeline was deleted by someone: saving a backup of the project first" : "catching up timelines: saving a backup of the project first");
       if (!(await this.options.backup())) {
         this.options.log("backup failed, so nothing was changed; will retry");

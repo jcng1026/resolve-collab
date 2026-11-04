@@ -177,7 +177,7 @@ describe("media pool sync between two companions", () => {
     await disconnect(host, true);
     await waitFor("member notices", () => member.logs.some((l) => l.startsWith("Offline: the host is unreachable")));
     await connect(host, "host", code, true);
-    await waitFor("member rejoins", () => member.logs.filter((l) => l.startsWith("joined the session")).length >= 3);
+    await waitFor("member rejoins", () => member.logs.filter((l) => /^(re)?joined the session/.test(l)).length >= 3);
     member.fake.clipByName("a (member).mp4")!.meta.Scene = "13";
     await waitFor("edit reaches the restarted host", () => host.fake.clipByName("a (member).mp4")?.meta.Scene === "13");
     expect(host.fake.poolClips.size).toBe(member.fake.poolClips.size);

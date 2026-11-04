@@ -118,7 +118,8 @@ describe("joining a session (SPEC §22.3)", () => {
   const code = newInviteCode();
 
   it("makes a fresh project on a first join, and leaves the open project as it was", async () => {
-    footage(host, [jo, alex], "a.mp4");
+    const a = footage(host, [jo, alex], "a.mp4");
+    host.fake.timelines.addClip(host.fake.timelines.addTimeline("Edit A"), a, "a.mp4", 0, 48);
     writeFileSync(join(jo.media, "mine.mp4"), "only on Jo's PC".repeat(200));
     jo.fake.importClip(join(jo.media, "mine.mp4"));
     const before = jo.fake.project;
@@ -128,6 +129,9 @@ describe("joining a session (SPEC §22.3)", () => {
     expect(jo.logs).toContain(`made the project "Fake Project (collab · hosted by Sam)" for this session`);
     expect(jo.fake.project.name).toBe("Fake Project (collab · hosted by Sam)");
     await waitFor("the host's clip in Jo's new project", () => clipIn(jo, "a.mp4"));
+    await waitFor("the host's timeline too", () => [...jo.fake.timelines.timelines.values()].some((t) => t.name === "Edit A"));
+    // A project just made holds nothing of Jo's own: no backups of it.
+    expect(jo.logs.filter((l) => l.includes("backup"))).toEqual([]);
     expect(clipIn(jo, "mine.mp4")).toBe(false);
     expect(clipIn(host, "mine.mp4")).toBe(false); // nothing of Jo's old project went to the session
     // Jo's old project is untouched.
@@ -245,7 +249,7 @@ describe("closing, resuming and dropping out (SPEC §22.2, §22.4)", () => {
     await close(host, false);
     await waitFor("Jo offline", () => jo.logs.some((l) => l.startsWith("Offline: the host is unreachable")));
     await connect(host, "host", code, { resume: true });
-    await waitFor("Jo reconnected", () => jo.logs.filter((l) => l.startsWith("joined the session")).length >= 2, 20_000);
+    await waitFor("Jo reconnected", () => jo.logs.filter((l) => /^(re)?joined the session/.test(l)).length >= 2, 20_000);
     expect(jo.ended).toBeUndefined();
     // Dropped again, and gone for longer than the grace time.
     await close(host, false);

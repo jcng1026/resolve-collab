@@ -28,6 +28,8 @@ export interface MediaPoolSyncOptions {
   fingerprint: (path: string) => Promise<Fingerprint | null>;
   findFile: (file: Fingerprint, searchDirs: string[]) => Promise<string | null>;
   backup: () => Promise<boolean>;
+  // False while there's nothing of this PC's own to protect (a project just made for a first join).
+  backupNeeded?: () => boolean;
   log: (message: string) => void;
   store?: string; // JSON file for base, bin map and missing list
 }
@@ -235,7 +237,7 @@ export class MediaPoolSync {
     }
     for (const c of plan.overwritten) this.options.log(overwriteMessage(c));
     const changesHere = apply.some((op) => op.type !== "clip.create" || !this.missing.has(op.id));
-    if (mode === "catch-up" && changesHere) {
+    if (mode === "catch-up" && changesHere && this.options.backupNeeded?.() !== false) {
       this.options.log("catching up: saving a backup of the project first");
       if (!(await this.options.backup())) {
         this.options.log("backup failed, so nothing was changed; will retry");
