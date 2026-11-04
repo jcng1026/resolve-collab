@@ -175,6 +175,10 @@ const peers = new PeerLink(inviteCode, { seed: identity.seed });
 const mouse = new MouseWatch(log);
 mouse.start();
 
+// Set before the session exists: it can end while the companion is still
+// starting (for example, a join refused straight away).
+let stopping = false;
+
 const session = new Session({
   role: mode === "host" ? "host" : "member",
   bridge,
@@ -241,7 +245,6 @@ if (mode === "host") {
 }
 log(`bridge inbox: ${inboxDir}`);
 
-let stopping = false;
 async function shutdown(): Promise<void> {
   if (stopping) return;
   stopping = true;
