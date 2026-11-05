@@ -398,3 +398,37 @@ describe("presence (SPEC §8)", () => {
     await close(host);
   }, 60_000);
 });
+
+describe("ghost cursors (SPEC §24.6)", () => {
+  it("passes each pointer on to the others through the host, with the page they're on, and drops it when it goes", async () => {
+    const host = makePc("Pat");
+    const a = makePc("Ana");
+    const b = makePc("Ben");
+    const code = newInviteCode();
+    await connect(host, "host", code);
+    await connect(a, "member", code);
+    await connect(b, "member", code);
+    await waitFor("all in", () => b.session!.people().filter((p) => p.online).length === 3);
+    a.fake.setPresence({ page: "color", timeline: "", timelineName: "Edit", timecode: "01:00:00:00", clip: "" });
+    await waitFor("Ben knows Ana's page", () => b.session!.people().find((p) => p.name === "Ana")?.presence?.page === "color");
+    a.session!.sharePointer({ x: 0.25, y: 0.5 });
+    host.session!.sharePointer({ x: 0.75, y: 0.1 });
+    const seen = (pc: Pc) => pc.session!.pointers().map((p) => `${p.name}@${p.x},${p.y}:${p.page}`).sort();
+    await waitFor("Ben sees both", () => seen(b).join() === "Ana@0.25,0.5:color,Pat@0.75,0.1:");
+    await waitFor("Pat sees Ana", () => seen(host).join() === "Ana@0.25,0.5:color");
+    expect(seen(a)).toEqual(["Pat@0.75,0.1:"]); // never your own
+    // Moving off Resolve takes it away; out-of-range positions are ignored.
+    a.session!.sharePointer(null);
+    await waitFor("Ana's went", () => seen(b).join() === "Pat@0.75,0.1:");
+    host.session!.sharePointer({ x: 2, y: 0.5 });
+    await sleep(300);
+    expect(seen(b)).toEqual(["Pat@0.75,0.1:"]);
+    // Someone leaving takes theirs.
+    a.session!.sharePointer({ x: 0.3, y: 0.3 });
+    await waitFor("Ana's back", () => seen(b).length === 2);
+    await close(a, false);
+    await waitFor("Ana's gone for Ben", () => seen(b).join() === "Pat@0.75,0.1:");
+    await close(b, false);
+    await close(host);
+  }, 60_000);
+});

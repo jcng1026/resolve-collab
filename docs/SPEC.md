@@ -888,6 +888,7 @@ Goal (§16): §8, §11 and §12.1. Decisions of 2026-11-05 (asked before buildin
 - **Playhead tags are dropped:** where Resolve draws its timeline on screen isn't known, so a tag at someone's playhead would land in the wrong place; the people row and Follow cover it (replaces that part of §8).
 - **Settings:** *Show others' cursors* and *Share my cursor*, both on. Colours stay in join order.
 - **Probe first:** the overlay over Resolve's window (moving and resizing with it, over Full Screen Window), never taking a click.
+- **Built (2026-11-05):** one PowerShell child (the mouse watch, §20.5) reports the pointer and Resolve's window as drawn (DWM frame bounds), in screen pixels. The overlay stays while the companion's own window is in front (typing in the chat), but this PC's pointer is only shared while Resolve is in front. Turning *Share my cursor* off takes it away at once. Probe (`tools/m8-cursor-probe.ts`, one PC): the arrow's tip sits under the real pointer, the name tag shows within 24 px, clicks and hovers reach Resolve, and the overlay follows Resolve's window when it changes size.
 
 ### 24.7 Verification
 - The mockup reviewed against the guidelines (the apple-design skill) and approved by the user, before building. **Approved 2026-11-05.**

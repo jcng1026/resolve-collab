@@ -60,6 +60,8 @@ export interface SessionOptions {
   onPeople?: () => void;
   // A chat or change line is new or updated (SPEC §24.3); read lines().
   onLine?: (line: Line) => void;
+  // Someone's ghost cursor moved or went (SPEC §24.6); read pointers().
+  onPointers?: () => void;
   // Something only this PC should show in its history: the host unreachable or back (SPEC §24.5).
   onNote?: (text: string, tone?: "good" | "bad") => void;
   ask: (conflicts: Conflict[]) => Promise<Map<string, Answer>>;
@@ -100,7 +102,8 @@ const DRT_CHUNK = 256 * 1024; // base64 characters per message
 const DRT_MAX_PARTS = 200; // ~50 MB
 const DRT_TIMEOUT_MS = 30_000;
 const GRACE_MS = 10 * 60_000;
-export const IDLE_MS = 5 * 60_000; // no edits, presence changes or chat for this long: idle (SPEC §24.5)
+export const IDLE_MS = 5 * 60_000;
+const POINTER_MS = 66; // ghost cursors: about 15 updates a second (SPEC §24.6) // no edits, presence changes or chat for this long: idle (SPEC §24.5)
 const JOIN_AGAIN_MS = 3000;
 
 interface DrtRequest {
@@ -152,6 +155,11 @@ export class Session {
   private readonly lastActive = new Map<string, number>();
   private readonly startedAt = Date.now();
   private lostHost = false;
+  // Ghost cursors (SPEC §24.6): where each person's pointer is in their Resolve window, 0–1.
+  private readonly pointerOf = new Map<string, { x: number; y: number }>();
+  private pointerSent = 0;
+  private pointerNext: { x: number; y: number } | null | undefined;
+  private pointerTimer: NodeJS.Timeout | undefined;
   // Follow (SPEC §8, §24.3): whose page, timeline and playhead this PC moves with.
   private followed: string | undefined;
   private going = false;
@@ -280,6 +288,7 @@ export class Session {
     clearInterval(this.joinTimer);
     clearTimeout(this.graceTimer);
     clearTimeout(this.restoreTimer);
+    clearTimeout(this.pointerTimer);
     if (this.begun) {
       this.sync.stop();
       this.timelines.stop();
@@ -635,6 +644,7 @@ export class Session {
       if (name !== undefined) {
         this.admitted.delete(id);
         this.presenceOf.delete(id);
+        this.pointerOf.delete(id);
         if (this.followed === id) this.followed = undefined;
         log(`${name} (${id}) left`);
         this.event(`${name} left`, "bad");
@@ -670,6 +680,10 @@ export class Session {
     switch (message.type) {
       case "chat":
         if (typeof message.text === "string") this.addLine(this.activity.chat(from, this.admitted.get(from) ?? "someone", message.text));
+        return;
+      case "pointer":
+        this.pointerArrived(from, message);
+        for (const id of this.admitted.keys()) if (id !== from) this.options.peers.sendTo(id, { ...message, id: from });
         return;
       case "follow-note":
         if (typeof message.target === "string" && typeof message.on === "boolean") this.followLine(from, message.target, message.on);
@@ -807,6 +821,43 @@ export class Session {
     const p = this.followed && this.presenceOf.get(this.followed);
     if (p) this.goTo({ page: p.page, timeline: p.timeline, timecode: p.timecode });
     this.options.onPeople?.();
+  }
+
+  // --- ghost cursors (SPEC §24.6) ----------------------------------------------------
+
+  // This person's pointer in their Resolve window (0–1), or null when it's not
+  // over Resolve. Sent at most 15 times a second; the newest wins.
+  sharePointer(at: { x: number; y: number } | null): void {
+    if (at === null && this.pointerNext === null) return; // "off" once, not every tick
+    this.pointerNext = at;
+    if (this.pointerTimer) return;
+    const wait = Math.max(0, POINTER_MS - (Date.now() - this.pointerSent));
+    this.pointerTimer = setTimeout(() => {
+      this.pointerTimer = undefined;
+      this.pointerSent = Date.now();
+      const p = this.pointerNext;
+      if (p === undefined || !this.begun) return;
+      const message = p ? { type: "pointer", x: p.x, y: p.y } : { type: "pointer", off: true };
+      if (this.host) this.toMembers({ ...message, id: this.options.peers.id });
+      else if (this.hostId) this.options.peers.sendTo(this.hostId, message);
+    }, wait);
+  }
+
+  // The others' pointers, with the page they're on.
+  pointers(): { id: string; name: string; color: string; page: string; x: number; y: number }[] {
+    return this.people().flatMap((p) => {
+      const at = this.pointerOf.get(p.id);
+      return at && p.id !== this.options.peers.id && p.online ? [{ id: p.id, name: p.name, color: p.color, page: p.presence?.page ?? "", ...at }] : [];
+    });
+  }
+
+  private pointerArrived(id: string, message: Message): void {
+    const x = message.x;
+    const y = message.y;
+    if (message.off === true) this.pointerOf.delete(id);
+    else if (typeof x === "number" && typeof y === "number" && x >= 0 && x <= 1 && y >= 0 && y <= 1) this.pointerOf.set(id, { x, y });
+    else return;
+    this.options.onPointers?.();
   }
 
   // Everyone sees who follows whom (SPEC §24.5); a member's note goes through the host.
@@ -977,6 +1028,9 @@ export class Session {
         this.options.onLine?.(line);
         return;
       }
+      case "pointer":
+        if (typeof message.id === "string" && message.id !== this.options.peers.id) this.pointerArrived(message.id, message);
+        return;
       case "people": {
         const people = cleanPeople(message.people);
         if (!people) return;

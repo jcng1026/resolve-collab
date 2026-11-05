@@ -29,6 +29,10 @@ const pipe = connect(process.env.RC_PIPE ?? "");
 pipe.on("error", () => app.quit());
 const out = (message) => { if (!pipe.destroyed) pipe.write(`${JSON.stringify(message)}\n`); };
 
+// Ghost cursors (SPEC §24.6) default on; the companion needs to know the choices.
+const cursorPrefs = () => ({ showCursors: prefs.showCursors !== false, shareCursor: prefs.shareCursor !== false });
+out({ type: "cursor-prefs", ...cursorPrefs() });
+
 let win;
 let expanded = false;
 let contentHeight = 150;
@@ -64,6 +68,38 @@ function moved() {
   place();
 }
 
+// The others' cursors: a see-through window exactly over Resolve's that never
+// takes a click or the focus, under the bar. `rect` is in screen pixels.
+let overlay;
+let overlayLoaded = false;
+let overlayCursors = [];
+function showOverlay(o) {
+  if (!o || !Array.isArray(o.rect) || o.rect.length !== 4) return void overlay?.hide();
+  if (!overlay) {
+    overlay = new BrowserWindow({
+      show: false, frame: false, transparent: true, backgroundColor: "#00000000", hasShadow: false, resizable: false,
+      focusable: false, skipTaskbar: true, maximizable: false, minimizable: false, fullscreenable: false, title: "ResolveCollab cursors",
+      webPreferences: { preload: join(HERE, "preload.cjs"), sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false },
+    });
+    overlay.setIgnoreMouseEvents(true);
+    overlay.setAlwaysOnTop(true, "screen-saver");
+    overlay.webContents.on("will-navigate", (e) => e.preventDefault());
+    overlay.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+    overlay.webContents.on("did-finish-load", () => { overlayLoaded = true; overlay.webContents.send("cursors", overlayCursors); });
+    overlay.loadFile(join(HERE, "overlay.html"));
+  }
+  const [x, y, width, height] = o.rect.map(Math.round);
+  const dip = screen.screenToDipRect(null, { x, y, width, height });
+  const b = overlay.getBounds();
+  if (b.x !== dip.x || b.y !== dip.y || b.width !== dip.width || b.height !== dip.height) overlay.setBounds(dip);
+  overlayCursors = Array.isArray(o.cursors) ? o.cursors : [];
+  if (overlayLoaded) overlay.webContents.send("cursors", overlayCursors);
+  if (!overlay.isVisible()) {
+    overlay.showInactive();
+    win?.moveTop(); // the bar stays above the cursors
+  }
+}
+
 app.whenReady().then(() => {
   win = new BrowserWindow({
     width: WIDTH, height: contentHeight, show: false, frame: false, resizable: false, maximizable: false, fullscreenable: false,
@@ -84,7 +120,7 @@ app.whenReady().then(() => {
   win.loadFile(join(HERE, "index.html"));
   win.once("ready-to-show", () => {
     place();
-    win.webContents.send("prefs", { closeChoice: prefs.closeChoice ?? "", sound: prefs.sound === true });
+    win.webContents.send("prefs", { closeChoice: prefs.closeChoice ?? "", sound: prefs.sound === true, ...cursorPrefs() });
     win.showInactive();
   });
 
@@ -106,7 +142,10 @@ app.whenReady().then(() => {
       case "prefs":
         if (typeof message.closeChoice === "string") prefs.closeChoice = message.closeChoice;
         if (typeof message.sound === "boolean") prefs.sound = message.sound;
+        if (typeof message.showCursors === "boolean") prefs.showCursors = message.showCursors;
+        if (typeof message.shareCursor === "boolean") prefs.shareCursor = message.shareCursor;
         savePrefs();
+        out({ type: "cursor-prefs", ...cursorPrefs() });
         return;
       case "pick-file":
         void dialog.showOpenDialog(win, { title: `Locate ${String(message.name ?? "the clip")}`, properties: ["openFile"] }).then((r) => {
@@ -129,7 +168,9 @@ app.whenReady().then(() => {
   const input = createInterface({ input: pipe });
   input.on("line", (line) => {
     try {
-      latest = JSON.parse(line);
+      const message = JSON.parse(line);
+      if (message && "$overlay" in message) return void showOverlay(message.$overlay);
+      latest = message;
       if (loaded) win.webContents.send("state", latest);
     } catch { /* a broken line is skipped */ }
   });

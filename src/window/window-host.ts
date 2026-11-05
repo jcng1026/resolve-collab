@@ -23,6 +23,7 @@ export class CompanionWindow extends EventEmitter {
   private readonly prefsFile: string;
   private latest: string | undefined;
   private timer: NodeJS.Timeout | undefined;
+  private lastOverlay = "";
 
   constructor(prefsFile: string) {
     super();
@@ -74,6 +75,15 @@ export class CompanionWindow extends EventEmitter {
   show(state: object): void {
     this.latest = JSON.stringify(state);
     if (!this.timer) this.timer = setTimeout(() => this.flush(), 50);
+  }
+
+  // The others' cursors over Resolve (SPEC §24.6), or null to hide them. Sent
+  // straight away (they move), and only when something changed.
+  overlay(o: { rect: number[]; cursors: object[] } | null): void {
+    const line = JSON.stringify({ $overlay: o });
+    if (line === this.lastOverlay) return;
+    this.lastOverlay = line;
+    if (this.socket && !this.socket.destroyed) this.socket.write(`${line}\n`);
   }
 
   private flush(): void {

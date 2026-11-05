@@ -22,7 +22,7 @@ const svg = (markup) => { const t = document.createElement("template"); t.innerH
 
 let state = { view: "start", people: [], lines: [], urgent: [], missing: [], members: [] };
 let layout = { dir: "up", expanded: false };
-let prefs = { closeChoice: "", sound: false };
+let prefs = { closeChoice: "", sound: false, showCursors: true, shareCursor: true };
 let tab = "chat";
 let filter = "all";
 let reviewAnswers = {};
@@ -215,10 +215,13 @@ function openPanel(kind) {
 
 function settingsBody(rerender) {
   const choice = (value, label) => h("button", { role: "tab", "aria-selected": prefs.closeChoice === value ? "true" : "false", onclick: () => { prefs.closeChoice = value; rc.send({ type: "prefs", closeChoice: value }); rerender(); } }, label);
+  const tick = (key, label) => h("label", { class: "check", style: { justifyContent: "flex-start" } }, h("input", { type: "checkbox", checked: prefs[key], onchange: (e) => { prefs[key] = e.target.checked; rc.send({ type: "prefs", [key]: prefs[key] }); } }), label);
   return [
     h("div", { class: "label" }, "When I press ×"),
     h("div", { class: "segmented", style: { gridTemplateColumns: "repeat(3, minmax(0, 1fr))" } }, choice("", "Ask"), choice("minimize", "Minimize"), choice("close", "Close")),
-    h("label", { class: "check", style: { justifyContent: "flex-start" } }, h("input", { type: "checkbox", checked: prefs.sound, onchange: (e) => { prefs.sound = e.target.checked; rc.send({ type: "prefs", sound: prefs.sound }); } }), "Play a sound for items that need me"),
+    tick("sound", "Play a sound for items that need me"),
+    tick("showCursors", "Show others' cursors"),
+    tick("shareCursor", "Share my cursor"),
   ];
 }
 

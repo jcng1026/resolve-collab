@@ -265,7 +265,10 @@ let openProject: { id: string; name: string } | undefined;
 let resolveAnswers = false;
 let lastPresence: object | undefined; // the bridge reports presence only when it changes
 bridge.on("event", (e: { type?: unknown; project?: { id?: unknown; name?: unknown } | null }) => {
-  if (e.type === "presence") lastPresence = e;
+  if (e.type === "presence") {
+    lastPresence = e;
+    cursors();
+  }
   if (e.type !== "mp.reset") return;
   openProject = e.project && typeof e.project.id === "string" ? { id: e.project.id, name: String(e.project.name ?? "") } : undefined;
   refresh();
@@ -285,6 +288,36 @@ if (values.fake) {
 
 const mouse = new MouseWatch(log);
 mouse.start();
+
+// --- ghost cursors (SPEC §24.6) -------------------------------------------------------
+
+const cursorPrefs = { show: true, share: true }; // the window's Settings say otherwise
+const NEAR = 24; // screen pixels: your pointer this close to someone's shows their name
+
+// Mine goes out while Resolve is in front and the pointer is over it.
+mouse.onChange = (st) => {
+  const r = st.resolve;
+  const [px, py] = st.pointer;
+  const over = r && st.front && cursorPrefs.share && px >= r[0] && py >= r[1] && px < r[0] + r[2] && py < r[1] + r[3];
+  session?.sharePointer(over ? { x: (px - r[0]) / r[2], y: (py - r[1]) / r[3] } : null);
+  cursors();
+};
+
+// The others' go over my Resolve window, for those on the page I'm on.
+function cursors(): void {
+  if (!win?.open) return;
+  const st = mouse.latest;
+  const r = st?.resolve;
+  const page = (lastPresence as { page?: unknown } | undefined)?.page;
+  const list = session && st && r && cursorPrefs.show ? session.pointers().filter((p) => p.page === page) : [];
+  win.overlay(r && list.length ? {
+    rect: r,
+    cursors: list.map((p) => ({
+      id: p.id, name: p.name, color: p.color, x: p.x, y: p.y,
+      near: Math.hypot(st!.pointer[0] - (r[0] + p.x * r[2]), st!.pointer[1] - (r[1] + p.y * r[3])) <= NEAR,
+    })),
+  } : null);
+}
 
 // --- what the window shows ----------------------------------------------------------
 
@@ -409,7 +442,8 @@ async function runSession(choice: Choice): Promise<string> {
     resume,
     approve,
     onEnded: (why) => leaving?.(why),
-    onPeople: refresh,
+    onPeople: () => { refresh(); cursors(); },
+    onPointers: cursors,
     onNote: note,
     onLine: (line) => {
       if (line.kind === "chat" && line.author !== link.id) console.log(`${new Date().toISOString().slice(11, 23)}  ${line.name}: ${line.text}`);
@@ -447,6 +481,7 @@ async function runSession(choice: Choice): Promise<string> {
   peers = undefined;
   joining = false;
   refresh();
+  cursors();
   return why;
 }
 
@@ -473,6 +508,12 @@ async function act(a: Record<string, unknown>): Promise<void> {
     }
     case "close":
       return shutdown();
+    case "cursor-prefs":
+      cursorPrefs.show = a.showCursors !== false;
+      cursorPrefs.share = a.shareCursor !== false;
+      if (!cursorPrefs.share) session?.sharePointer(null);
+      cursors();
+      return;
     case "window-log":
       console.log(`${new Date().toISOString().slice(11, 23)}  window: ${text(a.text).slice(0, 500)}`);
       return;
