@@ -923,6 +923,9 @@ The part-2 test: arrows were placed by their spot in the whole Resolve window, s
 8. **Deliver page warning** while any clip is still a proxy: "3 clips are proxies; the render will be lower quality", with **Download originals**.
 9. **In the window:** an orange card above the bar ("4 clips missing · downloading proxies 1.2 GB · 35%"), and a **Media** panel (⋯ menu) listing each clip with Download original, Pause and Locate file…. A preview mockup is reviewed before building.
 10. **Downloaded files stay** when leaving or ending a session; Settings shows the folder's size with Open folder. The app deletes nothing.
+11. **The proxy stays attached** when the original arrives (`LinkFullResolutionMedia`, §25.2): a slow PC can edit on it (Playback → Use Proxy Media) while renders use the original.
+12. **Audio files and still images** come as originals straight away, automatically like proxies (they're small).
+13. **Files ffmpeg can't read** (Blackmagic RAW and the like): no proxy; the Media panel shows "No proxy possible: download the original (4.2 GB)" and waits for a click.
 
 ### 25.2 Probe, 2026-11-05, Free 21.1.2 (`tools/feasibility/ResolveCollab_MediaProbe.lua`, results `results-2026-11-05-m9-media.json`)
 Test footage: 1920×1080, 24 fps, 240 frames, start timecode 10:00:00:00; its proxy made the companion's way (`-vf scale=-2:'min(1080,ih/2)'`, H.264 CRF 23, AAC 160k, `-map_metadata 0`) kept the frames and the timecode at 960×540, a seventh of the size.
