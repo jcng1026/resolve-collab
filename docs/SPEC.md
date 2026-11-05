@@ -859,7 +859,28 @@ Goal (§16): §8, §11 and §12.1. Decisions of 2026-11-05 (asked before buildin
 - **Shapes:** window corners about 14 px, cards 10 px, pill buttons, grouped rows with hairline separators, a chevron for expand and collapse; controls at least 28 × 28.
 - **Motion:** a short spring (about 0.3 s) for expanding and collapsing, urgent cards sliding up from the bar; none with reduced motion.
 
-### 24.5 Verification
+### 24.5 Second round, after trying it (2026-11-05, a grilling)
+- **Fixes:** urgent cards keep pulsing (they were rebuilt on every update); timecodes in the bar are clickable; the status line under the strip is gone (problems are urgent cards).
+- **Start screen:** redesigned (a compact card, previewed first), with a **Your name** field every time, filled with last time's name; Host and Join wait for a name; the name used is saved.
+- **Leave session** (⋯ menu): back to the start screen, the app stays open. A member leaves as with Ctrl+C today; the host is asked first, since it closes the session for everyone (still resumable). *End this session for good* stays separate.
+- **Message box:** "Say something or / for commands".
+- **People:** hover says "Jo · Edit page · Click to follow" (or "Click to stop following"), "Alex · offline"; following says "Following Jo · Edit page" beside Stop. No timeline, timecode or clip there. **Idle** after 5 minutes without edits, playhead, page or timeline changes or chat: a small moon on the initial and "Idle" in the hover; idle people can still be followed.
+- **Change lines:** every action is its own line; only one action's pieces merge (a linked video and audio pair, the updates of one drag: the same properties within about 2 s).
+- **Session events** are lines in the bar and the Chat tab: joined, rejoined and is back in green; left, was removed, closed the session and is unreachable in dim red. The bar shows the last 3 lines of any kind; the up chevron counts new lines since you last expanded. Clicking a line in the bar does nothing (a timecode in it jumps).
+- **Slash commands**, from the bar and the strip; typing `/` lists the matching ones (Up/Down, Tab or Enter completes, Esc closes):
+
+  | Command | Does | Seen by |
+  |---|---|---|
+  | `/timestamp` | becomes this person's playhead timecode when the message is sent (left as typed with no timeline open); a link for the others | everyone (it's in the message) |
+  | `/follow <name>` | follows someone (names complete) | everyone: "Sam is following Jo" |
+  | `/stop` | stops following | everyone: "Sam stopped following Jo" |
+  | `/undo`, `/redo` | this person's own last change (§23.2) | only this PC |
+  | `/invite` | (host) copies this opening's invite code; the code never goes into the chat | only this PC |
+  | `/leave` | leaves the session (asks, as above) | everyone: the red "left" line |
+
+  Following by clicking an initial says the same as `/follow`. A mistake ("No one called Kim is here") shows only on this PC. Shared lines stay in the history and don't fade.
+
+### 24.6 Verification
 - The mockup reviewed against the guidelines (the apple-design skill) and approved by the user, before building. **Approved 2026-11-05.**
 - **Bar probe, 2026-11-05: works** (findings "M8 bar probe"): the always-on-top acrylic bar stays above Resolve, other apps and Resolve's Full Screen Window.
 - **Bridge check, 2026-11-05, Free 21.1.2 (`tools/m8-bridge-check.ts`): all checks passed.** Presence reports (page, timeline, timecode, clip under the playhead) only on a change; `presence.go` moves the playhead by timecode and by frame from the timeline's start, switches page and back, and refuses an unknown page or timeline.
