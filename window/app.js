@@ -419,7 +419,10 @@ function renderStart() {
   $("start").replaceChildren(...[
     h("div", { class: "start-head drag" }, h("h1", {}, "ResolveCollab"),
       s.bridge ? h("span", { class: "pill-status ok" }, h("span", { "aria-hidden": "true" }, "●"), s.project ? `Resolve · ${s.project}` : "Resolve") : h("span", { class: "pill-status off" }, "Resolve not connected"),
-      h("span", { class: "no-drag" }, gear)),
+      h("span", { class: "no-drag" }, gear),
+      // Not in a session, × just quits: nobody else is affected.
+      h("span", { class: "no-drag" }, h("button", { class: "round", "aria-label": "Close", onclick: () => rc.send({ type: "close" }) },
+        svg('<svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"></path></svg>')))),
     !s.bridge ? h("p", { class: "small", style: { margin: "-6px 0 0", color: "var(--text-2)" } }, "In Resolve: Workspace › Scripts › ResolveCollab.") : null,
     startSettings ? h("div", { class: "settings-box" }, ...settingsBody(renderStart)) : null,
     s.message ? h("p", { class: "start-message", style: { margin: 0 } }, s.message) : null,
