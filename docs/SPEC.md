@@ -730,6 +730,7 @@ Goal (§16): §6.1 markers sync both ways, live and after offline or bridge-off 
   - Keeping both (moving one to the next free frame) was offered and turned down.
 - **A marker that couldn't be placed** (Resolve refused it) is said once and not tried again until someone changes it.
 - **A rebuilt item's markers** (§20.6) are still to add, not deleted on this PC.
+- **The by-hand step 5b of `tools/m5-resolve-check.ts`** (a 30 fps clip dragged onto a 24 fps timeline) was closed without running (2026-11-05, the user's choice): the M5 two-PC test covered the same case live, after the snap fix.
 
 ### 21.6 Verification
 - **Unit tests:** marker ops and their checks, cascades, the reconciler with markers (a moved marker is one change, not a delete and an add), identification (`rc:` IDs, copies keeping another owner's ID, matching by place, foreign `customData`).
@@ -898,6 +899,7 @@ The part-2 test: arrows were placed by their spot in the whole Resolve window, s
 - **What's read, and when:** only while Resolve (or this window) is in front; panels' positions about twice a second; the ruler and track names are read again only when their part of the screen changed (a zoom, a scroll). The images stay on this PC; only panel, frame, track and spot are sent. The cursor window is left out of captures (so it can't be read back), which also leaves it out of screen recordings.
 - **Probe, 2026-11-05 (one PC, 1920×1080):** finding the timeline: about 0.1 s; reading the ruler: 70 ms; at two zoom levels it read 01:00:00:00 and 01:00:08:00 (8 s = 192 px), then 01:00:00:00, 01:00:04:00, 01:00:08:00 (4 s = 384 px), matching the playhead and the clip's real width. Track names read; the red track badges ("V1") don't, so names are used.
 - **Built and checked, 2026-11-05 (`tools/m8-cursor-probe.ts`, one PC):** the watcher read all five panels and the ruler at 1, 2 and 4 px per frame as the timeline was zoomed; an arrow pinned to a frame and track stayed on the same spot of the clip across zooms, and waited at the right edge with its timecode when the clip went out of view.
+- **Two-PC test, part 2 (2026-11-05): passed**, after the smoothness fix and the layout matching above. **M8 is done.**
 - **Not covered:** the Cut and Fairlight pages' timelines (panels only); the media pool's own sort and scroll (same panel spot only); a ruler in feet and frames (falls back).
 
 ### 24.7 Verification
