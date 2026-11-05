@@ -45,7 +45,7 @@ describe("describing a change", () => {
 });
 
 describe("activity lines", () => {
-  it("merges quick changes by one person to one thing, a linked pair counting once", () => {
+  it("merges only one action's pieces: a drag and a linked pair, not a recolour then a move", () => {
     const a = new Activity();
     const m = model();
     const apply = (op: SessionOp, who = "jo", at = 1000) => {
@@ -60,7 +60,9 @@ describe("activity lines", () => {
     expect(a.lines[0]!.changes).toEqual([{ name: "start", from: "01:00:10:00", to: "01:00:12:12" }]);
     apply({ type: "clip.set", id: id(10), color: "Blue" }, "sam", 2500); // someone else
     apply({ type: "item.set", id: id(30), start: 310 }, "jo", 2000 + 20_000); // later: a new line
-    expect(a.lines.map((l) => `${l.name}: ${l.text}`)).toEqual(["Jo: moved a.mp4 on V1", "Sam: recoloured a.mp4", "Jo: moved a.mp4 on V1"]);
+    apply({ type: "item.set", id: id(30), color: "Pink" }, "jo", 22_500); // the same clip, another action: a new line
+    expect(a.lines.map((l) => `${l.name}: ${l.text}`)).toEqual(["Jo: moved a.mp4 on V1", "Sam: recoloured a.mp4", "Jo: moved a.mp4 on V1", "Jo: recoloured a.mp4 on V1"]);
+    expect(a.event("jo", "Jo", "Jo joined", "good")).toMatchObject({ kind: "event", text: "Jo joined", tone: "good" });
     a.chat("jo", "Jo", "  looks good  ", 30_000);
     expect(a.lines.at(-1)).toMatchObject({ kind: "chat", text: "looks good" });
     expect(a.chat("jo", "Jo", "   ")).toBeUndefined();

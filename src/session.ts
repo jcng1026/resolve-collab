@@ -60,6 +60,8 @@ export interface SessionOptions {
   onPeople?: () => void;
   // A chat or change line is new or updated (SPEC §24.3); read lines().
   onLine?: (line: Line) => void;
+  // Something only this PC should show in its history: the host unreachable or back (SPEC §24.5).
+  onNote?: (text: string, tone?: "good" | "bad") => void;
   ask: (conflicts: Conflict[]) => Promise<Map<string, Answer>>;
   confirm: (question: string) => Promise<boolean>;
   fingerprint: (path: string) => Promise<Fingerprint | null>;
@@ -98,6 +100,7 @@ const DRT_CHUNK = 256 * 1024; // base64 characters per message
 const DRT_MAX_PARTS = 200; // ~50 MB
 const DRT_TIMEOUT_MS = 30_000;
 const GRACE_MS = 10 * 60_000;
+export const IDLE_MS = 5 * 60_000; // no edits, presence changes or chat for this long: idle (SPEC §24.5)
 const JOIN_AGAIN_MS = 3000;
 
 interface DrtRequest {
@@ -145,6 +148,10 @@ export class Session {
   // Where everyone is (SPEC §8), by peer ID; a member's people list comes from the host.
   private readonly presenceOf = new Map<string, Presence>();
   private ownPresence: Presence | undefined;
+  // When each person last did something (SPEC §24.5: idle after IDLE_MS).
+  private readonly lastActive = new Map<string, number>();
+  private readonly startedAt = Date.now();
+  private lostHost = false;
   // Follow (SPEC §8, §24.3): whose page, timeline and playhead this PC moves with.
   private followed: string | undefined;
   private going = false;
@@ -291,6 +298,7 @@ export class Session {
   // (SPEC §22.4), then waits a moment for that to go out.
   async close(): Promise<void> {
     if (this.host) {
+      if (this.begun) this.event(`${this.options.name} closed the session`, "bad");
       this.toMembers({ type: "closing" });
       await new Promise((r) => setTimeout(r, 400));
     }
@@ -629,6 +637,7 @@ export class Session {
         this.presenceOf.delete(id);
         if (this.followed === id) this.followed = undefined;
         log(`${name} (${id}) left`);
+        this.event(`${name} left`, "bad");
         this.peopleChanged();
       }
       return;
@@ -637,6 +646,8 @@ export class Session {
     this.hostId = undefined;
     if (this.over) return;
     log("Offline: the host is unreachable; your changes will be merged when it's back.");
+    this.lostHost = true;
+    this.options.onNote?.(`${this.record?.hostName ?? "The host"} is unreachable`, "bad");
     clearTimeout(this.graceTimer);
     this.graceTimer = setTimeout(() => {
       this.end(`The host didn't come back within ${Math.round((this.options.graceMs ?? GRACE_MS) / 60_000)} minutes, so the session ended here. `
@@ -659,6 +670,9 @@ export class Session {
     switch (message.type) {
       case "chat":
         if (typeof message.text === "string") this.addLine(this.activity.chat(from, this.admitted.get(from) ?? "someone", message.text));
+        return;
+      case "follow-note":
+        if (typeof message.target === "string" && typeof message.on === "boolean") this.followLine(from, message.target, message.on);
         return;
       case "presence": {
         const p = cleanPresence(message);
@@ -746,6 +760,7 @@ export class Session {
   private admit(id: string, name: string, how: string): void {
     this.admitted.set(id, name);
     this.options.log(`${name} (${id}) ${how}`);
+    this.event(`${name} ${how === "rejoined" ? "rejoined" : "joined"}`, "good");
     this.options.peers.sendTo(id, this.welcome(this.host!));
     this.peopleChanged(); // for everyone else; the newcomer's welcome has it
   }
@@ -756,9 +771,11 @@ export class Session {
   people(): Person[] {
     const me = this.options.peers.id;
     const list = this.host ? this.hostList() : this.hostPeople;
+    const now = Date.now();
     return list.map((p) => {
       const presence = this.presenceOf.get(p.id) ?? (p.id === me ? this.ownPresence : undefined);
-      return presence ? { ...p, presence } : p;
+      const idle = p.online && now - (this.lastActive.get(p.id) ?? this.startedAt) > IDLE_MS;
+      return { ...p, ...(presence ? { presence } : {}), ...(idle ? { idle } : {}) };
     });
   }
 
@@ -784,10 +801,32 @@ export class Session {
 
   // Follow someone, or stop (undefined): this PC's Resolve moves with theirs.
   follow(id: string | undefined): void {
+    const was = this.followed;
     this.followed = id && id !== this.options.peers.id ? id : undefined;
+    if (was !== this.followed) this.followNote(this.followed ?? was, this.followed !== undefined);
     const p = this.followed && this.presenceOf.get(this.followed);
     if (p) this.goTo({ page: p.page, timeline: p.timeline, timecode: p.timecode });
     this.options.onPeople?.();
+  }
+
+  // Everyone sees who follows whom (SPEC §24.5); a member's note goes through the host.
+  private followNote(target: string | undefined, on: boolean): void {
+    if (!target || !this.begun) return;
+    if (this.host) this.followLine(this.options.peers.id, target, on);
+    else if (this.hostId) this.options.peers.sendTo(this.hostId, { type: "follow-note", target, on });
+  }
+
+  private followLine(who: string, target: string, on: boolean): void {
+    const people = this.people();
+    const a = people.find((p) => p.id === who);
+    const b = people.find((p) => p.id === target);
+    if (!a || !b || a.id === b.id) return;
+    this.addLine(this.activity.event(who, a.name, on ? `${a.name} is following ${b.name}` : `${a.name} stopped following ${b.name}`));
+  }
+
+  // Host: a session event for everyone's history.
+  private event(text: string, tone?: "good" | "bad"): void {
+    if (this.host) this.addLine(this.activity.event(this.options.peers.id, this.options.name, text, tone));
   }
 
   // Clicking a change line (SPEC §24.3): that timeline, at that frame.
@@ -818,6 +857,7 @@ export class Session {
   // A presence arrived: move with it if it's whom this PC follows.
   private presenceArrived(id: string, p: Presence): void {
     this.presenceOf.set(id, p);
+    this.lastActive.set(id, Date.now());
     if (id === this.followed) this.goTo({ page: p.page, timeline: p.timeline, timecode: p.timecode });
     this.options.onPeople?.();
   }
@@ -826,6 +866,7 @@ export class Session {
     const p = this.ownPresence;
     if (!p || !this.begun) return;
     const me = this.options.peers.id;
+    this.lastActive.set(me, Date.now());
     if (this.host) {
       this.presenceOf.set(me, p);
       this.toMembers({ type: "presence", id: me, ...p });
@@ -877,6 +918,7 @@ export class Session {
       this.options.peers.sendTo(id, { type: "removed" });
       this.admitted.delete(id);
       this.presenceOf.delete(id);
+      this.event(`${m.name} was removed`, "bad");
       this.peopleChanged();
       setTimeout(() => this.options.peers.disconnect(id), 400);
     }
@@ -931,6 +973,7 @@ export class Session {
         const at = this.activity.lines.findIndex((l) => l.id === line.id);
         if (at >= 0) this.activity.lines[at] = line;
         else this.activity = new Activity([...this.activity.lines, line]);
+        if (line.kind !== "event") this.lastActive.set(line.author, Date.now());
         this.options.onLine?.(line);
         return;
       }
@@ -1029,6 +1072,10 @@ export class Session {
     clearInterval(this.joinTimer);
     this.joinTimer = undefined;
     if (!this.hostId && !said) log(`joined the session hosted by ${this.record!.hostName} (${from})`);
+    if (this.lostHost) {
+      this.lostHost = false;
+      this.options.onNote?.(`${this.record!.hostName} is back`, "good");
+    }
     this.hostId = from;
     this.member.reset({ seq: state.seq, model });
     this.hostPeople = cleanPeople(message.people) ?? this.hostPeople;
@@ -1211,6 +1258,7 @@ export class Session {
 
   private addLine(line: Line | undefined): void {
     if (!line) return;
+    if (line.kind !== "event") this.lastActive.set(line.author, Date.now());
     if (this.host) {
       this.toMembers({ type: "line", line: line as unknown as JsonValue });
       this.scheduleHostSave();

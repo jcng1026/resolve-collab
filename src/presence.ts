@@ -15,6 +15,7 @@ export interface Person {
   name: string;
   color: string;
   online: boolean;
+  idle?: boolean; // nothing for IDLE_MS (SPEC §24.5)
   presence?: Presence;
 }
 

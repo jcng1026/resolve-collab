@@ -382,12 +382,18 @@ describe("presence (SPEC §8)", () => {
     b.fake.clipByName("p.mp4")!.color = "Green";
     await waitFor("editing stops following", () => b.session!.following === undefined);
     expect(b.logs).toContain("stopped following Pat: you made a change");
+    // Everyone sees joins and follows as lines (SPEC §24.5).
+    await waitFor("event lines on Ana's PC", () => {
+      const t = a.session!.lines().filter((l) => l.kind === "event").map((l) => `${l.text}${l.tone ? `:${l.tone}` : ""}`);
+      return ["Ana joined:good", "Ben joined:good", "Ben is following Pat", "Ben stopped following Pat"].every((x) => t.includes(x));
+    });
     // Clicking a change line goes to its timeline and frame.
     b.session!.jumpTo({ id: 0, kind: "change", at: 0, author: "x", name: "x", text: "", changes: [], timeline: "t".repeat(32), frame: 48 });
     await waitFor("went to the change", () => b.fake.wentTo.some((w) => w.timeline === "t".repeat(32) && w.frame === 48));
     // Someone leaving is shown offline, and their presence goes.
     await close(a, false);
     await waitFor("Ana offline for Ben", () => b.session!.people().find((p) => p.name === "Ana")?.online === false && where(b, "Ana") === undefined);
+    await waitFor("Ben sees Ana left", () => b.session!.lines().some((l) => l.text === "Ana left" && l.tone === "bad"));
     await close(b, false);
     await close(host);
   }, 60_000);

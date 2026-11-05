@@ -1,12 +1,14 @@
 // The session's activity (SPEC §24.3): chat messages and one line per change,
 // kept by the host (the last 500), sent to anyone who joins or rejoins.
-// Quick changes in a row by the same person to the same thing merge into one
-// line, and a linked video and audio pair counts as one thing.
+// Every action is its own line (SPEC §24.5); only one action's pieces merge:
+// a linked video and audio pair, and the updates of one drag (the same thing
+// and the same properties within MERGE_MS). Session events (joins, leaves,
+// follows) are lines too.
 
 import type { SessionModel, SessionOp } from "./sync/session-model.ts";
 
 export const MAX_LINES = 500;
-export const MERGE_MS = 10_000; // quick changes in a row become one line
+export const MERGE_MS = 2000; // the pieces of one action
 export const MAX_CHAT = 2000;
 
 export interface Change {
@@ -17,12 +19,13 @@ export interface Change {
 
 export interface Line {
   id: number;
-  kind: "chat" | "change";
+  kind: "chat" | "change" | "event";
   at: number; // ms since 1970
   author: string; // peer ID
   name: string; // the author's name
-  text: string; // chat: the message; change: one line, "moved Interview_03 on V1"
+  text: string; // chat: the message; change: "moved Interview_03 on V1"; event: "Jo joined"
   changes: Change[]; // change: old → new per property
+  tone?: "good" | "bad"; // event: shown green (joined, back) or dim red (left, removed); else grey
   // Where clicking it takes you (SPEC §24.3): a timeline and a frame on it.
   timeline?: string;
   frame?: number;
@@ -126,7 +129,7 @@ export function describe(before: SessionModel, op: SessionOp): Pick<Line, "text"
 export class Activity {
   lines: Line[] = [];
   private nextId = 1;
-  private lastKey = new Map<string, { key: string; line: Line }>(); // per author: their last change line
+  private lastKey = new Map<string, { key: string; fields: string; line: Line }>(); // per author: their last change line
 
   constructor(lines: Line[] = []) {
     this.lines = lines.slice(-MAX_LINES);
@@ -140,6 +143,11 @@ export class Activity {
     return full;
   }
 
+  // A session event: "Jo joined" (good), "Jo left" (bad), "Sam is following Jo".
+  event(author: string, name: string, text: string, tone?: "good" | "bad", at = Date.now()): Line {
+    return this.add({ kind: "event", at, author, name, text: text.slice(0, 300), changes: [], ...(tone ? { tone } : {}) });
+  }
+
   chat(author: string, name: string, text: string, at = Date.now()): Line | undefined {
     const t = text.trim().slice(0, MAX_CHAT);
     if (!t) return undefined;
@@ -147,12 +155,14 @@ export class Activity {
     return this.add({ kind: "chat", at, author, name, text: t, changes: [] });
   }
 
-  // A committed change; merges into the author's last line when it's the same
-  // thing within MERGE_MS. Returns the line that's new or changed.
+  // A committed change; merges into the author's last line only when it's the
+  // same thing and the same properties within MERGE_MS (one drag, a linked
+  // pair). Returns the line that's new or changed.
   change(before: SessionModel, op: SessionOp, author: string, name: string, at = Date.now()): Line {
     const d = describe(before, op);
+    const fields = d.changes.map((c) => c.name).sort().join(",") || op.type;
     const last = this.lastKey.get(author);
-    if (last && last.key === d.key && at - last.line.at <= MERGE_MS && this.lines.includes(last.line)) {
+    if (last && last.key === d.key && last.fields === fields && at - last.line.at <= MERGE_MS && this.lines.includes(last.line)) {
       const line = last.line;
       for (const c of d.changes) {
         const same = line.changes.find((x) => x.name === c.name);
@@ -164,7 +174,7 @@ export class Activity {
       return line;
     }
     const line = this.add({ kind: "change", at, author, name, text: d.text, changes: d.changes, ...(d.timeline ? { timeline: d.timeline } : {}), ...(d.frame !== undefined ? { frame: d.frame } : {}) });
-    this.lastKey.set(author, { key: d.key, line });
+    this.lastKey.set(author, { key: d.key, fields, line });
     return line;
   }
 }
@@ -174,7 +184,8 @@ export function cleanLine(raw: unknown): Line | undefined {
   const l = raw as Rec | null;
   if (typeof l !== "object" || l === null) return undefined;
   const str = (v: unknown, max: number) => typeof v === "string" && v.length <= max;
-  if (!Number.isSafeInteger(l.id) || (l.kind !== "chat" && l.kind !== "change") || !Number.isFinite(l.at)) return undefined;
+  if (!Number.isSafeInteger(l.id) || (l.kind !== "chat" && l.kind !== "change" && l.kind !== "event") || !Number.isFinite(l.at)) return undefined;
+  if (l.tone !== undefined && l.tone !== "good" && l.tone !== "bad") return undefined;
   if (!str(l.author, 64) || !str(l.name, 40) || !str(l.text, MAX_CHAT + 200) || !Array.isArray(l.changes) || l.changes.length > 200) return undefined;
   for (const c of l.changes as Rec[]) if (!str(c?.name, 100) || !str(c?.from, 300) || !str(c?.to, 300)) return undefined;
   if (l.timeline !== undefined && !str(l.timeline, 64)) return undefined;
@@ -183,5 +194,6 @@ export function cleanLine(raw: unknown): Line | undefined {
     id: l.id as number, kind: l.kind, at: l.at as number, author: l.author as string, name: l.name as string, text: l.text as string,
     changes: (l.changes as Change[]).map((c) => ({ name: c.name, from: c.from, to: c.to })),
     ...(l.timeline !== undefined ? { timeline: l.timeline as string } : {}), ...(l.frame !== undefined ? { frame: l.frame as number } : {}),
+    ...(l.tone !== undefined ? { tone: l.tone as "good" | "bad" } : {}),
   };
 }
