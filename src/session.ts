@@ -203,6 +203,11 @@ export class Session {
     });
   }
 
+  // In touch with the session: always for the host, a member while the host answers.
+  get inTouch(): boolean {
+    return this.host !== undefined || this.hostId !== undefined;
+  }
+
   get begun(): boolean {
     return this.record !== undefined && this.sync !== undefined;
   }

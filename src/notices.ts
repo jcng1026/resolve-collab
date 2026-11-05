@@ -7,7 +7,8 @@ import type { Conflict } from "./sync/reconcile.ts";
 export interface Notice {
   n: number;
   kind: "reapply" | "restore";
-  text: string;
+  text: string; // for the terminal, with its number and command
+  plain: string; // for the window: the same without them
   // What acting on it proposes: domain-level changes, or ready operations.
   changes: { item: string; id: string; fields: Record<string, unknown> }[];
   ops: unknown[];
@@ -53,6 +54,7 @@ export class Notices {
     const notice: Notice = {
       n, kind: "reapply",
       text: `[${n}] ${who} changed ${list(things)} at the same moment, so ${yours} undone.  reapply ${n} = send yours again`,
+      plain: `${who} changed ${list(things)} at the same moment, so ${yours} undone.`,
       changes: conflicts.filter((c) => c.kind === "field").map((c) => ({ item: c.item, id: c.id, fields: { [c.field!]: c.mine } })),
       ops: conflicts.filter((c) => c.kind === "clash").flatMap((c) => c.mineOps ?? []),
     };
@@ -67,11 +69,17 @@ export class Notices {
     const notice: Notice = {
       n, kind: "restore",
       text: `[${n}] ${name}'s offline changes replaced your ${list(items.map((i) => i.what))}.  restore ${n} = put yours back`,
+      plain: `${name}'s offline changes replaced your ${list(items.map((i) => i.what))}.`,
       changes: [],
       ops: items.map((i) => i.op),
     };
     this.open.set(n, notice);
     return notice;
+  }
+
+  // The notices still waiting, oldest first.
+  list(): Notice[] {
+    return [...this.open.values()];
   }
 
   // Takes a notice to act on it (once).

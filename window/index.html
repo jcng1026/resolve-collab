@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- Nothing loads from anywhere but this folder; no inline scripts. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'">
+<title>ResolveCollab</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="root" class="panel">
+  <div id="urgent" aria-live="polite"></div>
+
+  <section id="bar" aria-label="Chat">
+    <div class="bar-top drag">
+      <span id="barTitle" class="small muted"></span>
+      <button id="expand" class="round no-drag" aria-label="Expand"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><path class="chev" d="M3 9l4-4 4 4"></path></svg></button>
+    </div>
+    <div id="barFollow" class="follow-line" hidden></div>
+    <ol id="barLines" class="bar-lines"></ol>
+    <form id="barForm" class="reply">
+      <label for="barInput" class="sr">Reply</label>
+      <input id="barInput" maxlength="2000" placeholder="Reply" autocomplete="off">
+      <button class="send" aria-label="Send"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><path d="M7 12V2M3 6l4-4 4 4"></path></svg></button>
+    </form>
+  </section>
+
+  <section id="strip" aria-label="ResolveCollab" hidden>
+    <header class="strip-head drag">
+      <div class="title-row">
+        <div class="title"><h1 id="stripTitle"></h1><span id="stripRole" class="small muted"></span></div>
+        <button id="collapse" class="round no-drag" aria-label="Collapse to the chat bar"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><path class="chev" d="M3 5l4 4 4-4"></path></svg></button>
+        <button id="more" class="round no-drag" aria-label="More" aria-expanded="false"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><circle cx="3" cy="7" r="1.3"></circle><circle cx="7" cy="7" r="1.3"></circle><circle cx="11" cy="7" r="1.3"></circle></svg></button>
+        <button id="close" class="round no-drag" aria-label="Close"><svg aria-hidden="true" width="12" height="12" viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"></path></svg></button>
+      </div>
+      <div id="people" class="people no-drag" aria-label="People"></div>
+      <div id="stripFollow" class="follow-box no-drag" hidden></div>
+      <div class="segmented no-drag" role="tablist" aria-label="View">
+        <button id="tabChat" role="tab">Chat</button>
+        <button id="tabChanges" role="tab">Changes</button>
+      </div>
+    </header>
+    <div class="rule"></div>
+    <main id="list" class="list"></main>
+    <form id="stripForm" class="reply strip-reply">
+      <label for="stripInput" class="sr">Message</label>
+      <input id="stripInput" maxlength="2000" placeholder="Message, or a timecode like 01:02:14:05" autocomplete="off">
+      <button class="send" aria-label="Send"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><path d="M7 12V2M3 6l4-4 4 4"></path></svg></button>
+    </form>
+    <footer id="status" class="status"></footer>
+    <div id="menu" class="menu" role="menu" hidden>
+      <button role="menuitem" data-panel="session">Session and invite code</button>
+      <button role="menuitem" data-panel="media">Media <span id="mediaCount" class="badge" hidden></span></button>
+      <button role="menuitem" data-panel="settings">Settings</button>
+    </div>
+    <div id="panel" class="sheet" hidden></div>
+  </section>
+
+  <section id="review" aria-label="Review changes" hidden></section>
+  <section id="start" aria-label="Start or join" hidden></section>
+  <div id="dialog" class="dialog" hidden></div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,129 @@
+// The companion window (SPEC §24): a small always-on-top chat bar that grows
+// into a tall strip. Electron only draws it. The companion, a separate Node
+// process, talks to it in JSON lines over a private named pipe it names in
+// RC_PIPE (Electron's main process can't read stdin on Windows). Nothing from
+// other PCs runs here: the page shows text it's given.
+
+import { app, BrowserWindow, clipboard, dialog, ipcMain, screen } from "electron";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { connect } from "node:net";
+import { dirname, join } from "node:path";
+import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const PREFS = process.env.RC_WINDOW_PREFS ?? join(app.getPath("userData"), "window.json");
+const WIDTH = 360;
+const MARGIN = 16; // from the screen's right edge
+const BOTTOM_GAP = 56; // above Resolve's Project Manager and Settings buttons
+
+let prefs = {};
+try { prefs = JSON.parse(readFileSync(PREFS, "utf8")); } catch { prefs = {}; }
+const savePrefs = () => {
+  try {
+    mkdirSync(dirname(PREFS), { recursive: true });
+    writeFileSync(PREFS, JSON.stringify(prefs));
+  } catch { /* a read-only profile: the window just forgets */ }
+};
+const pipe = connect(process.env.RC_PIPE ?? "");
+pipe.on("error", () => app.quit());
+const out = (message) => { if (!pipe.destroyed) pipe.write(`${JSON.stringify(message)}\n`); };
+
+let win;
+let expanded = false;
+let contentHeight = 150;
+let placing = false;
+
+// The window grows away from the nearer top or bottom edge (SPEC §24.1): an
+// anchor is the edge it keeps still, "up" = its bottom edge, "down" = its top.
+function area() {
+  const at = { x: Math.round(prefs.x ?? 0), y: Math.round(prefs.anchorY ?? 0) };
+  return (prefs.x === undefined ? screen.getPrimaryDisplay() : screen.getDisplayNearestPoint(at)).workArea;
+}
+function place() {
+  const a = area();
+  if (prefs.x === undefined) Object.assign(prefs, { x: a.x + a.width - WIDTH - MARGIN, anchorY: a.y + a.height - BOTTOM_GAP, dir: "up" });
+  const max = Math.round(a.height * 0.8);
+  const height = Math.min(max, expanded ? max : Math.max(60, Math.ceil(contentHeight)));
+  const x = Math.min(Math.max(prefs.x, a.x), a.x + a.width - WIDTH);
+  const y = prefs.dir === "down" ? Math.max(prefs.anchorY, a.y) : Math.min(prefs.anchorY, a.y + a.height) - height;
+  placing = true;
+  win.setBounds({ x, y: Math.max(a.y, y), width: WIDTH, height });
+  placing = false;
+  win.webContents.send("layout", { dir: prefs.dir, expanded });
+}
+
+// After the person drags it: remember where, and which way it now opens.
+function moved() {
+  if (placing) return;
+  const b = win.getBounds();
+  const a = screen.getDisplayMatching(b).workArea;
+  const lower = b.y + b.height / 2 > a.y + a.height / 2;
+  Object.assign(prefs, { x: b.x, dir: lower ? "up" : "down", anchorY: lower ? b.y + b.height : b.y });
+  savePrefs();
+  place();
+}
+
+app.whenReady().then(() => {
+  win = new BrowserWindow({
+    width: WIDTH, height: contentHeight, show: false, frame: false, resizable: false, maximizable: false, fullscreenable: false,
+    title: "ResolveCollab", backgroundMaterial: "acrylic", backgroundColor: "#00000000",
+    webPreferences: { preload: join(HERE, "preload.cjs"), sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false },
+  });
+  // Always on top of every window, by the user's choice (SPEC §24.1).
+  win.setAlwaysOnTop(true, "screen-saver");
+  // The page never leaves its own file or opens other windows.
+  win.webContents.on("will-navigate", (e) => e.preventDefault());
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  win.on("moved", moved);
+  // The page's errors go to the companion's log, to be seen.
+  win.webContents.on("console-message", (e) => {
+    if (e.level === "error" || e.level === "warning") out({ type: "window-log", text: `${e.message} (${e.sourceId}:${e.lineNumber})`.slice(0, 500) });
+  });
+  win.webContents.on("preload-error", (_e, path, error) => out({ type: "window-log", text: `preload ${path}: ${String(error)}`.slice(0, 500) }));
+  win.loadFile(join(HERE, "index.html"));
+  win.once("ready-to-show", () => {
+    place();
+    win.webContents.send("prefs", { closeChoice: prefs.closeChoice ?? "", sound: prefs.sound === true });
+    win.showInactive();
+  });
+
+  // From the page.
+  ipcMain.on("rc", (_e, message) => {
+    if (!message || typeof message.type !== "string") return;
+    switch (message.type) {
+      case "size":
+        if (Number.isFinite(message.height)) contentHeight = message.height;
+        if (!expanded) place();
+        return;
+      case "expand":
+        expanded = message.on === true;
+        place();
+        return;
+      case "copy":
+        if (typeof message.text === "string") clipboard.writeText(message.text.slice(0, 200));
+        return;
+      case "prefs":
+        if (typeof message.closeChoice === "string") prefs.closeChoice = message.closeChoice;
+        if (typeof message.sound === "boolean") prefs.sound = message.sound;
+        savePrefs();
+        return;
+      case "pick-file":
+        void dialog.showOpenDialog(win, { title: `Locate ${String(message.name ?? "the clip")}`, properties: ["openFile"] }).then((r) => {
+          if (!r.canceled && r.filePaths[0]) out({ type: "locate", clip: String(message.clip), path: r.filePaths[0] });
+        });
+        return;
+      default:
+        out(message); // everything else is for the companion
+    }
+  });
+
+  // From the companion: the state to show. The pipe closing means it quit.
+  const input = createInterface({ input: pipe });
+  input.on("line", (line) => {
+    try {
+      win.webContents.send("state", JSON.parse(line));
+    } catch { /* a broken line is skipped */ }
+  });
+  input.on("close", () => app.quit());
+});
