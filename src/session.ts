@@ -26,6 +26,7 @@ import { buildWarning } from "./bridge/bridge-build.ts";
 import type { BridgeClient } from "./bridge/bridge-client.ts";
 import { Notices, fieldName } from "./notices.ts";
 import type { PeerLink } from "./peer/peer-link.ts";
+import { type Person, type Presence, cleanPeople, cleanPresence, colorAt } from "./presence.ts";
 import { type SessionRecord, findHostSession, isSessionId, loadRecord, newRecord, saveRecord, sessionDir } from "./session-record.ts";
 import { type Commit, HostLog, MemberLog, type SessionState } from "./sync/host-log.ts";
 import { type Fingerprint, newId } from "./sync/media-pool.ts";
@@ -54,6 +55,8 @@ export interface SessionOptions {
   graceMs?: number;
   // The session is over on this PC: closed, ended, removed, or not found.
   onEnded?: (why: string) => void;
+  // The people or anyone's presence changed (SPEC §8); read people().
+  onPeople?: () => void;
   ask: (conflicts: Conflict[]) => Promise<Map<string, Answer>>;
   confirm: (question: string) => Promise<boolean>;
   fingerprint: (path: string) => Promise<Fingerprint | null>;
@@ -136,6 +139,10 @@ export class Session {
   private graceTimer: NodeJS.Timeout | undefined;
   private told = new Set<string>();
   private freshProject = false;
+  // Where everyone is (SPEC §8), by peer ID; a member's people list comes from the host.
+  private readonly presenceOf = new Map<string, Presence>();
+  private ownPresence: Presence | undefined;
+  private hostPeople: Person[] = [];
   private missedCommits = false; // commits came while joining (SPEC §22.3)
   // Notices to act on with a command (SPEC §23.1, §23.3).
   readonly notices = new Notices();
@@ -279,6 +286,11 @@ export class Session {
 
   private bridgeEvent(event: Message): void {
     const type = typeof event.type === "string" ? event.type : "";
+    if (type === "presence") {
+      this.ownPresence = cleanPresence(event);
+      this.sharePresence();
+      return;
+    }
     if (type === "mp.reset") {
       const p = event.project as { id?: unknown; name?: unknown } | null;
       this.project = p && typeof p.id === "string" ? { id: p.id, name: String(p.name ?? "") } : undefined;
@@ -587,7 +599,9 @@ export class Session {
       const name = this.admitted.get(id);
       if (name !== undefined) {
         this.admitted.delete(id);
+        this.presenceOf.delete(id);
         log(`${name} (${id}) left`);
+        this.peopleChanged();
       }
       return;
     }
@@ -615,6 +629,14 @@ export class Session {
     if (message.type === "join") return this.joinRequest(cleanName(message.name), from, message.code);
     if (!this.admitted.has(from)) return; // nothing from PCs not let in
     switch (message.type) {
+      case "presence": {
+        const p = cleanPresence(message);
+        if (!p) return;
+        this.presenceOf.set(from, p);
+        this.toMembers({ type: "presence", id: from, ...p });
+        this.options.onPeople?.();
+        return;
+      }
       case "propose":
         if (typeof message.proposal === "string") this.commitLocally(message.op, from, message.proposal, message.base as number | undefined, message.keep === true);
         return;
@@ -635,6 +657,10 @@ export class Session {
     return {
       type: "welcome", host: this.options.peers.id, state: host.state() as unknown as JsonValue,
       session: { id: r.id, hostName: r.hostName, projectName: r.projectName },
+      // Who's here and where (SPEC §8): a first join is still making its project
+      // when later messages arrive, so they come with the welcome.
+      people: this.hostList() as unknown as JsonValue,
+      presence: [...this.presenceOf].map(([id, p]) => ({ id, ...p })) as unknown as JsonValue,
     };
   }
 
@@ -690,6 +716,48 @@ export class Session {
     this.admitted.set(id, name);
     this.options.log(`${name} (${id}) ${how}`);
     this.options.peers.sendTo(id, this.welcome(this.host!));
+    this.peopleChanged(); // for everyone else; the newcomer's welcome has it
+  }
+
+  // --- presence (SPEC §8) ---------------------------------------------------------
+
+  // Everyone in the session: the host first, then members in the order they first joined.
+  people(): Person[] {
+    const me = this.options.peers.id;
+    const list = this.host ? this.hostList() : this.hostPeople;
+    return list.map((p) => {
+      const presence = this.presenceOf.get(p.id) ?? (p.id === me ? this.ownPresence : undefined);
+      return presence ? { ...p, presence } : p;
+    });
+  }
+
+  private hostList(): Person[] {
+    const r = this.record;
+    const people: Person[] = [{ id: this.options.peers.id, name: this.options.name, color: colorAt(0), online: true }];
+    for (const [i, m] of (r?.members ?? []).entries()) {
+      const id = m.key.slice(0, 8);
+      people.push({ id, name: m.name, color: colorAt(i + 1), online: this.admitted.has(id) });
+    }
+    return people;
+  }
+
+  // Host: tells everyone who's here (on a join, a leave, a removal).
+  private peopleChanged(): void {
+    if (this.host) this.toMembers({ type: "people", people: this.hostList() as unknown as JsonValue });
+    this.options.onPeople?.();
+  }
+
+  private sharePresence(): void {
+    const p = this.ownPresence;
+    if (!p || !this.begun) return;
+    const me = this.options.peers.id;
+    if (this.host) {
+      this.presenceOf.set(me, p);
+      this.toMembers({ type: "presence", id: me, ...p });
+      this.options.onPeople?.();
+    } else if (this.hostId) {
+      this.options.peers.sendTo(this.hostId, { type: "presence", ...p });
+    }
   }
 
   // Ends the session for good (SPEC §22.2).
@@ -731,6 +799,8 @@ export class Session {
     if (this.admitted.has(id)) {
       this.options.peers.sendTo(id, { type: "removed" });
       this.admitted.delete(id);
+      this.presenceOf.delete(id);
+      this.peopleChanged();
       setTimeout(() => this.options.peers.disconnect(id), 400);
     }
     return `${m.name} (${id}) removed and blocked`;
@@ -767,11 +837,26 @@ export class Session {
         return;
     }
     if (!this.begun || from !== this.hostId) {
-      // A commit while still joining (making the project) is missed: asked for again once in.
-      if (message.type === "commit") this.missedCommits = true;
+      // Missed while still joining (making the project): asked for again once in.
+      if (message.type === "commit" || message.type === "people" || message.type === "presence") this.missedCommits = true;
       return; // the rest only from the host
     }
     switch (message.type) {
+      case "presence": {
+        const p = cleanPresence(message);
+        if (!p || typeof message.id !== "string" || message.id === this.options.peers.id) return;
+        this.presenceOf.set(message.id, p);
+        this.options.onPeople?.();
+        return;
+      }
+      case "people": {
+        const people = cleanPeople(message.people);
+        if (!people) return;
+        this.hostPeople = people;
+        for (const id of this.presenceOf.keys()) if (!people.some((x) => x.id === id && x.online)) this.presenceOf.delete(id);
+        this.options.onPeople?.();
+        return;
+      }
       case "commit": {
         const commit = message.commit as unknown as Commit;
         if (typeof commit?.seq !== "number" || typeof commit.op?.type !== "string") return;
@@ -860,6 +945,14 @@ export class Session {
     if (!this.hostId && !said) log(`joined the session hosted by ${this.record!.hostName} (${from})`);
     this.hostId = from;
     this.member.reset({ seq: state.seq, model });
+    this.hostPeople = cleanPeople(message.people) ?? this.hostPeople;
+    for (const raw of Array.isArray(message.presence) ? message.presence : []) {
+      const p = cleanPresence(raw);
+      const id = (raw as { id?: unknown })?.id;
+      if (p && typeof id === "string" && id !== this.options.peers.id) this.presenceOf.set(id, p);
+    }
+    this.options.onPeople?.();
+    this.sharePresence(); // where this person is, now that someone hears
     if (this.missedCommits) {
       this.missedCommits = false;
       this.options.peers.sendTo(from, { type: "want-state" });

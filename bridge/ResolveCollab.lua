@@ -20,6 +20,7 @@ local SNAPSHOT_EVERY = 0.3
 local MEDIA_POOL_EVERY = 0.6
 local MEDIA_POOL_BUDGET = 60 -- existing clips fully re-read per media pool scan
 local HEARTBEAT_EVERY = 1
+local PRESENCE_EVERY = 0.25 -- where this person is in Resolve (SPEC §8), sent when it changes
 local MAX_OUT_HEX = 1500 -- log lines are cut at ~2000 characters
 
 local M = {}
@@ -1637,6 +1638,27 @@ emit("HELLO", { product = R:GetProductName(), version = R:GetVersionString(), st
 snapshotMediaPool()
 
 local lastHandled, lastBeat, lastScan, lastPoolScan = 0, 0, 0, 0
+-- Page, timeline, playhead and the clip under it (SPEC §8; F8: all readable on Free).
+local lastPresence, presenceSig = 0, nil
+local function presenceNow()
+  local p = pm:GetCurrentProject()
+  local tl = p and p:GetCurrentTimeline()
+  local okPage, page = pcall(function() return R:GetCurrentPage() end)
+  local tc, clip, name, id = "", "", "", ""
+  if tl then
+    local okTc, t = pcall(function() return tl:GetCurrentTimecode() end)
+    if okTc and type(t) == "string" then tc = t end
+    local okIt, it = pcall(function() return tl:GetCurrentVideoItem() end)
+    if okIt and it then
+      local okN, n = pcall(function() return it:GetName() end)
+      if okN and type(n) == "string" then clip = n end
+    end
+    name = tl:GetName() or ""
+    id = rcIdOf(tl) or ""
+  end
+  return { type = "presence", page = okPage and type(page) == "string" and page or "", timeline = id, timelineName = name, timecode = tc, clip = clip }
+end
+
 while F:GetPrefs(ACTIVE_PREF) == bridgeId do
   bmd.wait(TICK)
   local now = bmd.gettime()
@@ -1671,6 +1693,17 @@ while F:GetPrefs(ACTIVE_PREF) == bridgeId do
       end
     end)
     if not ok then emit("ERR", { error = "media-pool-scan-failed", detail = tostring(err) }) end
+  end
+  if now - lastPresence >= PRESENCE_EVERY then
+    lastPresence = now
+    local ok, pr = pcall(presenceNow)
+    if ok and pr then
+      local sig = pr.page .. "|" .. pr.timeline .. "|" .. pr.timecode .. "|" .. pr.clip
+      if sig ~= presenceSig then
+        presenceSig = sig
+        emit("EVT", pr)
+      end
+    end
   end
   if now - lastBeat >= HEARTBEAT_EVERY then
     lastBeat = now

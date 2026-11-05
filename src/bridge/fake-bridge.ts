@@ -82,6 +82,11 @@ export class FakeBridge {
     clearInterval(this.timer);
   }
 
+  // Where the person is in Resolve, reported like the real bridge does (SPEC §8).
+  setPresence(p: { page: string; timeline: string; timelineName: string; timecode: string; clip: string }): void {
+    this.emit("EVT", { type: "presence", ...p });
+  }
+
   // --- local edits, as the editor would make them ---------------------------
 
   addLocalClip(clip: FakeClip): void {

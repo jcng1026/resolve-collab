@@ -343,3 +343,31 @@ describe("a stranger answering as the host (SPEC §22.3)", () => {
     await close(jo, false);
   }, 30_000);
 });
+
+describe("presence (SPEC §8)", () => {
+  it("passes everyone's page, timeline and playhead on to everyone, with a colour each", async () => {
+    const host = makePc("Pat");
+    const a = makePc("Ana");
+    const b = makePc("Ben");
+    const code = newInviteCode();
+    await connect(host, "host", code);
+    await connect(a, "member", code);
+    await connect(b, "member", code);
+    await waitFor("both in", () => a.session!.people().filter((p) => p.online).length === 3 && b.session!.people().filter((p) => p.online).length === 3);
+    const at = { page: "edit", timeline: "", timelineName: "Edit", timecode: "01:00:04:00", clip: "a.mp4" };
+    host.fake.setPresence(at);
+    a.fake.setPresence({ ...at, timecode: "01:00:09:12", clip: "" });
+    const where = (pc: Pc, name: string) => pc.session!.people().find((p) => p.name === name)?.presence?.timecode;
+    await waitFor("Ben sees both", () => where(b, "Pat") === "01:00:04:00" && where(b, "Ana") === "01:00:09:12");
+    expect(where(host, "Ana")).toBe("01:00:09:12");
+    // Colours in join order, the same on every PC.
+    const colours = (pc: Pc) => pc.session!.people().map((p) => `${p.name}:${p.color}`);
+    expect(colours(a)).toEqual(colours(host));
+    expect(new Set(colours(host).map((c) => c.split(":")[1])).size).toBe(3);
+    // Someone leaving is shown offline, and their presence goes.
+    await close(a, false);
+    await waitFor("Ana offline for Ben", () => b.session!.people().find((p) => p.name === "Ana")?.online === false && where(b, "Ana") === undefined);
+    await close(b, false);
+    await close(host);
+  }, 60_000);
+});
