@@ -150,6 +150,20 @@ async function approve(name: string, peer: string): Promise<Approval> {
   }
 }
 
+// One question at a time: the terminal has a single answer line, and the
+// media pool and timeline syncs can ask at the same moment.
+let turn: Promise<unknown> = Promise.resolve();
+function oneAtATime<A extends unknown[], R>(fn: (...args: A) => Promise<R>): (...args: A) => Promise<R> {
+  return (...args) => {
+    const run = turn.then(() => fn(...args));
+    turn = run.catch(() => {});
+    return run;
+  };
+}
+const askInTurn = oneAtATime(ask);
+const confirmInTurn = oneAtATime(confirm);
+const approveInTurn = oneAtATime(approve);
+
 // This PC's lasting identity and the person's name (SPEC §22.1).
 if (values.name !== undefined) {
   if (!validName(values.name)) {
@@ -188,10 +202,10 @@ const session = new Session({
   backupsDir: join(home, "backups"),
   name: identity.name,
   resume: values.resume,
-  approve,
+  approve: approveInTurn,
   onEnded: () => void shutdown(),
-  ask,
-  confirm,
+  ask: askInTurn,
+  confirm: confirmInTurn,
   fingerprint,
   findFile: (file, dirs) => findFile(file, [...dirs, ...userFolders()]),
   log,
@@ -260,7 +274,7 @@ terminal.on("line", async (line) => {
   } else if (command === "unblock" && mode === "host" && rest.length) {
     log(session.unblock(rest.join(" ")));
   } else if (command === "end" && mode === "host") {
-    if (await confirm("End this session for good? It can't be resumed afterwards.")) session.endForGood();
+    if (await confirmInTurn("End this session for good? It can't be resumed afterwards.")) session.endForGood();
   } else if (command) {
     const common = "missing | locate <clip> <path> | undo | redo | reapply <n> | restore <n>";
     log(mode === "host" ? `commands: ${common} | members | remove <name> | unblock <name> | end` : `commands: ${common}`);
