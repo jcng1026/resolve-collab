@@ -18,7 +18,7 @@ Checks SPEC §23: racing edits (first to the host wins, with a notice and `reapp
 
 ### Undo and redo
 4. PC 2: change the clip's colour (say Green). Then, with Resolve in front on the Edit page, press **Ctrl+Z**: the colour goes back on both PCs. **Ctrl+Shift+Z**: Green again on both.
-5. PC 1: change the clip's colour (Orange). PC 2: Ctrl+Z. PC 2's companion asks `PC 1 has since changed the colour of "<clip>". Undo anyway?` Answer `y`: the colour before PC 2's Green comes back on both.
+5. PC 1: change the clip's colour (Orange). PC 2: Ctrl+Z. PC 2's companion asks `PC 1 has since changed the colour of "<clip>". Undo anyway?` Answer `y`: the colour from before PC 2's Green comes back on both PCs, but only on what PC 2 itself recoloured (if only the audio half of the clip got Green, only the audio goes back).
 6. PC 2: go to the **Color** page and press Ctrl+Z: that's Resolve's own undo (nothing synced changes). Back on the Edit page, Ctrl+Z is the companion's again.
 7. PC 2: delete a timeline marker, then Ctrl+Z: it comes back on both PCs.
 
