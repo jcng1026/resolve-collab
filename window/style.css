@@ -190,3 +190,7 @@ body:has(.panel.collapsed) { background: var(--panel); }
 .bar-lines li.event-bad { color: var(--bad); }
 .bar-lines li.event-plain { color: var(--text-3); }
 .pill.done { background: rgba(48, 209, 88, 0.18); color: var(--good); }
+/* Lines keep their height in the scrolling list: with overflow hidden, flex
+   would otherwise squeeze them and cut their text (seen with a long chat). */
+.list > *, .bar-lines > li { flex-shrink: 0; }
+.event-line, .change-line { line-height: 1.5; }
