@@ -43,6 +43,7 @@ interface Pc {
   questions: Conflict[][];
   answer: Answer;
   delay: number; // ms each received message is held (a slow network)
+  confirms: string[]; // yes/no questions asked (answered yes)
 }
 
 function makePc(name: string): Pc {
@@ -51,7 +52,7 @@ function makePc(name: string): Pc {
   mkdirSync(media);
   mkdirSync(join(dir, "inbox"));
   writeFileSync(join(dir, "ResolveDebug.txt"), "");
-  const pc: Pc = { name, dir, media, fake: new FakeBridge(join(dir, "ResolveDebug.txt"), join(dir, "inbox")), logs: [], questions: [], answer: "mine", delay: 0 };
+  const pc: Pc = { name, dir, media, fake: new FakeBridge(join(dir, "ResolveDebug.txt"), join(dir, "inbox")), logs: [], questions: [], answer: "mine", delay: 0, confirms: [] };
   pcs.push(pc);
   return pc;
 }
@@ -63,7 +64,7 @@ async function connect(pc: Pc, role: "host" | "member", code: string, keepBridge
   pc.session = new Session({
     role, bridge: pc.bridge, peers: pc.peers, storeDir: join(pc.dir, "store"), backupsDir: join(pc.dir, "backups"),
     name: pc.name, approve: async () => "yes", ...(role === "host" && keepBridge ? { resume: true } : {}),
-    confirm: async () => true,
+    confirm: async (q) => { pc.confirms.push(q); return true; },
     ask: async (conflicts) => {
       pc.questions.push(conflicts);
       return new Map(conflicts.map((c) => [c.key, pc.answer]));
@@ -160,6 +161,38 @@ describe("media pool sync between two companions", () => {
     await waitFor("Pink everywhere", () => host.fake.clipByName("a.mp4")?.color === "Pink" && member.fake.clipByName("a.mp4")?.color === "Pink");
     expect(member.session!.reapply(n)).toMatch(/no notice/); // once only
   }, 30_000);
+
+  it("undoes and redoes only this PC's own changes, asking when someone changed it since (SPEC §23.2)", async () => {
+    const clip = () => [host.fake.clipByName("a.mp4")!, member.fake.clipByName("a.mp4")!];
+    const both = (f: (c: ReturnType<typeof clip>[0]) => boolean) => clip().every(f);
+    await waitFor("in step", () => both((c) => c.color === "Pink"));
+    // The member makes two changes of its own; the host one of its own.
+    member.fake.clipByName("a.mp4")!.meta.Take = "7";
+    await waitFor("take", () => both((c) => c.meta.Take === "7"));
+    member.fake.clipByName("a.mp4")!.name = "renamed.mp4";
+    await waitFor("rename", () => !!host.fake.clipByName("renamed.mp4") && !!member.fake.clipByName("renamed.mp4"));
+    const byName = (pc: Pc) => pc.fake.clipByName("renamed.mp4") ?? pc.fake.clipByName("a.mp4");
+    host.fake.clipByName("renamed.mp4")!.flags = ["Red"];
+    await waitFor("flag", () => byName(member)?.flags.includes("Red") === true);
+
+    // Undo: the member's last change (the rename), not the host's flag.
+    expect(await member.session!.undo()).toBe("undid your last change");
+    await waitFor("rename undone", () => !!host.fake.clipByName("a.mp4") && !!member.fake.clipByName("a.mp4"));
+    expect(host.fake.clipByName("a.mp4")!.flags).toEqual(["Red"]);
+    // Redo brings it back; undo twice takes both back, in order.
+    expect(await member.session!.redo()).toBe("redid your last undone change");
+    await waitFor("rename redone", () => !!host.fake.clipByName("renamed.mp4") && !!member.fake.clipByName("renamed.mp4"));
+    await member.session!.undo();
+    await waitFor("rename undone again", () => !!host.fake.clipByName("a.mp4"));
+    expect(member.confirms).toEqual([]);
+    // Someone else changes the Take since: undoing asks first.
+    host.fake.clipByName("a.mp4")!.meta.Take = "9";
+    await waitFor("host's take", () => member.fake.clipByName("a.mp4")?.meta.Take === "9");
+    expect(await member.session!.undo()).toBe("undid your last change");
+    expect(member.confirms).toEqual(['host has since changed the Take of "a.mp4". Undo anyway?']);
+    await waitFor("take unset", () => both((c) => c.meta.Take === undefined));
+    expect(await member.session!.undo()).not.toBe("nothing of yours to undo"); // the earlier colour race step
+  }, 40_000);
 
   it("lists media the member lacks, and imports it once located", async () => {
     writeFileSync(join(host.media, "b.mp4"), "BBBB".repeat(1000));

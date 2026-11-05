@@ -24,6 +24,8 @@ export class HostLog {
   readonly model: SessionModel;
   // Who changed what when, since this companion started (SPEC §23.1).
   private readonly races = new Races();
+  // Told about every operation just before it's applied (undo history, §23.2).
+  onApply?: (before: SessionModel, op: SessionOp, author: string, proposal?: string) => void;
 
   constructor(state?: SessionState) {
     this.seq = state?.seq ?? 0;
@@ -46,6 +48,7 @@ export class HostLog {
       lost = race.lost;
     }
     this.races.record(this.model, accepted, author, this.seq + 1);
+    this.onApply?.(this.model, accepted, author, proposal);
     applySessionOp(this.model, accepted);
     this.seq++;
     return { seq: this.seq, op: accepted, author, ...(proposal ? { proposal } : {}), ...(name ? { name } : {}), ...(lost.length ? { lost } : {}) };
@@ -60,6 +63,8 @@ export class HostLog {
 export class MemberLog {
   seq = -1; // no state yet
   model: SessionModel = emptyModel();
+  // Told about every commit just before it's applied (undo history, §23.2).
+  onApply?: (before: SessionModel, op: SessionOp, author: string, proposal?: string) => void;
 
   get ready(): boolean {
     return this.seq >= 0;
@@ -76,6 +81,7 @@ export class MemberLog {
     if (commit.seq <= this.seq) return "old";
     // The host already validated it; a failure here means our copy drifted.
     if (validateSessionOp(this.model, commit.op)) return "gap";
+    this.onApply?.(this.model, commit.op, commit.author, commit.proposal);
     applySessionOp(this.model, commit.op);
     this.seq = commit.seq;
     return "applied";

@@ -24,7 +24,7 @@ import { dirname, join } from "node:path";
 import type { JsonValue } from "./bridge-protocol/wire.ts";
 import { buildWarning } from "./bridge/bridge-build.ts";
 import type { BridgeClient } from "./bridge/bridge-client.ts";
-import { Notices } from "./notices.ts";
+import { Notices, fieldName } from "./notices.ts";
 import type { PeerLink } from "./peer/peer-link.ts";
 import { type SessionRecord, findHostSession, isSessionId, loadRecord, newRecord, saveRecord, sessionDir } from "./session-record.ts";
 import { type Commit, HostLog, MemberLog, type SessionState } from "./sync/host-log.ts";
@@ -34,6 +34,7 @@ import { type Answer, type Conflict, EXISTS, fieldKey, mediaPoolDomain } from ".
 import { type SessionModel, type SessionOp, validateModel } from "./sync/session-model.ts";
 import { timelineDomain } from "./sync/timeline-reconcile.ts";
 import { TimelineSync } from "./sync/timeline-sync.ts";
+import { History, type Step, inverseOf } from "./undo.ts";
 
 export type Approval = "yes" | "no" | "block";
 
@@ -66,6 +67,26 @@ export interface SessionOptions {
 }
 
 type Message = Record<string, JsonValue>;
+
+type Purpose = "edit" | "undo" | "redo";
+const POOL_KINDS = ["bin", "clip", "poolmarker"];
+
+// An operation's fields as the syncs key them: "clip:<id>:color", "clip:<id>:meta:Scene", "item:<id>:prop:ZoomX".
+function fieldKeysOf(op: SessionOp): string[] {
+  const o = op as unknown as Record<string, unknown>;
+  const kind = op.type.slice(0, op.type.indexOf("."));
+  const id = String(o.id);
+  const keys: string[] = [];
+  for (const [field, value] of Object.entries(o)) {
+    if (field === "type" || field === "id") continue;
+    if ((field === "meta" || field === "props") && value && typeof value === "object" && !Array.isArray(value)) {
+      for (const k of Object.keys(value)) keys.push(fieldKey(kind, id, `${field === "meta" ? "meta" : "prop"}:${k}`));
+    } else {
+      keys.push(fieldKey(kind, id, field));
+    }
+  }
+  return keys;
+}
 
 const DRT_CHUNK = 256 * 1024; // base64 characters per message
 const DRT_MAX_PARTS = 200; // ~50 MB
@@ -118,7 +139,11 @@ export class Session {
   // Notices to act on with a command (SPEC §23.1, §23.3).
   readonly notices = new Notices();
   // Who last changed each field, as the syncs key them ("clip:<id>:color").
-  private readonly fieldAuthors = new Map<string, string>();
+  private readonly fieldAuthors = new Map<string, { id: string; name: string }>();
+  // This PC's own steps (SPEC §23.2), and which step each proposal belongs to.
+  private history = new History();
+  private readonly stepOf = new Map<string, { step: Step; purpose: Purpose; pushed: boolean }>();
+  private openStep: { step: Step; purpose: Purpose; pushed: boolean } | undefined;
   private over = false;
 
   constructor(options: SessionOptions) {
@@ -169,6 +194,11 @@ export class Session {
     const dir = sessionDir(this.options.storeDir, record.id);
     this.hostStore = join(dir, "host-log.json");
     if (role === "host") this.host = new HostLog(this.loadHost());
+    mkdirSync(dir, { recursive: true });
+    this.history = new History(join(dir, "undo.json"));
+    const onApply = (before: SessionModel, op: SessionOp, author: string, proposal?: string) => this.ownApplied(before, op, author, proposal);
+    if (this.host) this.host.onApply = onApply;
+    this.member.onApply = onApply;
     const send = (command: { type: string } & Record<string, JsonValue>) => bridge.send(command) as Promise<BridgeResult>;
     this.sync = new MediaPoolSync({
       me: peers.id,
@@ -298,24 +328,17 @@ export class Session {
     const type = String(op.type);
     const kind = type.slice(0, type.indexOf("."));
     const id = String(op.id);
-    const name = commit.name ?? (commit.author === this.options.peers.id ? this.options.name : "someone");
+    const who = { id: commit.author, name: commit.name ?? (commit.author === this.options.peers.id ? this.options.name : "someone") };
     if (type.endsWith(".delete")) return;
-    if (type.endsWith(".create")) this.fieldAuthors.set(fieldKey(kind, id, EXISTS), name);
-    for (const [field, value] of Object.entries(op)) {
-      if (field === "type" || field === "id") continue;
-      if ((field === "meta" || field === "props") && value && typeof value === "object" && !Array.isArray(value)) {
-        for (const k of Object.keys(value)) this.fieldAuthors.set(fieldKey(kind, id, `${field === "meta" ? "meta" : "prop"}:${k}`), name);
-      } else {
-        this.fieldAuthors.set(fieldKey(kind, id, field), name);
-      }
-    }
+    if (type.endsWith(".create")) this.fieldAuthors.set(fieldKey(kind, id, EXISTS), who);
+    for (const key of fieldKeysOf(commit.op)) this.fieldAuthors.set(key, who);
   }
 
   // Changes of ours someone else's reached the host before (SPEC §23.1).
   private raced(conflicts: Conflict[]): void {
-    const authorOf = (c: Conflict) => c.kind === "clash"
+    const authorOf = (c: Conflict) => (c.kind === "clash"
       ? this.fieldAuthors.get(fieldKey(c.item, (c.theirs as { id: string }).id, EXISTS))
-      : this.fieldAuthors.get(c.key);
+      : this.fieldAuthors.get(c.key))?.name;
     const notice = this.notices.raced(conflicts, authorOf);
     if (notice) this.options.log(notice.text);
   }
@@ -325,11 +348,95 @@ export class Session {
     const notice = this.notices.take(n, "reapply");
     if (!notice) return `there's no notice ${n} to reapply`;
     const ops = [
-      ...notice.changes.map((c) => (["bin", "clip", "poolmarker"].includes(c.item) ? mediaPoolDomain : timelineDomain).set(c.item, c.id, c.fields) as SessionOp),
+      ...notice.changes.map((c) => (POOL_KINDS.includes(c.item) ? mediaPoolDomain.set(c.item, c.id, c.fields) : timelineDomain.set(c.item, c.id, c.fields)) as SessionOp),
       ...(notice.ops as SessionOp[]),
     ];
     for (const op of ops) this.propose(op, newId(), this.seq());
     return `sent again (${ops.length} change${ops.length === 1 ? "" : "s"})`;
+  }
+
+  // --- undo and redo (SPEC §23.2) -------------------------------------------------
+
+  // One of this PC's own operations, about to be applied: its inverse joins its step.
+  private ownApplied(before: SessionModel, op: SessionOp, author: string, proposal?: string): void {
+    if (author !== this.options.peers.id || !proposal) return;
+    const entry = this.stepOf.get(proposal);
+    if (!entry) return;
+    this.stepOf.delete(proposal);
+    if (entry.purpose === "undo") return; // an undo's step went to the redo list already
+    entry.step.forward.push(structuredClone(op));
+    entry.step.inverse.unshift(...inverseOf(before, op));
+    if (!entry.pushed) {
+      this.history.push(entry.step, entry.purpose === "edit");
+      entry.pushed = true;
+    }
+    this.history.save();
+  }
+
+  private get model(): SessionModel {
+    return this.host ? this.host.model : this.member.model;
+  }
+
+  // Undoes this PC's last own step, asking first if someone has changed it since.
+  async undo(): Promise<string> {
+    if (!this.begun) return "not in a session yet";
+    const step = this.history.undo.at(-1);
+    if (!step) return "nothing of yours to undo";
+    const { ops, since, gone } = this.check(step.inverse);
+    if (since.length) {
+      const ok = await this.options.confirm(`${since[0]}${since.length > 1 ? ` (and ${since.length - 1} more)` : ""}. Undo anyway?`);
+      if (!ok) return "not undone";
+    }
+    if (this.history.undo.at(-1) !== step) return "your history changed meanwhile; nothing undone";
+    this.history.undo.pop();
+    this.history.redo.push(step);
+    this.history.save();
+    for (const op of ops) this.propose(op, newId(), this.seq(), "undo");
+    return `undid your last change${gone ? `; ${gone} part${gone === 1 ? " was" : "s were"} deleted by someone, so left out` : ""}`;
+  }
+
+  async redo(): Promise<string> {
+    if (!this.begun) return "not in a session yet";
+    const step = this.history.redo.pop();
+    if (!step) return "nothing to redo";
+    this.history.save();
+    for (const op of step.forward) this.propose(structuredClone(op), newId(), this.seq(), "redo");
+    return "redid your last undone change";
+  }
+
+  // Which of an undo's operations still apply, and what others changed since.
+  private check(inverse: SessionOp[]): { ops: SessionOp[]; since: string[]; gone: number } {
+    const model = this.model;
+    const me = this.options.peers.id;
+    const ops: SessionOp[] = [];
+    const since: string[] = [];
+    let gone = 0;
+    for (const op of inverse) {
+      const kind = op.type.slice(0, op.type.indexOf("."));
+      const id = (op as { id: string }).id;
+      const inPool = POOL_KINDS.includes(kind);
+      const entity: object | undefined = inPool ? mediaPoolDomain.table(model.pool, kind)[id] : timelineDomain.table(model.timelines, kind)[id];
+      if (op.type.endsWith(".create")) {
+        if (!entity) ops.push(op); // already back (someone re-made it): left out
+        continue;
+      }
+      if (!entity) {
+        gone++;
+        continue;
+      }
+      ops.push(op);
+      const label = inPool ? mediaPoolDomain.label(kind, entity) : timelineDomain.label(kind, entity);
+      const keys = op.type.endsWith(".set") ? fieldKeysOf(op) : [...this.fieldAuthors.keys()].filter((k) => k.startsWith(`${kind}:${id}:`));
+      for (const key of keys) {
+        const who = this.fieldAuthors.get(key);
+        if (who && who.id !== me) {
+          const field = key.slice(`${kind}:${id}:`.length);
+          since.push(`${who.name} has since changed ${field === EXISTS ? `"${label}"` : `the ${fieldName(field)} of "${label}"`}`);
+          break;
+        }
+      }
+    }
+    return { ops, since, gone };
   }
 
   // --- ordering -----------------------------------------------------------------
@@ -339,8 +446,18 @@ export class Session {
     return this.host ? this.host.seq : this.member.seq;
   }
 
-  private propose(op: SessionOp, proposal: string, base?: number): void {
+  // `purpose`: an edit (a new undo step), or an undo or redo of one (SPEC §23.2).
+  private propose(op: SessionOp, proposal: string, base?: number, purpose: Purpose = "edit"): void {
     this.freshProject = false; // a change of this PC's own: from now on, worth a backup
+    // Everything proposed in one go (one sync pass, one undo) is one step.
+    if (!this.openStep || this.openStep.purpose !== purpose) {
+      const open = { step: { forward: [], inverse: [] }, purpose, pushed: false };
+      this.openStep = open;
+      setImmediate(() => { if (this.openStep === open) this.openStep = undefined; });
+    }
+    this.stepOf.set(proposal, this.openStep);
+    // Proposals that never came back (made with no host) don't pile up.
+    if (this.stepOf.size > 5000) this.stepOf.delete(this.stepOf.keys().next().value!);
     if (this.host) {
       this.commitLocally(op, this.options.peers.id, proposal, base);
     } else if (this.hostId) {
@@ -384,6 +501,7 @@ export class Session {
   }
 
   private refused(proposal: string, error: string): void {
+    this.stepOf.delete(proposal);
     this.sync.refused(proposal, error);
     this.timelines.refused(proposal);
   }
