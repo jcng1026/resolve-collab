@@ -204,6 +204,8 @@ const session = new Session({
   resume: values.resume,
   approve: approveInTurn,
   onEnded: () => void shutdown(),
+  // Chat from the others shows in the terminal until the window does it (SPEC §24).
+  onLine: (line) => { if (line.kind === "chat" && line.author !== peers.id) log(`${line.name}: ${line.text}`); },
   ask: askInTurn,
   confirm: confirmInTurn,
   fingerprint,
@@ -258,6 +260,8 @@ terminal.on("line", async (line) => {
   } else if (command === "locate" && rest.length >= 2) {
     // The path may contain spaces; quotes from Explorer's "Copy as path" are dropped.
     log(await session.sync.locate(rest[0]!, rest.slice(1).join(" ").replace(/^"(.*)"$/, "$1")));
+  } else if (command === "chat" && rest.length) {
+    session.chat(rest.join(" "));
   } else if (command === "undo") {
     log(await session.undo());
   } else if (command === "redo") {
@@ -276,7 +280,7 @@ terminal.on("line", async (line) => {
   } else if (command === "end" && mode === "host") {
     if (await confirmInTurn("End this session for good? It can't be resumed afterwards.")) session.endForGood();
   } else if (command) {
-    const common = "missing | locate <clip> <path> | undo | redo | reapply <n> | restore <n>";
+    const common = "chat <message> | missing | locate <clip> <path> | undo | redo | reapply <n> | restore <n>";
     log(mode === "host" ? `commands: ${common} | members | remove <name> | unblock <name> | end` : `commands: ${common}`);
   }
 });

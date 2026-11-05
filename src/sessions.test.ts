@@ -364,6 +364,15 @@ describe("presence (SPEC §8)", () => {
     const colours = (pc: Pc) => pc.session!.people().map((p) => `${p.name}:${p.color}`);
     expect(colours(a)).toEqual(colours(host));
     expect(new Set(colours(host).map((c) => c.split(":")[1])).size).toBe(3);
+    // Chat and changes reach everyone as lines, the history kept by the host (SPEC §24.3).
+    a.session!.chat("Hello from Ana");
+    const clip = footage(host, [a, b], "p.mp4");
+    await waitFor("Ben has the clip", () => clipIn(b, "p.mp4"));
+    host.fake.poolClips.get(clip)!.color = "Blue";
+    const texts = (pc: Pc) => pc.session!.lines().map((l) => `${l.name}: ${l.text}`);
+    await waitFor("Ben sees the chat and the change", () => texts(b).includes("Ana: Hello from Ana") && texts(b).includes("Pat: recoloured p.mp4"));
+    expect(texts(host)).toEqual(texts(b));
+    expect(b.session!.lines().find((l) => l.text === "recoloured p.mp4")!.changes).toEqual([{ name: "colour", from: "none", to: "Blue" }]);
     // Someone leaving is shown offline, and their presence goes.
     await close(a, false);
     await waitFor("Ana offline for Ben", () => b.session!.people().find((p) => p.name === "Ana")?.online === false && where(b, "Ana") === undefined);

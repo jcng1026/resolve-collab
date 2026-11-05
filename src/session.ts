@@ -24,6 +24,7 @@ import { dirname, join } from "node:path";
 import type { JsonValue } from "./bridge-protocol/wire.ts";
 import { buildWarning } from "./bridge/bridge-build.ts";
 import type { BridgeClient } from "./bridge/bridge-client.ts";
+import { Activity, type Line, MAX_LINES, cleanLine, describe as describeChange } from "./activity.ts";
 import { Notices, fieldName } from "./notices.ts";
 import type { PeerLink } from "./peer/peer-link.ts";
 import { type Person, type Presence, cleanPeople, cleanPresence, colorAt } from "./presence.ts";
@@ -57,6 +58,8 @@ export interface SessionOptions {
   onEnded?: (why: string) => void;
   // The people or anyone's presence changed (SPEC §8); read people().
   onPeople?: () => void;
+  // A chat or change line is new or updated (SPEC §24.3); read lines().
+  onLine?: (line: Line) => void;
   ask: (conflicts: Conflict[]) => Promise<Map<string, Answer>>;
   confirm: (question: string) => Promise<boolean>;
   fingerprint: (path: string) => Promise<Fingerprint | null>;
@@ -143,6 +146,9 @@ export class Session {
   private readonly presenceOf = new Map<string, Presence>();
   private ownPresence: Presence | undefined;
   private hostPeople: Person[] = [];
+  // Chat and changes (SPEC §24.3): kept by the host, a copy on each member.
+  private activity = new Activity();
+  private activityStore = "";
   private missedCommits = false; // commits came while joining (SPEC §22.3)
   // Notices to act on with a command (SPEC §23.1, §23.3).
   readonly notices = new Notices();
@@ -207,7 +213,14 @@ export class Session {
     mkdirSync(dir, { recursive: true });
     this.history = new History(join(dir, "undo.json"));
     const onApply = (before: SessionModel, op: SessionOp, author: string, proposal?: string) => this.ownApplied(before, op, author, proposal);
-    if (this.host) this.host.onApply = onApply;
+    this.activityStore = join(dir, "activity.json");
+    if (this.host) {
+      this.activity = new Activity(this.loadActivity());
+      this.host.onApply = (before, op, author, proposal) => {
+        onApply(before, op, author, proposal);
+        this.noteChange(before, op, author);
+      };
+    }
     this.member.onApply = onApply;
     const send = (command: { type: string } & Record<string, JsonValue>) => bridge.send(command) as Promise<BridgeResult>;
     this.sync = new MediaPoolSync({
@@ -629,6 +642,9 @@ export class Session {
     if (message.type === "join") return this.joinRequest(cleanName(message.name), from, message.code);
     if (!this.admitted.has(from)) return; // nothing from PCs not let in
     switch (message.type) {
+      case "chat":
+        if (typeof message.text === "string") this.addLine(this.activity.chat(from, this.admitted.get(from) ?? "someone", message.text));
+        return;
       case "presence": {
         const p = cleanPresence(message);
         if (!p) return;
@@ -660,6 +676,7 @@ export class Session {
       // Who's here and where (SPEC §8): a first join is still making its project
       // when later messages arrive, so they come with the welcome.
       people: this.hostList() as unknown as JsonValue,
+      lines: this.activity.lines as unknown as JsonValue,
       presence: [...this.presenceOf].map(([id, p]) => ({ id, ...p })) as unknown as JsonValue,
     };
   }
@@ -765,6 +782,8 @@ export class Session {
     if (!this.host || !this.record) return;
     this.record.ended = true;
     saveRecord(this.options.storeDir, this.record);
+    rmSync(this.activityStore, { force: true }); // chat goes with the session (SPEC §11)
+    this.activity = new Activity();
     this.toMembers({ type: "ended" });
     setTimeout(() => this.end("The session is ended for good; it can't be resumed."), 400);
   }
@@ -838,7 +857,7 @@ export class Session {
     }
     if (!this.begun || from !== this.hostId) {
       // Missed while still joining (making the project): asked for again once in.
-      if (message.type === "commit" || message.type === "people" || message.type === "presence") this.missedCommits = true;
+      if (message.type === "commit" || message.type === "people" || message.type === "presence" || message.type === "line") this.missedCommits = true;
       return; // the rest only from the host
     }
     switch (message.type) {
@@ -847,6 +866,15 @@ export class Session {
         if (!p || typeof message.id !== "string" || message.id === this.options.peers.id) return;
         this.presenceOf.set(message.id, p);
         this.options.onPeople?.();
+        return;
+      }
+      case "line": {
+        const line = cleanLine(message.line);
+        if (!line) return;
+        const at = this.activity.lines.findIndex((l) => l.id === line.id);
+        if (at >= 0) this.activity.lines[at] = line;
+        else this.activity = new Activity([...this.activity.lines, line]);
+        this.options.onLine?.(line);
         return;
       }
       case "people": {
@@ -946,6 +974,7 @@ export class Session {
     this.hostId = from;
     this.member.reset({ seq: state.seq, model });
     this.hostPeople = cleanPeople(message.people) ?? this.hostPeople;
+    if (Array.isArray(message.lines)) this.activity = new Activity(message.lines.map(cleanLine).filter((l): l is Line => !!l));
     for (const raw of Array.isArray(message.presence) ? message.presence : []) {
       const p = cleanPresence(raw);
       const id = (raw as { id?: unknown })?.id;
@@ -1082,5 +1111,52 @@ export class Session {
     mkdirSync(dirname(this.hostStore), { recursive: true });
     writeFileSync(`${this.hostStore}.tmp`, JSON.stringify(this.host.state()));
     renameSync(`${this.hostStore}.tmp`, this.hostStore);
+    if (this.record?.ended) {
+      rmSync(this.activityStore, { force: true }); // chat goes when the session is ended for good (SPEC §11)
+    } else {
+      writeFileSync(`${this.activityStore}.tmp`, JSON.stringify(this.activity.lines));
+      renameSync(`${this.activityStore}.tmp`, this.activityStore);
+    }
+  }
+
+  private loadActivity(): Line[] {
+    try {
+      const raw = JSON.parse(readFileSync(this.activityStore, "utf8")) as unknown;
+      return Array.isArray(raw) ? raw.map(cleanLine).filter((l): l is Line => !!l).slice(-MAX_LINES) : [];
+    } catch {
+      return []; // none yet, or unreadable: the history starts afresh
+    }
+  }
+
+  // --- chat and changes (SPEC §24.3) ----------------------------------------------
+
+  lines(): Line[] {
+    return this.activity.lines;
+  }
+
+  // Sends a chat message (the host adds it to the history and passes it on).
+  chat(text: string): void {
+    if (!this.begun) return;
+    if (this.host) this.addLine(this.activity.chat(this.options.peers.id, this.options.name, text));
+    else if (this.hostId) this.options.peers.sendTo(this.hostId, { type: "chat", text: text.slice(0, 2000) });
+  }
+
+  // Host: a committed change becomes (or joins) a line, unless it shows nothing
+  // new: a no-op, or a timeline clip following its media pool clip's colour.
+  private noteChange(before: SessionModel, op: SessionOp, author: string): void {
+    if (followsClipColor(op, before, () => undefined)) return;
+    const d = describeChange(before, op);
+    if (op.type.endsWith(".set") && d.changes.every((c) => c.from === c.to)) return;
+    const name = author === this.options.peers.id ? this.options.name : this.admitted.get(author) ?? "someone";
+    this.addLine(this.activity.change(before, op, author, name));
+  }
+
+  private addLine(line: Line | undefined): void {
+    if (!line) return;
+    if (this.host) {
+      this.toMembers({ type: "line", line: line as unknown as JsonValue });
+      this.scheduleHostSave();
+    }
+    this.options.onLine?.(line);
   }
 }
