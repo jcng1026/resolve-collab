@@ -215,6 +215,8 @@ terminal.on("line", async (line) => {
   } else if (command === "locate" && rest.length >= 2) {
     // The path may contain spaces; quotes from Explorer's "Copy as path" are dropped.
     log(await session.sync.locate(rest[0]!, rest.slice(1).join(" ").replace(/^"(.*)"$/, "$1")));
+  } else if (command === "reapply" && /^\d+$/.test(rest[0] ?? "")) {
+    log(session.reapply(Number(rest[0])));
   } else if (command === "members" && mode === "host") {
     const list = session.memberList();
     log(list.length ? `members:\n    ${list.join("\n    ")}` : "nobody has joined yet");
@@ -225,7 +227,8 @@ terminal.on("line", async (line) => {
   } else if (command === "end" && mode === "host") {
     if (await confirm("End this session for good? It can't be resumed afterwards.")) session.endForGood();
   } else if (command) {
-    log(mode === "host" ? "commands: missing | locate <clip> <path> | members | remove <name> | unblock <name> | end" : "commands: missing | locate <clip> <path>");
+    const common = "missing | locate <clip> <path> | reapply <n>";
+    log(mode === "host" ? `commands: ${common} | members | remove <name> | unblock <name> | end` : `commands: ${common}`);
   }
 });
 

@@ -150,6 +150,15 @@ describe("media pool sync between two companions", () => {
     expect(host.fake.clipByName("a.mp4")?.color).toBe("Blue");
     expect(member.fake.clipByName("a.mp4")?.color).toBe("Blue");
     member.delay = 0;
+
+    // The notice names who got there first, and reapply sends it again: now
+    // made after seeing the host's change, so it goes through.
+    const notice = member.logs.slice(seen.member).find((l) => l.includes("at the same moment"))!;
+    expect(notice).toMatch(/^\[(\d+)\] host changed the colour of "a\.mp4" at the same moment, so your change was undone\.  reapply \1 = send yours again$/);
+    const n = Number(/^\[(\d+)\]/.exec(notice)![1]);
+    expect(member.session!.reapply(n)).toBe("sent again (1 change)");
+    await waitFor("Pink everywhere", () => host.fake.clipByName("a.mp4")?.color === "Pink" && member.fake.clipByName("a.mp4")?.color === "Pink");
+    expect(member.session!.reapply(n)).toMatch(/no notice/); // once only
   }, 30_000);
 
   it("lists media the member lacks, and imports it once located", async () => {

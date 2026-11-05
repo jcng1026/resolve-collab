@@ -24,13 +24,15 @@ import { dirname, join } from "node:path";
 import type { JsonValue } from "./bridge-protocol/wire.ts";
 import { buildWarning } from "./bridge/bridge-build.ts";
 import type { BridgeClient } from "./bridge/bridge-client.ts";
+import { Notices } from "./notices.ts";
 import type { PeerLink } from "./peer/peer-link.ts";
 import { type SessionRecord, findHostSession, isSessionId, loadRecord, newRecord, saveRecord, sessionDir } from "./session-record.ts";
 import { type Commit, HostLog, MemberLog, type SessionState } from "./sync/host-log.ts";
 import { type Fingerprint, newId } from "./sync/media-pool.ts";
 import { type BridgeResult, MediaPoolSync } from "./sync/media-pool-sync.ts";
-import type { Answer, Conflict } from "./sync/reconcile.ts";
+import { type Answer, type Conflict, EXISTS, fieldKey, mediaPoolDomain } from "./sync/reconcile.ts";
 import { type SessionModel, type SessionOp, validateModel } from "./sync/session-model.ts";
+import { timelineDomain } from "./sync/timeline-reconcile.ts";
 import { TimelineSync } from "./sync/timeline-sync.ts";
 
 export type Approval = "yes" | "no" | "block";
@@ -113,6 +115,10 @@ export class Session {
   private graceTimer: NodeJS.Timeout | undefined;
   private told = new Set<string>();
   private freshProject = false;
+  // Notices to act on with a command (SPEC §23.1, §23.3).
+  readonly notices = new Notices();
+  // Who last changed each field, as the syncs key them ("clip:<id>:color").
+  private readonly fieldAuthors = new Map<string, string>();
   private over = false;
 
   constructor(options: SessionOptions) {
@@ -169,6 +175,7 @@ export class Session {
       send,
       propose: (op, proposal, base) => this.propose(op, proposal, base),
       seq: () => this.seq(),
+      overwritten: (c) => this.raced(c),
       ask: this.options.ask,
       fingerprint: this.options.fingerprint,
       findFile: this.options.findFile,
@@ -184,6 +191,7 @@ export class Session {
       send,
       propose: (op, proposal, base) => this.propose(op, proposal, base),
       seq: () => this.seq(),
+      overwritten: (c) => this.raced(c),
       ask: this.options.ask,
       confirm: this.options.confirm,
       backup: () => this.backup(),
@@ -282,6 +290,48 @@ export class Session {
     return result.ok;
   }
 
+  // --- notices (SPEC §23.1) ------------------------------------------------------
+
+  // Remembers who changed which fields, keyed as the syncs key them.
+  private noteAuthor(commit: Commit): void {
+    const op = commit.op as unknown as Record<string, unknown>;
+    const type = String(op.type);
+    const kind = type.slice(0, type.indexOf("."));
+    const id = String(op.id);
+    const name = commit.name ?? (commit.author === this.options.peers.id ? this.options.name : "someone");
+    if (type.endsWith(".delete")) return;
+    if (type.endsWith(".create")) this.fieldAuthors.set(fieldKey(kind, id, EXISTS), name);
+    for (const [field, value] of Object.entries(op)) {
+      if (field === "type" || field === "id") continue;
+      if ((field === "meta" || field === "props") && value && typeof value === "object" && !Array.isArray(value)) {
+        for (const k of Object.keys(value)) this.fieldAuthors.set(fieldKey(kind, id, `${field === "meta" ? "meta" : "prop"}:${k}`), name);
+      } else {
+        this.fieldAuthors.set(fieldKey(kind, id, field), name);
+      }
+    }
+  }
+
+  // Changes of ours someone else's reached the host before (SPEC §23.1).
+  private raced(conflicts: Conflict[]): void {
+    const authorOf = (c: Conflict) => c.kind === "clash"
+      ? this.fieldAuthors.get(fieldKey(c.item, (c.theirs as { id: string }).id, EXISTS))
+      : this.fieldAuthors.get(c.key);
+    const notice = this.notices.raced(conflicts, authorOf);
+    if (notice) this.options.log(notice.text);
+  }
+
+  // `reapply <n>`: sends the undone change again, as a new edit.
+  reapply(n: number): string {
+    const notice = this.notices.take(n, "reapply");
+    if (!notice) return `there's no notice ${n} to reapply`;
+    const ops = [
+      ...notice.changes.map((c) => (["bin", "clip", "poolmarker"].includes(c.item) ? mediaPoolDomain : timelineDomain).set(c.item, c.id, c.fields) as SessionOp),
+      ...(notice.ops as SessionOp[]),
+    ];
+    for (const op of ops) this.propose(op, newId(), this.seq());
+    return `sent again (${ops.length} change${ops.length === 1 ? "" : "s"})`;
+  }
+
   // --- ordering -----------------------------------------------------------------
 
   // The seq of the session state this PC has (SPEC §23.1).
@@ -328,6 +378,7 @@ export class Session {
   }
 
   private changed(model: SessionModel, commit: Commit): void {
+    this.noteAuthor(commit);
     this.sync.sessionChanged(model.pool, commit);
     this.timelines.sessionChanged(model.timelines, commit);
   }

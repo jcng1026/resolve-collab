@@ -27,6 +27,8 @@ export interface MediaPoolSyncOptions {
   propose: (op: Op, proposal: string, base?: number) => void;
   // The seq of the session state this sync sees now.
   seq?: () => number;
+  // Live races the session won, from one pass (SPEC §23.1); logged when absent.
+  overwritten?: (conflicts: Conflict[]) => void;
   ask: (conflicts: Conflict[]) => Promise<Map<string, Answer>>;
   fingerprint: (path: string) => Promise<Fingerprint | null>;
   findFile: (file: Fingerprint, searchDirs: string[]) => Promise<string | null>;
@@ -244,7 +246,11 @@ export class MediaPoolSync {
       propose = [...propose, ...resolved.propose];
       apply = [...apply, ...resolved.apply];
     }
-    for (const c of plan.overwritten) this.options.log(overwriteMessage(c));
+    if (this.options.overwritten) {
+      if (plan.overwritten.length) this.options.overwritten(plan.overwritten);
+    } else {
+      for (const c of plan.overwritten) this.options.log(overwriteMessage(c));
+    }
     const changesHere = apply.some((op) => op.type !== "clip.create" || !this.missing.has(op.id));
     if (mode === "catch-up" && changesHere && this.options.backupNeeded?.() !== false) {
       this.options.log("catching up: saving a backup of the project first");
