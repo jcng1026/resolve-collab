@@ -862,4 +862,5 @@ Goal (§16): §8, §11 and §12.1. Decisions of 2026-11-05 (asked before buildin
 ### 24.5 Verification
 - The mockup reviewed against the guidelines (the apple-design skill) and approved by the user, before building. **Approved 2026-11-05.**
 - **Bar probe, 2026-11-05: works** (findings "M8 bar probe"): the always-on-top acrylic bar stays above Resolve, other apps and Resolve's Full Screen Window.
+- **Bridge check, 2026-11-05, Free 21.1.2 (`tools/m8-bridge-check.ts`): all checks passed.** Presence reports (page, timeline, timecode, clip under the playhead) only on a change; `presence.go` moves the playhead by timecode and by frame from the timeline's start, switches page and back, and refuses an unknown page or timeline.
 - Then, as for the earlier milestones: unit tests for the history (grouping, the 500 lines, filtering), a real-Resolve check (presence, Follow, jumping to a change), and a two-PC checklist.
