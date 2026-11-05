@@ -263,7 +263,9 @@ let keysTimer: NodeJS.Timeout | undefined;
 const bridge = new BridgeClient({ logPath, inboxDir });
 let openProject: { id: string; name: string } | undefined;
 let resolveAnswers = false;
+let lastPresence: object | undefined; // the bridge reports presence only when it changes
 bridge.on("event", (e: { type?: unknown; project?: { id?: unknown; name?: unknown } | null }) => {
+  if (e.type === "presence") lastPresence = e;
   if (e.type !== "mp.reset") return;
   openProject = e.project && typeof e.project.id === "string" ? { id: e.project.id, name: String(e.project.name ?? "") } : undefined;
   refresh();
@@ -423,8 +425,10 @@ async function runSession(choice: Choice): Promise<string> {
     ...(values.fake ? {} : { bridgeBuild: localBridgeBuild() }),
   });
   session = s;
-  // The bridge was attached before the session listened: its state again.
+  // The bridge was attached before the session listened: its state again,
+  // and where this person is (/timestamp needs it before the playhead moves).
   void bridge.send({ type: "mp.snapshot" });
+  if (lastPresence) bridge.emit("event", lastPresence);
   // Said before the peer link starts: the host can answer while it's still starting.
   log(`you are ${identity.name} (${link.id})`);
   if (mode === "join") log("looking for the host ...");
