@@ -162,7 +162,8 @@ function renderList() {
   const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
   const urgent = $("urgent");
   const items = tab === "chat" ? chatItems() : changeItems();
-  list.replaceChildren(urgent, ...items);
+  // The cards live at the top of the list only while the strip is open; collapsed, above the bar.
+  list.replaceChildren(...(expanded() ? [urgent] : []), ...items);
   if (tab === "chat" && nearBottom) list.scrollTop = list.scrollHeight;
 }
 
