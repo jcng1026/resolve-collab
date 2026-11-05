@@ -47,6 +47,17 @@ describe("BridgeClient with a fake bridge", () => {
     expect(client.connected).toBe(true);
   });
 
+  it("reports Resolve's page from the heartbeat when it changes (SPEC §23.2)", async () => {
+    const { client, fake } = setup();
+    const first = until<string>(client, "page");
+    fake.start(10);
+    expect(await first).toBe("edit");
+    const next = until<string>(client, "page");
+    fake.page = "color";
+    expect(await next).toBe("color");
+    expect(client.page).toBe("color");
+  });
+
   it("takes a short silence for Resolve being busy, and only a long one for the bridge stopping", async () => {
     const { client, fake } = setup(400);
     const changes: boolean[] = [];

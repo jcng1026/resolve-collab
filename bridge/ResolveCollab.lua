@@ -1674,7 +1674,9 @@ while F:GetPrefs(ACTIVE_PREF) == bridgeId do
   end
   if now - lastBeat >= HEARTBEAT_EVERY then
     lastBeat = now
-    emit("HB", { t = now, handled = lastHandled, build = BUILD })
+    -- The page tells the companion whether Ctrl+Z is its undo (SPEC §23.2).
+    local okPage, page = pcall(function() return R:GetCurrentPage() end)
+    emit("HB", { t = now, handled = lastHandled, build = BUILD, page = okPage and type(page) == "string" and page or "" })
   end
 end
 emit("ERR", { error = "bridge-stopped" })

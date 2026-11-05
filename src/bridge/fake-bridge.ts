@@ -53,6 +53,7 @@ export class FakeBridge {
   readonly commands: Record<string, JsonValue>[] = [];
   project = { id: "fake-project", name: "Fake Project" };
   build = ""; // reported like the real bridge's stamped build (bridge-build.ts)
+  page = "edit"; // Resolve's page, as GetCurrentPage names it
   readonly timelines = new FakeTimelines((id) => this.poolClips.has(id), () => this.project.id, (id) => this.poolClips.get(id)?.markers ?? []);
   private readonly seen = new Map<string, string>(); // "bin:<id>" → last reported encoding
   private readonly projectTimelines = new Map<string, {
@@ -194,7 +195,7 @@ export class FakeBridge {
   }
 
   private tick(): void {
-    this.emit("HB", { handled: this.lastHandled, build: this.build });
+    this.emit("HB", { handled: this.lastHandled, build: this.build, page: this.page });
     // Like the real bridge, list the inbox only once the next message is ready.
     let names: string[] = [];
     if (existsSync(join(this.inboxDir, readyFolder(this.lastHandled + 1)))) {

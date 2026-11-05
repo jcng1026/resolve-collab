@@ -35,6 +35,7 @@ import { findFile, fingerprint, userFolders } from "./media/fingerprint.ts";
 import { loadIdentity, saveName, validName } from "./peer/identity.ts";
 import { PeerLink, newInviteCode } from "./peer/peer-link.ts";
 import { MouseWatch } from "./bridge/mouse-watch.ts";
+import { UndoKeys } from "./bridge/undo-keys.ts";
 import { type Approval, Session } from "./session.ts";
 import type { Answer, Conflict } from "./sync/reconcile.ts";
 
@@ -199,6 +200,34 @@ const session = new Session({
   ...(values.fake ? {} : { bridgeBuild: localBridgeBuild() }),
 });
 
+// Ctrl+Z / Ctrl+Shift+Z undo and redo this person's own changes while Resolve
+// is in front on a synced page (SPEC §23.2); elsewhere they stay Resolve's.
+const UNDO_PAGES = new Set(["media", "cut", "edit"]);
+const keys = new UndoKeys();
+let resolveAnswers = true;
+const allowKeys = () => keys.allow(resolveAnswers && session.begun && UNDO_PAGES.has(bridge.page ?? ""));
+bridge.on("page", allowKeys);
+bridge.on("alive", (alive: boolean) => {
+  resolveAnswers = alive;
+  allowKeys();
+});
+const keysTimer = setInterval(allowKeys, 1000); // the session can begin after the page was last told
+let undoing = false;
+async function undoKey(redo: boolean): Promise<void> {
+  if (undoing) return; // one at a time: a question may be waiting
+  undoing = true;
+  try {
+    log(await (redo ? session.redo() : session.undo()));
+  } finally {
+    undoing = false;
+  }
+}
+keys.on("undo", () => void undoKey(false));
+keys.on("redo", () => void undoKey(true));
+keys.on("taken", () => log("another program has claimed Ctrl+Z, so it stays Resolve's; type undo / redo here instead"));
+keys.on("gone", () => log("can't claim Ctrl+Z any more, so it's Resolve's again; type undo / redo here instead"));
+if (!values.fake) keys.start();
+
 let fake: FakeBridge | undefined;
 terminal.on("line", async (line) => {
   if (answerLine) {
@@ -257,6 +286,8 @@ async function shutdown(): Promise<void> {
   stopping = true;
   await session.close();
   mouse.stop();
+  clearInterval(keysTimer);
+  keys.stop();
   bridge.stop();
   fake?.stop();
   await peers.stop();

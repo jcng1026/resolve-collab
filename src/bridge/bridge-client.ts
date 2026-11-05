@@ -37,7 +37,8 @@ const buildOf = (payload: JsonValue): string | undefined => {
 
 // Events: "hello" (payload), "attached" (a bridge that was already running
 // when this client started), "build" (the bridge's build, or undefined),
-// "event" (payload), "error" (payload), "alive" (boolean).
+// "event" (payload), "error" (payload), "alive" (boolean), "page" (Resolve's
+// page, e.g. "edit", when it changes; SPEC §23.2).
 export class BridgeClient extends EventEmitter {
   private readonly logPath: string;
   private readonly inboxDir: string;
@@ -49,6 +50,7 @@ export class BridgeClient extends EventEmitter {
   private timer: NodeJS.Timeout | undefined;
   private bridgeId: string | undefined;
   private lastBeat = 0;
+  page: string | undefined; // Resolve's page, from the heartbeat
   private alive = false;
   private nextSeq = 1;
   private readonly pending = new Map<number, Pending>();
@@ -226,6 +228,10 @@ export class BridgeClient extends EventEmitter {
         break;
       case "HB":
         this.seeHandled(payload);
+        if (typeof data.page === "string" && data.page !== this.page) {
+          this.page = data.page;
+          this.emit("page", data.page);
+        }
         break;
     }
   }
