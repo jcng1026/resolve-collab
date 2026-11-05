@@ -59,6 +59,8 @@ export interface MediaItem {
   state: "noproxy" | "downloading" | "queued" | "paused" | "proxy" | "waiting" | "here" | "failed";
   kind: Kind;
   progress: number; // 0–1
+  got: number; // bytes in, while downloading
+  total: number; // bytes coming, once known
   making: boolean;
   from: string;
   size: number; // the original's
@@ -77,10 +79,12 @@ export class MediaManager {
   private readonly failed = new Map<string, string>();
   private readonly wanted = new Set<string>(); // clip:kind being fetched
   private lastHave = "";
+  private mine: { originals: string[]; proxies: string[] } = { originals: [], proxies: [] };
   private asking: Ask | undefined;
   private timer: NodeJS.Timeout | undefined;
   private usage = { at: 0, bytes: 0, free: 0 };
   private stopped = false;
+  private readonly beat: NodeJS.Timeout;
 
   constructor(options: MediaManagerOptions) {
     this.options = options;
@@ -95,6 +99,10 @@ export class MediaManager {
       log: options.log,
       onChange: () => this.changed(),
     });
+    // New clips, a clip gone missing, a file found: looked at again every 3 s (fingerprints are kept).
+    this.beat = setInterval(() => this.schedule(), 3000);
+    this.beat.unref();
+    this.schedule();
   }
 
   // --- what's going on, for the window ----------------------------------------------
@@ -120,7 +128,7 @@ export class MediaManager {
       const clip = sync.sessionClip(id);
       if (!clip) continue;
       const d = downloads.get(id);
-      const item: MediaItem = { id, name: clip.name, bin: sync.binNames(id).join(" / "), state: "here", kind: "original", progress: 0, making: false, from: "", size: clip.file?.size ?? 0, note: "" };
+      const item: MediaItem = { id, name: clip.name, bin: sync.binNames(id).join(" / "), state: "here", kind: "original", progress: 0, got: 0, total: 0, making: false, from: "", size: clip.file?.size ?? 0, note: "" };
       if (d) Object.assign(item, this.fromDownload(d));
       else if (this.store.standIns[id]) Object.assign(item, { state: "proxy", kind: "proxy" });
       else if (this.store.downloaded[id] && !sync.missing.has(id)) Object.assign(item, { state: "here" });
@@ -134,7 +142,7 @@ export class MediaManager {
 
   private fromDownload(d: DownloadView): Partial<MediaItem> {
     const state = d.state === "paused" ? "paused" : d.state === "queued" ? "queued" : d.state === "waiting" ? "waiting" : "downloading";
-    return { state, kind: d.as, progress: d.size ? d.received / d.size : d.making, making: d.state === "making", from: this.options.nameOf(d.source) };
+    return { state, kind: d.as, progress: d.size ? d.received / d.size : d.making, got: d.received, total: d.size, making: d.state === "making", from: d.source ? this.options.nameOf(d.source) : "" };
   }
 
   private nobody(id: string): string {
@@ -169,7 +177,7 @@ export class MediaManager {
 
   // What everyone has, for a newcomer (the host sends it with the welcome).
   haveList(): { id: string; originals: string[]; proxies: string[] }[] {
-    return [...this.haveOf].map(([id, h]) => ({ id, originals: [...h.originals], proxies: [...h.proxies] }));
+    return [{ id: this.options.me, ...this.mine }, ...[...this.haveOf].map(([id, h]) => ({ id, originals: [...h.originals], proxies: [...h.proxies] }))];
   }
 
   peerLeft(peer: string): void {
@@ -223,6 +231,7 @@ export class MediaManager {
     const key = JSON.stringify([originals, proxies]);
     if (key === this.lastHave) return;
     this.lastHave = key;
+    this.mine = { originals, proxies };
     this.options.announce({ originals, proxies });
   }
 
@@ -392,6 +401,7 @@ export class MediaManager {
   stop(): void {
     this.stopped = true;
     clearTimeout(this.timer);
+    clearInterval(this.beat);
     this.transfer.stop();
   }
 

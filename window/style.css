@@ -194,3 +194,23 @@ body:has(.panel.collapsed) { background: var(--panel); }
    would otherwise squeeze them and cut their text (seen with a long chat). */
 .list > *, .bar-lines > li { flex-shrink: 0; }
 .event-line, .change-line { line-height: 1.5; }
+
+/* M9 media (SPEC §25.1): progress is plain glass; orange only for what needs you. */
+.card-progress { padding: 12px; border-radius: 10px; background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1); display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+.card-progress .head, .media-row .head, .folder-box .head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.card-progress p, .media-row p, .folder-box p { margin: 0; }
+.card-progress .actions, .media-row .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.meter { height: 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.12); overflow: hidden; }
+.meter .fill { height: 4px; border-radius: 2px; background: #0A84FF; transition: width 0.3s; }
+.meter .fill.paused { background: rgba(235, 235, 245, 0.4); }
+.folder-box { padding: 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); display: flex; flex-direction: column; gap: 6px; }
+.folder-box .path { overflow-wrap: anywhere; }
+.big.soft { background: rgba(64, 156, 255, 0.16); color: var(--blue-text); font-weight: 600; }
+.pill.primary-soft { background: rgba(64, 156, 255, 0.16); color: var(--blue-text); font-weight: 600; }
+.media-group h3 { margin: 0 4px; }
+.media-group ul { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.media-group .label.needs { color: var(--orange-text); }
+.media-row { padding: 10px; border-radius: 10px; background: rgba(255, 255, 255, 0.05); border: 1px solid transparent; display: flex; flex-direction: column; gap: 6px; }
+.media-row.needs { background: var(--urgent-bg); border-color: rgba(255, 159, 10, 0.55); }
+.media-row .name { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.media-row .head .small { flex: none; }

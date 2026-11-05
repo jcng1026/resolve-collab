@@ -4,8 +4,8 @@
 // RC_PIPE (Electron's main process can't read stdin on Windows). Nothing from
 // other PCs runs here: the page shows text it's given.
 
-import { app, BrowserWindow, clipboard, dialog, ipcMain, screen } from "electron";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, screen, shell } from "electron";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
@@ -155,6 +155,19 @@ app.whenReady().then(() => {
         void dialog.showOpenDialog(win, { title: `Locate ${String(message.name ?? "the clip")}`, properties: ["openFile"] }).then((r) => {
           if (!r.canceled && r.filePaths[0]) out({ type: "locate", clip: String(message.clip), path: r.filePaths[0] });
         });
+        return;
+      case "pick-folder": // where downloaded media goes (SPEC §25.1)
+        void dialog.showOpenDialog(win, { title: "Where should downloaded media go?", properties: ["openDirectory", "createDirectory"] }).then((r) => {
+          if (!r.canceled && r.filePaths[0]) out({ type: "media-folder", path: r.filePaths[0] });
+        });
+        return;
+      case "open-folder": // the media folder, in Explorer; never a file
+        if (typeof message.path === "string") {
+          try {
+            if (!existsSync(message.path)) mkdirSync(message.path, { recursive: true });
+            if (statSync(message.path).isDirectory()) void shell.openPath(message.path);
+          } catch { /* a bad path: nothing opens */ }
+        }
         return;
       default:
         out(message); // everything else is for the companion

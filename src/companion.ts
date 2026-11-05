@@ -390,6 +390,7 @@ function windowState(): object {
     ...s.notices.list().map((n) => ({ id: `n${n.n}`, who: "", color: "#F5F5F7", text: n.plain, actions: [{ label: n.kind === "reapply" ? "Send mine again" : "Restore mine", value: "act" }, { label: "Dismiss", value: "dismiss" }] })),
     ...(!resolveAnswers ? [{ id: "p-bridge", who: "Resolve", color: "#F5F5F7", text: "isn't answering, so sync is paused. In Resolve, start Workspace \u203a Scripts \u203a ResolveCollab.", actions: [] }] : []),
     ...(resolveAnswers && s.begun && s.sync.paused ? [{ id: "p-project", who: "", color: "#F5F5F7", text: `Sync is paused: open \u201c${s.record?.projectName ?? "the session's project"}\u201d in Resolve.`, actions: [] }] : []),
+    ...mediaCards(s),
     ...(s.begun && !s.inTouch ? [{ id: "p-host", who: "", color: "#F5F5F7", text: "The host is unreachable. Your changes are kept on this PC and merged when it's back.", actions: [] }] : []),
   ];
   const record = s.record;
@@ -404,6 +405,7 @@ function windowState(): object {
     code: mode === "host" ? inviteCode : "", following: s.following ?? null, myTimecode: me?.presence?.timecode ?? "",
     people, lines, urgent, members,
     missing: s.begun ? [...s.sync.missing.values()].map((c) => ({ id: c.id, name: c.name })) : [],
+    media: mediaState(s),
     review: review ? { id: review[0], ...review[1].review } : null,
     start: { ...start, joining: true, message: "Waiting for the host to let you in\u2026" },
   };
@@ -474,6 +476,8 @@ async function runSession(choice: Choice): Promise<string> {
     onEnded: (why) => leaving?.(why),
     onPeople: () => { refresh(); cursors(); },
     onPointers: cursors,
+    onMedia: refresh,
+    proxiesDir: join(home, "proxies"),
     onNote: note,
     onLine: (line) => {
       if (line.kind === "chat" && line.author !== link.id) console.log(`${new Date().toISOString().slice(11, 23)}  ${line.name}: ${line.text}`);
@@ -521,6 +525,60 @@ async function runSession(choice: Choice): Promise<string> {
 // Leave the session, keep the app (SPEC §24.5): back to the start screen.
 function leave(): void {
   leaving?.(mode === "host" ? "You closed the session. Resume it any time." : "You left the session.");
+}
+
+// --- missing media (SPEC §25) ------------------------------------------------------------
+
+let deliverDismissed = false;
+const gb = (n: number) => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1024 ** 2))} MB`);
+
+// Questions about media, as urgent cards: they need the person.
+function mediaCards(s: Session): object[] {
+  const m = s.media;
+  if (!m) return [];
+  const cards: object[] = [];
+  const ask = m.ask;
+  if (ask?.kind === "folder") cards.push({ id: "m-folder", who: "", text: `Where should downloaded media go? Asked once for this project; sub-folders follow the media pool's bins. ${ask.path}`,
+    actions: [{ label: "Use this folder", value: "use" }, { label: "Choose…", type: "pick-folder" }] });
+  if (ask?.kind === "big") cards.push({ id: "m-big", who: "", text: `Download proxies for ${ask.clips.length} clips? They take about ${gb(ask.bytes)}.${ask.free ? ` You have ${gb(ask.free)} free.` : ""}`,
+    actions: [{ label: "Download", value: "yes" }, { label: "Not now", value: "no" }] });
+  const page = (lastPresence as { page?: unknown } | undefined)?.page;
+  if (page !== "deliver") deliverDismissed = false;
+  if (page === "deliver" && m.standIns > 0 && !deliverDismissed) {
+    const n = m.standIns;
+    cards.push({ id: "m-deliver", who: "", text: `${n} clip${n === 1 ? " is" : "s are"} still ${n === 1 ? "a proxy" : "proxies"}, so a render now would use ${n === 1 ? "it" : "them"} at lower quality.`,
+      actions: [{ label: "Download originals", value: "all" }, { label: "Dismiss", value: "dismiss" }] });
+  }
+  return cards;
+}
+
+function mediaState(s: Session): object | null {
+  const m = s.media;
+  if (!m) return null;
+  const items = m.items();
+  const moving = items.filter((i) => ["downloading", "queued", "paused"].includes(i.state));
+  const missing = s.begun ? s.sync.missing.size : 0;
+  const sending = m.sending();
+  let progress: object | null = null;
+  if (moving.length) {
+    const total = moving.reduce((n, i) => n + i.total, 0);
+    const got = moving.reduce((n, i) => n + i.got, 0);
+    const paused = moving.every((i) => i.state === "paused");
+    const making = moving.find((i) => i.making);
+    const from = [...new Set(moving.map((i) => i.from).filter(Boolean))].join(", ");
+    const what = moving.every((i) => i.kind === "proxy") ? "proxies" : moving.every((i) => i.kind === "original") ? "originals" : "media";
+    progress = {
+      title: missing ? `${missing} clip${missing === 1 ? "" : "s"} missing` : `Downloading ${what}`,
+      detail: paused ? `Paused · ${gb(got)} of ${gb(total)}` : making ? `${making.from || "Someone"} is making a proxy of ${making.name}` : `Downloading ${what}${from ? ` from ${from}` : ""}${total ? ` · ${gb(got)} of ${gb(total)}` : ""}`,
+      pct: total ? got / total : making ? making.progress : 0, paused,
+    };
+  } else if (sending.length) {
+    const first = sending[0]!;
+    progress = { title: first.making ? `Making a proxy for ${first.name}` : `Sending media to ${first.name}`, detail: `${first.clip}${sending.length > 1 ? ` and ${sending.length - 1} more` : ""}`, pct: -1, paused: false, sending: true };
+  }
+  const space = m.space();
+  return { folder: m.folder, used: space.used, free: space.free, items, sending, progress,
+    originalsBytes: items.filter((i) => i.state === "proxy" || i.state === "noproxy" || i.state === "failed").reduce((n, i) => n + i.size, 0) };
 }
 
 // --- what the person does: in the window ---------------------------------------------
@@ -603,9 +661,35 @@ async function act(a: Record<string, unknown>): Promise<void> {
         refresh();
         return;
       }
+      if (id === "m-folder" && a.value === "use") s.media?.useFolder(undefined);
+      else if (id === "m-big") s.media?.answerBig(a.value === "yes");
+      else if (id === "m-deliver") {
+        if (a.value === "all") s.media?.allOriginals();
+        else deliverDismissed = true;
+      }
       waiting.get(id)?.answer(a.value);
+      refresh();
       return;
     }
+    case "media-folder":
+      if (text(a.path)) s.media?.useFolder(text(a.path));
+      return;
+    case "media-original":
+      s.media?.original(text(a.clip));
+      return;
+    case "media-all":
+      s.media?.allOriginals();
+      return;
+    case "media-pause":
+      s.media?.pause(text(a.clip));
+      return;
+    case "media-resume":
+      s.media?.resume(text(a.clip));
+      return;
+    case "media-pause-all":
+    case "media-resume-all":
+      for (const i of s.media?.items() ?? []) a.type === "media-pause-all" ? s.media!.pause(i.id) : s.media!.resume(i.id);
+      return;
     case "remove":
       if (mode === "host") log(s.remove(text(a.name)));
       return;
@@ -616,7 +700,7 @@ async function act(a: Record<string, unknown>): Promise<void> {
       if (mode === "host") s.endForGood();
       return;
     case "locate":
-      if (text(a.clip) && text(a.path)) log(await s.sync.locate(text(a.clip), text(a.path)));
+      if (text(a.clip) && text(a.path)) note(await (s.media ? s.media.locate(text(a.clip), text(a.path)) : s.sync.locate(text(a.clip), text(a.path))));
       return;
   }
 }

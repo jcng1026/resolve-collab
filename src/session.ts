@@ -1065,7 +1065,7 @@ export class Session {
     }
     if (!this.begun || from !== this.hostId) {
       // Missed while still joining (making the project): asked for again once in.
-      if (message.type === "commit" || message.type === "people" || message.type === "presence" || message.type === "line") this.missedCommits = true;
+      if (message.type === "commit" || message.type === "people" || message.type === "presence" || message.type === "line" || message.type === "media-have") this.missedCommits = true;
       return; // the rest only from the host
     }
     switch (message.type) {

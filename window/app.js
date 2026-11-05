@@ -85,7 +85,8 @@ function renderUrgent() {
   const box = $("urgent");
   const items = state.urgent || [];
   const shown = expanded() ? items : items.slice(0, 3);
-  const ids = `${items.length}|${shown.map((u) => `${u.id}:${u.text}`).join(",")}`;
+  const prog = state.view === "session" && state.media ? state.media.progress : null;
+  const ids = `${items.length}|${shown.map((u) => `${u.id}:${u.text}`).join(",")}|${JSON.stringify(prog)}`;
   if (ids === shownIds) return;
   const before = new Map([...box.querySelectorAll(".card-urgent")].map((el) => [el.dataset.id, el]));
   const fresh = shown.filter((u) => !before.has(u.id));
@@ -94,12 +95,28 @@ function renderUrgent() {
   box.replaceChildren(
     ...(items.length > shown.length ? [h("div", { class: "more-waiting" }, `+${items.length - shown.length} more waiting · open to see all`)] : []),
     ...shown.map((u) => before.get(u.id) && before.get(u.id).dataset.text === u.text ? before.get(u.id) : card(u, fresh.includes(u))),
+    prog ? progressCard(prog) : null,
   );
+}
+// Media on its way (SPEC §25.1): plain glass, since nothing waits on the person.
+function progressCard(p) {
+  const pct = p.pct >= 0 ? Math.round(p.pct * 100) : -1;
+  return h("section", { class: "card-progress", "aria-label": p.title },
+    h("div", { class: "head" }, h("strong", {}, p.title), pct >= 0 ? h("span", { class: "small muted" }, p.paused ? "Paused" : `${pct}%`) : null),
+    h("p", { class: "small muted" }, p.detail),
+    pct >= 0 ? meter(p.title, pct, p.paused) : null,
+    h("div", { class: "actions" },
+      h("button", { class: "pill", onclick: () => { setExpanded(true); openPanel("media"); } }, "Show"),
+      p.sending ? null : h("button", { class: "pill", onclick: () => rc.send({ type: p.paused ? "media-resume-all" : "media-pause-all" }) }, p.paused ? "Resume" : "Pause")));
+}
+function meter(label, pct, paused) {
+  return h("div", { class: "meter", role: "progressbar", "aria-label": label, "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(pct) },
+    h("div", { class: `fill${paused ? " paused" : ""}`, style: { width: `${pct}%` } }));
 }
 function card(u, pulse) {
   return h("section", { class: `card-urgent${pulse ? " pulse" : ""}`, "aria-label": `${u.who} ${u.text}`, "data-id": u.id, "data-text": u.text },
     h("div", { class: "head" }, h("span", { class: "dot", "aria-hidden": "true" }), h("p", {}, u.who ? h("strong", { class: "who" }, u.who) : null, u.who ? " " : "", u.text)),
-    (u.actions || []).length ? h("div", { class: "actions" }, ...u.actions.map((a, i) => h("button", { class: `pill${i === 0 ? " urgent" : ""}`, onclick: () => rc.send({ type: "answer", id: u.id, value: a.value }) }, a.label))) : null);
+    (u.actions || []).length ? h("div", { class: "actions" }, ...u.actions.map((a, i) => h("button", { class: `pill${i === 0 ? " urgent" : ""}`, onclick: () => rc.send(a.type ? { type: a.type } : { type: "answer", id: u.id, value: a.value }) }, a.label))) : null);
 }
 // Pulse again every 30 s while something waits (SPEC §24.2).
 setInterval(() => {
@@ -168,8 +185,9 @@ function renderStrip() {
   if (f) $("stripFollow").replaceChildren(h("span", {}, "Following ", h("strong", { class: "who", style: { color: f.color } }, f.name), f.page ? ` · ${f.page}` : ""), h("button", { class: "pill", onclick: () => rc.send({ type: "follow", id: null }) }, "Stop"));
   $("tabChat").setAttribute("aria-selected", tab === "chat" ? "true" : "false");
   $("tabChanges").setAttribute("aria-selected", tab === "changes" ? "true" : "false");
-  $("mediaCount").hidden = !state.missing.length;
-  $("mediaCount").textContent = String(state.missing.length);
+  const needs = state.media ? state.media.items.filter((i) => i.state === "noproxy" || i.state === "failed").length : 0;
+  $("mediaCount").hidden = !(needs || state.missing.length);
+  $("mediaCount").textContent = String(needs || state.missing.length);
   renderList();
   if (!$("panel").hidden) renderPanel($("panel").dataset.kind);
 }
@@ -252,14 +270,70 @@ function renderPanel(kind) {
       state.role === "host" ? h("button", { class: "big", style: { color: "var(--bad)", background: "var(--fill)" }, onclick: () => confirmEnd() }, "End this session for good") : null,
     ];
   } else if (kind === "media") {
-    body = state.missing.length
-      ? [h("p", { class: "small muted" }, `${state.missing.length} clip${state.missing.length === 1 ? "" : "s"} used in the session ${state.missing.length === 1 ? "isn't" : "aren't"} on this PC.`),
-        h("div", { class: "group" }, ...state.missing.map((m) => h("div", { class: "row" }, h("span", {}, m.name), h("button", { class: "pill primary", onclick: () => rc.send({ type: "pick-file", clip: m.id, name: m.name }) }, "Locate…"))))]
-      : [h("p", { class: "empty" }, "Every clip in the session is on this PC.")];
+    body = mediaBody();
   } else {
     body = settingsBody(() => renderPanel("settings"));
   }
   $("panel").replaceChildren(head(kind === "session" ? "Session" : kind === "media" ? "Media" : "Settings"), h("div", { class: "sheet-body" }, ...body.flat()));
+}
+
+// The Media panel (SPEC §25.1, the approved mockup): the folder, then each clip by what it needs.
+const size = (n) => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1024 ** 2))} MB`);
+function mediaBody() {
+  const m = state.media;
+  if (!m) return [h("p", { class: "empty" }, "Media shows here once you're in a session.")];
+  const locate = (i) => h("button", { class: "pill", onclick: () => rc.send({ type: "pick-file", clip: i.id, name: i.name }) }, "Locate file\u2026");
+  const original = (i, cls) => h("button", { class: `pill ${cls}`, onclick: () => rc.send({ type: "media-original", clip: i.id }) }, `Download original \u00b7 ${size(i.size)}`);
+  const row = (i) => {
+    let status = "Original, here";
+    let buttons = [];
+    let bar = null;
+    let cls = "media-row";
+    if (i.state === "noproxy" || i.state === "failed") {
+      cls += " needs";
+      status = i.state === "noproxy" ? `No proxy possible: this format can't be converted. The original is ${size(i.size)}.` : i.note || "The download didn't work.";
+      buttons = [original(i, "urgent"), locate(i)];
+    } else if (i.state === "downloading" || i.state === "paused") {
+      const pct = Math.round(i.progress * 100);
+      const what = i.kind === "proxy" ? "Proxy" : "Original";
+      status = i.making ? `${i.from || "Someone"} is making the proxy \u00b7 ${pct}%` : `${i.state === "paused" ? "Paused \u00b7 " : ""}${what}${i.from ? ` from ${i.from}` : ""} \u00b7 ${pct}%`;
+      bar = meter(i.name, pct, i.state === "paused");
+      buttons = [h("button", { class: "pill", onclick: () => rc.send({ type: i.state === "paused" ? "media-resume" : "media-pause", clip: i.id }) }, i.state === "paused" ? "Resume" : "Pause")];
+    } else if (i.state === "queued") {
+      status = `${i.kind === "proxy" ? "Proxy" : "Original"} next in line`;
+      buttons = [locate(i)];
+    } else if (i.state === "proxy") {
+      status = "Proxy. Renders use it until the original is here.";
+      buttons = [original(i, "primary-soft"), locate(i)];
+    } else if (i.state === "waiting") {
+      status = i.note || "Waiting for someone who has it";
+      buttons = [locate(i)];
+    }
+    return h("li", { class: cls },
+      h("div", { class: "head" }, h("span", { class: "name" }, i.name), h("span", { class: "small muted" }, i.bin)),
+      h("p", { class: "small muted" }, status), bar,
+      buttons.length ? h("div", { class: "actions" }, ...buttons) : null);
+  };
+  const groups = [
+    ["Needs you", (i) => i.state === "noproxy" || i.state === "failed", "needs"],
+    ["Downloading", (i) => ["downloading", "paused", "queued"].includes(i.state), ""],
+    ["Proxies", (i) => i.state === "proxy", ""],
+    ["Waiting", (i) => i.state === "waiting", ""],
+    ["Here", (i) => i.state === "here", ""],
+  ].map(([name, test, cls]) => [name, m.items.filter(test), cls]).filter(([, rows]) => rows.length);
+  return [
+    h("div", { class: "folder-box" },
+      h("p", { class: "mono small path" }, m.folder),
+      h("div", { class: "head" }, h("span", { class: "small muted" }, `${size(m.used)} used${m.free ? ` \u00b7 ${size(m.free)} free` : ""}`),
+        h("button", { class: "pill", onclick: () => rc.send({ type: "open-folder", path: m.folder }) }, "Open folder"))),
+    m.originalsBytes ? h("button", { class: "big soft", onclick: () => rc.send({ type: "media-all" }) }, `Download all originals \u00b7 ${size(m.originalsBytes)}`) : null,
+    !groups.length && !m.sending.length ? h("p", { class: "empty" }, "Every clip in the session is on this PC.") : null,
+    ...groups.map(([name, rows, cls]) => h("section", { class: "media-group", "aria-label": name }, h("h3", { class: `label ${cls}` }, name), h("ul", {}, ...rows.map(row)))),
+    m.sending.length ? h("section", { class: "media-group", "aria-label": "Sending to others" }, h("h3", { class: "label" }, "Sending to others"),
+      h("ul", {}, ...m.sending.map((x) => h("li", { class: "media-row" },
+        h("div", { class: "head" }, h("span", { class: "name" }, x.clip), h("span", { class: "small muted" }, `to ${x.name}`)),
+        h("p", { class: "small muted" }, x.making ? `Making a proxy for ${x.name}` : `${x.name} is getting it from you`))))) : null,
+  ];
 }
 
 // --- dialogs: closing, leaving, ending ----------------------------------------------
