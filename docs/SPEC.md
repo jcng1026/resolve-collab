@@ -860,5 +860,6 @@ Goal (§16): §8, §11 and §12.1. Decisions of 2026-11-05 (asked before buildin
 - **Motion:** a short spring (about 0.3 s) for expanding and collapsing, urgent cards sliding up from the bar; none with reduced motion.
 
 ### 24.5 Verification
-- The mockup reviewed against the guidelines (the apple-design skill) and approved by the user, before building.
+- The mockup reviewed against the guidelines (the apple-design skill) and approved by the user, before building. **Approved 2026-11-05.**
+- **Bar probe, 2026-11-05: works** (findings "M8 bar probe"): the always-on-top acrylic bar stays above Resolve, other apps and Resolve's Full Screen Window.
 - Then, as for the earlier milestones: unit tests for the history (grouping, the 500 lines, filtering), a real-Resolve check (presence, Follow, jumping to a change), and a two-PC checklist.
