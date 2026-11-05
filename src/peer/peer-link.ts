@@ -154,6 +154,24 @@ export class PeerLink extends EventEmitter {
     return true;
   }
 
+  // To one peer, sent once and not acknowledged or resent: for file chunks
+  // (SPEC §25.3), which the receiver asks for again itself. False if it isn't
+  // connected.
+  sendLoose(peerId: string, message: JsonValue): boolean {
+    const peer = this.peers.get(peerId);
+    if (!peer || peer.sockets.length === 0) return false;
+    this.write(peer, `${JSON.stringify({ u: message })}
+`);
+    return true;
+  }
+
+  // How much is waiting to go out to a peer: a sender of file chunks holds
+  // back while it's high, so edits and chat aren't kept waiting.
+  backlog(peerId: string): number {
+    const socket = this.peers.get(peerId)?.sockets.findLast((s) => !s.destroyed && s.writable);
+    return socket?.writableLength ?? 0;
+  }
+
   private write(peer: Peer, line: string): void {
     peer.sockets.findLast((socket) => !socket.destroyed && socket.writable)?.write(line);
   }
@@ -209,12 +227,13 @@ export class PeerLink extends EventEmitter {
   }
 
   private receive(peer: Peer, id: string, socket: NoiseSocket, line: string): void {
-    let frame: { r?: unknown; m?: unknown; a?: unknown; d?: JsonValue };
+    let frame: { r?: unknown; m?: unknown; a?: unknown; d?: JsonValue; u?: JsonValue };
     try {
       frame = JSON.parse(line);
     } catch {
       return; // a malformed line from a peer is dropped, not fatal
     }
+    if (frame.u !== undefined) return void this.emit("message", frame.u, id);
     if (typeof frame.a === "number") {
       peer.outstanding.delete(frame.a);
       return;
