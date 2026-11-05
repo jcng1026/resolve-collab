@@ -356,6 +356,7 @@ Every feature follows: spec section → automated tests (using a **fake bridge**
 | Two markers on one frame | A clash: in catch-up the returning person picks Keep mine / Keep theirs; live, first to the host wins; no "keep both" (2026-11-04, §21.5) |
 | Sessions (M6) | Joiners get a fresh project built by syncing, no `.drp` import; a new invite code every time the host opens the session, with a hidden session ID; first join = new project made by the companion, rejoin = last time's project; removal blocks that PC (2026-11-04, §22) |
 | Racing edits, undo, notices (M7) | Second change undone only when it hit the same property; the companion claims Ctrl+Z / Ctrl+Shift+Z on the Media, Cut and Edit pages (after a probe); notices with Reapply / Restore mine are terminal lines for now (2026-11-04, §23) |
+| Companion window (M8) | Electron; a small always-on-top chat bar at the bottom right that expands into a tall strip with Chat and Changes tabs; urgent items stacked above the bar; Apple-style dark HUD look (2026-11-05, §24) |
 
 ---
 
@@ -827,3 +828,37 @@ Goal (§16): §5, §7 and §9.3 point 7 complete, proven by simulator tests with
   - Found and fixed: in Resolve a media pool clip's colour also colours its timeline clips, so a recolour (anyone's, or an undo) made the timeline sync propose item colours as this PC's own step, which cleared redo and could undo someone else's colour. An item recolour that follows its clip isn't a step, and a committed change that leaves everything as it was isn't either. The tests' network delay now keeps messages in order, as a real connection does.
 - **Two PCs:** a checklist like the earlier ones (`docs/m7-two-pc-test.md`).
   - **Result, 2026-11-05, Free 21.1.2 on both PCs: passed in full** (after PC 2 was brought up to date: its first run was still on M6). Found and fixed: two catch-up questions asked at the same moment shared the terminal's one answer line, so one never got its answer and the media pool sync waited for ever; questions now queue.
+
+---
+
+## 24. M8 design: the companion window, presence and chat
+
+Goal (§16): §8, §11 and §12.1. Decisions of 2026-11-05 (asked before building, in a design grilling): built with **Electron**; ghost cursors come **last** in M8, after an overlay probe; **Follow keeps following** until Stop (or you edit); the **terminal commands stay**. The window replaces the terminal for everyday use. The design is **mocked up and approved before it's built** (a private clickable canvas); the approved mockup's HTML and CSS become the window's.
+
+### 24.1 Two sizes, one window
+- **The bar (minimized):** a small horizontal rectangle, about 360 × 150, **always on top of every window**, starting at the bottom right of the screen (offset so it doesn't cover Resolve's Project Manager and Project Settings buttons), draggable, and remembered where you left it, on the monitor you put it on. It shows the **last 3 chat messages** (one line each) and a **reply box** (Enter sends), and an up chevron. It has no close button. With no messages: "No messages yet · say hi below".
+- **The strip (expanded):** the chevron (or Esc to go back) grows it into a narrow tall strip, the same width and about 80% of the screen tall, also always on top. It opens **away from the nearer top or bottom edge**, and the chevron points the way it will go (up, or down when the bar sits in the upper half).
+- **Closing:** an × at the strip's top right asks **Minimize or Close**, with **Remember my choice** (changeable in Settings). Minimize goes back to the bar. Close quits the companion; for the host that closes the session for everyone (as Ctrl+C does, §22.4), so the host is always warned first, remembered choice or not.
+- Apple keeps panels out of sight while their app isn't in front (`panels.md`); here the bar stays on top of everything, by the user's choice, because chat should be readable while doing something else.
+
+### 24.2 Urgent items
+- Shown as **cards stacked above the bar**, newest on top, 3 visible then "+N more" (all of them in the strip): a join request (host), a lost race (Reapply, §23.1), a Restore mine (§23.3), changes to review on coming back (opens the strip's Review), and anything that stops sync: Resolve or the bridge not answering, another project open, the host unreachable. Problems clear themselves once fixed; smaller notes (a bridge out of date) go in the strip's status line.
+- They **pulse 3 times** on arrival, then stay steady orange, and pulse again every 30 s while waiting. Never more than 3 flashes a second; with reduced motion they don't pulse. A sound is off by default, with a Settings switch (urgent items only; never chat).
+
+### 24.3 The strip
+- **Header:** the project, your role, and the people as coloured initials (hover: where they are, §8; click: Follow, again: Stop). Following shows "Following Jo · Stop" under the header and in the bar, with a ring on their initial. A **⋯** menu opens Session (invite code and Copy, members, Remove, Unblock, End), Media (missing files, downloads, Locate, §10) and Settings (name, colour, overlay toggles, media folder, sound, the remembered close choice), each as a panel inside the strip.
+- **Tabs, an iOS segmented control:** **Chat**: messages, with each change between them as a short grey line, one per action ("Jo · 10:42 · moved Interview_03 on V1"; quick changes in a row to the same thing by the same person merge). **Changes**: changes only, one line per property changed in an action with old → new ("start 01:00:10:00 → 01:00:12:04"), a linked video and audio pair and a drag's several updates shown once; a row of people's initials filters by person. Empty: "No changes yet in this session".
+- **Clicking** a change line or a timecode in chat takes your Resolve there: that timeline, the playhead, the clip selected. The lists have **no undo buttons**: Ctrl+Z undoes your own changes newest first (§23.2).
+- **History:** the host keeps the last 500 lines (chat and changes), sent to anyone who joins or rejoins, deleted when the session is ended for good.
+- The Review screen (§9.3 questions) and the Not-in-a-session screen (host, resume, join) live in the same bar and strip.
+
+### 24.4 Look (Apple's Human Interface Guidelines, as a dark HUD)
+- **Material:** a dark translucent HUD: Windows 11's acrylic material (`backgroundMaterial`), the regular (text-heavy) variant, falling back to solid dark on Windows 10 and when Windows' transparency effects are off or contrast is raised. Glass only on the bar and strip themselves, never on cards or rows inside them (`liquid-glass.md`).
+- **Type:** Segoe UI Variable, Windows' own system face (SF Pro may only be used on Apple platforms); Cascadia Mono for timecodes and codes. 13 px body, 11 px smallest.
+- **Colour:** Apple's dark system colours: blue `#0A84FF` for actions (Follow, Send, Copy), orange `#FF9F0A` only for urgent items, people's colours from Apple's set in join order (blue, orange, green, pink, teal, yellow, indigo, red, mint, cyan); one or two tinted buttons per view at most. Dark only (Resolve is always dark).
+- **Shapes:** window corners about 14 px, cards 10 px, pill buttons, grouped rows with hairline separators, a chevron for expand and collapse; controls at least 28 × 28.
+- **Motion:** a short spring (about 0.3 s) for expanding and collapsing, urgent cards sliding up from the bar; none with reduced motion.
+
+### 24.5 Verification
+- The mockup reviewed against the guidelines (the apple-design skill) and approved by the user, before building.
+- Then, as for the earlier milestones: unit tests for the history (grouping, the 500 lines, filtering), a real-Resolve check (presence, Follow, jumping to a change), and a two-PC checklist.
