@@ -119,10 +119,18 @@ app.whenReady().then(() => {
   });
 
   // From the companion: the state to show. The pipe closing means it quit.
+  // The newest is kept for the page: states sent before it has loaded are lost.
+  let latest;
+  let loaded = false;
+  win.webContents.on("did-finish-load", () => {
+    loaded = true;
+    if (latest) win.webContents.send("state", latest);
+  });
   const input = createInterface({ input: pipe });
   input.on("line", (line) => {
     try {
-      win.webContents.send("state", JSON.parse(line));
+      latest = JSON.parse(line);
+      if (loaded) win.webContents.send("state", latest);
     } catch { /* a broken line is skipped */ }
   });
   input.on("close", () => app.quit());

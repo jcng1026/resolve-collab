@@ -148,3 +148,40 @@ body:has(.panel.collapsed) { background: var(--panel); }
 .field { height: 34px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--line); background: rgba(0, 0, 0, 0.35); width: 100%; }
 .field.bad { border-color: var(--red-text); }
 .foot { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--line); }
+
+/* Second round (SPEC §24.5) */
+:root { --good: #30D158; --bad: #FF7A72; }  /* both 6:1 or better on the panel */
+#expand { position: relative; }
+.unread { position: absolute; top: -4px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--blue); color: #fff; font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center; }
+.event-good { color: var(--good); }
+.event-bad { color: var(--bad); }
+.event-plain { color: var(--text-3); }
+.event-line { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.event-line .time { color: var(--text-3); }
+.hints { padding: 4px; border-radius: 10px; background: rgba(44, 44, 46, 0.97); border: 1px solid var(--line); display: flex; flex-direction: column; }
+.hints button { height: 28px; padding: 0 8px; border-radius: 6px; text-align: left; display: flex; gap: 8px; align-items: baseline; }
+.hints button[aria-selected="true"] { background: var(--fill); }
+.hints .what { font-size: 12px; color: var(--text-3); }
+.person { position: relative; }
+.moon { position: absolute; right: -3px; bottom: -3px; width: 14px; height: 14px; border-radius: 7px; background: #2C2C2E; display: flex; align-items: center; justify-content: center; }
+.strip-foot { padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+.strip-foot .strip-reply { padding: 0; }
+.menu-rule { height: 1px; margin: 4px 6px; background: var(--line); }
+.danger-text { color: var(--bad); }
+.dialog .pill.danger { color: var(--bad); }
+
+/* the start card */
+#start { height: auto; padding: 6px; gap: 14px; }
+.start-head { display: flex; align-items: center; gap: 8px; }
+.start-head h1 { margin: 0 auto 0 0; font-size: 15px; font-weight: 600; }
+.pill-status { height: 24px; padding: 0 10px; border-radius: 12px; font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+.pill-status.ok { background: rgba(48, 209, 88, 0.14); color: var(--good); }
+.pill-status.off { background: rgba(255, 159, 10, 0.16); color: var(--orange-text); }
+.field-block { display: flex; flex-direction: column; gap: 6px; }
+.primary-row { min-height: 44px; padding: 8px 14px; border-radius: 12px; background: var(--blue); color: #fff; text-align: left; display: flex; flex-direction: column; gap: 1px; width: 100%; }
+.primary-row:disabled { background: var(--fill); color: var(--text-3); }
+.primary-row .sub { font-size: 12px; opacity: 0.85; }
+.link-btn { align-self: flex-start; height: 28px; padding: 0 4px; color: var(--blue-text); font-size: 12px; }
+.link-btn:disabled { color: var(--text-3); }
+.settings-box { padding: 10px 12px; border-radius: 10px; background: var(--raised); display: flex; flex-direction: column; gap: 10px; }
+.start-message { font-size: 12px; color: var(--text-2); }

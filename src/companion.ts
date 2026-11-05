@@ -286,31 +286,40 @@ mouse.start();
 
 // --- what the window shows ----------------------------------------------------------
 
+type Choice = { mode: "host" | "join"; resume: boolean; code: string };
 let startMessage = "";
 let joining = false;
 let lastSent = "";
+// Lines only this PC shows (SPEC §24.5): the host unreachable or back, command results, mistakes.
+let notes: { id: number; kind: "event"; at: number; author: string; name: string; text: string; changes: []; tone?: "good" | "bad" }[] = [];
+let nextNote = -1;
+function note(text: string, tone?: "good" | "bad"): void {
+  notes.push({ id: nextNote--, kind: "event", at: Date.now(), author: "", name: "", text: text.slice(0, 300), changes: [], ...(tone ? { tone } : {}) });
+  if (notes.length > 100) notes = notes.slice(-100);
+  refresh();
+}
+
 function refresh(): void {
   if (!win?.open) return;
   const state = windowState();
   const text = JSON.stringify(state);
   if (text === lastSent) return;
   lastSent = text;
+  if (process.env.RC_DEBUG_STATE) console.log(`state ${text.slice(0, 400)}`);
   win.show(state);
 }
-setInterval(refresh, 1000).unref(); // presence and sync state change on their own
+setInterval(refresh, 1000).unref(); // presence, idle and sync state change on their own
+
+const pageName = (page: string | undefined) => (page ? `${page[0]!.toUpperCase()}${page.slice(1)} page` : "");
 
 function windowState(): object {
   const name = identity?.name ?? "";
-  if (!session) {
-    return {
-      view: "start", name,
-      start: { bridge: resolveAnswers, project: openProject?.name ?? "", canResume: !!openProject && !!findHostSession(sessionsDir, openProject.id), joining, message: startMessage },
-    };
-  }
+  const start = { bridge: resolveAnswers, project: openProject?.name ?? "", canResume: !!openProject && !!findHostSession(sessionsDir, openProject.id), joining, message: startMessage };
+  if (!session) return { view: "start", name, start };
   const s = session;
   const review = [...waiting].find(([, w]) => w.kind === "review");
-  const people = s.people().map((p) => ({ id: p.id, name: p.name, color: p.color, online: p.online, you: p.id === peers!.id, where: whereText(p.presence) }));
-  const colorOf = (id: string) => people.find((p) => p.id === id)?.color ?? "#F5F5F7";
+  const people = s.people().map((p) => ({ id: p.id, name: p.name, color: p.color, online: p.online, idle: p.idle === true, you: p.id === peers!.id, page: pageName(p.presence?.page) }));
+  const me = s.people().find((p) => p.id === peers!.id);
   const urgent = [
     ...[...waiting].filter(([, w]) => w.kind === "card").map(([id, w]) => ({ id, ...w.card })),
     ...s.notices.list().map((n) => ({ id: `n${n.n}`, who: "", color: "#F5F5F7", text: n.plain, actions: [{ label: n.kind === "reapply" ? "Send mine again" : "Restore mine", value: "act" }, { label: "Dismiss", value: "dismiss" }] })),
@@ -323,20 +332,19 @@ function windowState(): object {
     ? [...record.members.map((m) => ({ id: m.key.slice(0, 8), name: m.name, online: people.some((p) => p.id === m.key.slice(0, 8) && p.online), blocked: false })),
       ...record.blocked.map((m) => ({ id: m.key.slice(0, 8), name: m.name, online: false, blocked: true }))]
     : people.filter((p) => !p.you).map((p) => ({ id: p.id, name: p.name, online: p.online, blocked: false }));
-  const page = bridge.page ? bridge.page[0]!.toUpperCase() + bridge.page.slice(1) : "";
+  const lines = [...s.lines(), ...notes].sort((a, b) => a.at - b.at || a.id - b.id);
   return {
     view: review ? "review" : s.begun ? "session" : "start",
     name, project: record?.projectName ?? openProject?.name ?? "", role: mode === "host" ? "host" : "member", live: s.inTouch,
-    code: mode === "host" ? inviteCode : "", following: s.following ?? null,
-    people, lines: s.lines().map((l) => ({ ...l, color: colorOf(l.author) })), urgent, members,
+    code: mode === "host" ? inviteCode : "", following: s.following ?? null, myTimecode: me?.presence?.timecode ?? "",
+    people, lines, urgent, members,
     missing: s.begun ? [...s.sync.missing.values()].map((c) => ({ id: c.id, name: c.name })) : [],
     review: review ? { id: review[0], ...review[1].review } : null,
-    status: !resolveAnswers ? "Waiting for Resolve" : `${s.inTouch ? "In sync" : "Offline"}${page ? ` · Resolve on the ${page} page` : ""} · Ctrl+Z undoes your own changes`,
-    start: { bridge: resolveAnswers, project: openProject?.name ?? "", canResume: false, joining: true, message: startMessage || "Waiting for the host to let you in\u2026" },
+    start: { ...start, joining: true, message: "Waiting for the host to let you in\u2026" },
   };
 }
 
-// --- this PC's name, and what to do: from the command line or the start screen -----
+// --- this PC's name ----------------------------------------------------------------------
 
 if (values.name !== undefined) {
   if (!validName(values.name)) {
@@ -347,63 +355,9 @@ if (values.name !== undefined) {
 }
 let identity = loadIdentity(home);
 
-let chooseStart: ((choice: { mode: "host" | "join"; resume: boolean; code: string; name?: string }) => void) | undefined;
+let chooseStart: ((choice: Choice) => void) | undefined;
 win?.on("action", (a: Record<string, unknown>) => void act(a));
 win?.on("closed", () => { if (!stopping) void shutdown(); });
-
-if (mode === undefined) {
-  refresh();
-  const choice = await new Promise<{ mode: "host" | "join"; resume: boolean; code: string; name?: string }>((resolve) => { chooseStart = resolve; });
-  chooseStart = undefined;
-  if (choice.name) saveName(home, choice.name);
-  identity = loadIdentity(home);
-  mode = choice.mode;
-  resume = choice.resume;
-  codeArg = choice.code;
-  if (mode === "join") joining = true;
-}
-while (!identity.name) {
-  // The interface has no output stream, so question() prints nothing: write
-  // the question ourselves.
-  process.stdout.write("  Your name, shown to the others in the session: ");
-  const line = (await new Promise<string>((resolve) => terminal.question("", resolve))).trim();
-  if (validName(line)) {
-    saveName(home, line);
-    identity = loadIdentity(home);
-  }
-}
-
-inviteCode = mode === "host" ? newInviteCode() : codeArg!;
-peers = new PeerLink(inviteCode, { seed: identity.seed });
-const link = peers;
-
-session = new Session({
-  role: mode === "host" ? "host" : "member",
-  bridge,
-  peers: link,
-  storeDir: sessionsDir,
-  backupsDir: join(home, "backups"),
-  name: identity.name,
-  resume,
-  approve,
-  onEnded: () => void shutdown(),
-  onPeople: refresh,
-  onLine: (line) => {
-    if (line.kind === "chat" && line.author !== link.id) console.log(`${new Date().toISOString().slice(11, 23)}  ${line.name}: ${line.text}`);
-    refresh();
-  },
-  ask,
-  confirm,
-  fingerprint,
-  findFile: (file, dirs) => findFile(file, [...dirs, ...userFolders()]),
-  log,
-  ...(forceTier ? { forceTier: forceTier as 2 | 3 } : {}),
-  userBusy: () => mouse.held,
-  ...(values.fake ? {} : { bridgeBuild: localBridgeBuild() }),
-});
-const live = session;
-// The bridge was attached before the session listened: its state again.
-void bridge.send({ type: "mp.snapshot" });
 
 // --- Ctrl+Z / Ctrl+Shift+Z (SPEC §23.2) ---------------------------------------------
 
@@ -413,11 +367,13 @@ function allowKeys(): void {
 bridge.on("page", allowKeys);
 keysTimer = setInterval(allowKeys, 1000); // the session can begin after the page was last told
 let undoing = false;
-async function undoKey(redo: boolean): Promise<void> {
-  if (undoing) return; // one at a time: a question may be waiting
-  undoing = true;
+async function undoKey(redo: boolean): Promise<string> {
+  if (undoing || !session) return "";
+  undoing = true; // one at a time: a question may be waiting
   try {
-    log(await (redo ? live.redo() : live.undo()));
+    const result = await (redo ? session.redo() : session.undo());
+    log(result);
+    return result;
   } finally {
     undoing = false;
   }
@@ -428,6 +384,73 @@ keys.on("taken", () => log("another program has claimed Ctrl+Z, so it stays Reso
 keys.on("gone", () => log("can't claim Ctrl+Z any more, so it's Resolve's again; type undo / redo here instead"));
 if (!values.fake) keys.start();
 
+// --- one session: from starting it until it ends or this person leaves -----------------
+
+let leaving: ((why: string) => void) | undefined;
+
+async function runSession(choice: Choice): Promise<string> {
+  mode = choice.mode;
+  resume = choice.resume;
+  inviteCode = mode === "host" ? newInviteCode() : choice.code;
+  joining = mode === "join";
+  notes = [];
+  const link = new PeerLink(inviteCode, { seed: identity.seed });
+  peers = link;
+  const ended = new Promise<string>((resolve) => { leaving = resolve; });
+  const s = new Session({
+    role: mode === "host" ? "host" : "member",
+    bridge,
+    peers: link,
+    storeDir: sessionsDir,
+    backupsDir: join(home, "backups"),
+    name: identity.name ?? "",
+    resume,
+    approve,
+    onEnded: (why) => leaving?.(why),
+    onPeople: refresh,
+    onNote: note,
+    onLine: (line) => {
+      if (line.kind === "chat" && line.author !== link.id) console.log(`${new Date().toISOString().slice(11, 23)}  ${line.name}: ${line.text}`);
+      refresh();
+    },
+    ask,
+    confirm,
+    fingerprint,
+    findFile: (file, dirs) => findFile(file, [...dirs, ...userFolders()]),
+    log,
+    ...(forceTier ? { forceTier: forceTier as 2 | 3 } : {}),
+    userBusy: () => mouse.held,
+    ...(values.fake ? {} : { bridgeBuild: localBridgeBuild() }),
+  });
+  session = s;
+  // The bridge was attached before the session listened: its state again.
+  void bridge.send({ type: "mp.snapshot" });
+  // Said before the peer link starts: the host can answer while it's still starting.
+  log(`you are ${identity.name} (${link.id})`);
+  if (mode === "join") log("looking for the host ...");
+  await link.start();
+  if (mode === "host") {
+    log(`invite code: ${inviteCode}`);
+    log("Share it with the people joining. It works until you close this companion; next time, host --resume gives a new one.");
+  }
+  refresh();
+  const why = await ended;
+  leaving = undefined;
+  // Closing tells the others (a host's members hear the session closed).
+  await s.close();
+  await link.stop();
+  session = undefined;
+  peers = undefined;
+  joining = false;
+  refresh();
+  return why;
+}
+
+// Leave the session, keep the app (SPEC §24.5): back to the start screen.
+function leave(): void {
+  leaving?.(mode === "host" ? "You closed the session. Resume it any time." : "You left the session.");
+}
+
 // --- what the person does: in the window ---------------------------------------------
 
 async function act(a: Record<string, unknown>): Promise<void> {
@@ -437,9 +460,11 @@ async function act(a: Record<string, unknown>): Promise<void> {
       const m = a.mode;
       const name = text(a.name).trim();
       if (!chooseStart || (m !== "host" && m !== "resume" && m !== "join")) return;
-      if (name && !validName(name)) return;
+      if (!validName(name)) return; // the start screen always has a name (SPEC §24.5)
       if (m === "join" && !/^[0-9a-f]{32}$/.test(text(a.code))) return;
-      chooseStart({ mode: m === "join" ? "join" : "host", resume: m === "resume", code: text(a.code), ...(name ? { name } : {}) });
+      saveName(home, name);
+      identity = loadIdentity(home);
+      chooseStart({ mode: m === "join" ? "join" : "host", resume: m === "resume", code: text(a.code) });
       return;
     }
     case "close":
@@ -457,6 +482,29 @@ async function act(a: Record<string, unknown>): Promise<void> {
     case "follow":
       s.follow(typeof a.id === "string" ? a.id : undefined);
       refresh();
+      return;
+    case "follow-name": {
+      // /follow <name>: the one online person whose name starts with it.
+      const wanted = text(a.name).trim().toLowerCase();
+      const found = s.people().filter((p) => p.online && p.id !== peers!.id && p.name.toLowerCase().startsWith(wanted));
+      const exact = found.find((p) => p.name.toLowerCase() === wanted);
+      const target = exact ?? (found.length === 1 ? found[0] : undefined);
+      if (!wanted || !target) note(found.length > 1 ? `More than one person starts with \u201c${text(a.name).trim()}\u201d` : `No one called \u201c${text(a.name).trim()}\u201d is here`);
+      else s.follow(target.id);
+      refresh();
+      return;
+    }
+    case "undo":
+    case "redo": {
+      const result = await undoKey(a.type === "redo");
+      if (result) note(result[0]!.toUpperCase() + result.slice(1));
+      return;
+    }
+    case "note":
+      if (text(a.text)) note(text(a.text).slice(0, 200));
+      return;
+    case "leave":
+      leave();
       return;
     case "jump": {
       const line = s.lines().find((l) => l.id === a.line);
@@ -504,8 +552,10 @@ terminal.on("line", async (line) => {
     answer(line);
     return;
   }
-  const s = live;
+  const s = session;
   const [command, ...rest] = line.trim().split(/\s+/);
+  if (!command) return;
+  if (!s) return log("not in a session: host or join in the window");
   if (command === "missing") {
     const missing = [...s.sync.missing.values()];
     if (!missing.length) log("no missing media");
@@ -523,6 +573,8 @@ terminal.on("line", async (line) => {
     log(s.restore(Number(rest[0])));
   } else if (command === "reapply" && /^\d+$/.test(rest[0] ?? "")) {
     log(s.reapply(Number(rest[0])));
+  } else if (command === "leave") {
+    leave();
   } else if (command === "members" && mode === "host") {
     const list = s.memberList();
     log(list.length ? `members:\n    ${list.join("\n    ")}` : "nobody has joined yet");
@@ -532,21 +584,40 @@ terminal.on("line", async (line) => {
     log(s.unblock(rest.join(" ")));
   } else if (command === "end" && mode === "host") {
     if (await confirm("End this session for good? It can't be resumed afterwards.")) s.endForGood();
-  } else if (command) {
-    const common = "chat <message> | missing | locate <clip> <path> | undo | redo | reapply <n> | restore <n>";
+  } else {
+    const common = "chat <message> | missing | locate <clip> <path> | undo | redo | reapply <n> | restore <n> | leave";
     log(mode === "host" ? `commands: ${common} | members | remove <name> | unblock <name> | end` : `commands: ${common}`);
   }
 });
 
-// Said before the peer link starts: the host can answer while it's still starting.
-log(`you are ${identity.name} (${link.id})`);
+// --- the loop: the start screen, a session, and back (SPEC §24.5) ------------------------
+
 log(`bridge inbox: ${inboxDir}`);
-if (mode === "join") log("looking for the host ...");
-await link.start();
-if (mode === "host") {
-  log(`invite code: ${inviteCode}`);
-  log("Share it with the people joining. It works until you close this companion; next time, host --resume gives a new one.");
+let next: Choice | undefined = mode === undefined ? undefined : { mode, resume, code: codeArg ?? "" };
+for (;;) {
+  let choice = next;
+  next = undefined;
+  if (!choice) {
+    refresh();
+    choice = await new Promise<Choice>((resolve) => { chooseStart = resolve; });
+    chooseStart = undefined;
+  }
+  while (!identity.name) {
+    // The interface has no output stream, so question() prints nothing: write
+    // the question ourselves.
+    process.stdout.write("  Your name, shown to the others in the session: ");
+    const line = (await new Promise<string>((resolve) => terminal.question("", resolve))).trim();
+    if (validName(line)) {
+      saveName(home, line);
+      identity = loadIdentity(home);
+    }
+  }
+  const why = await runSession(choice);
+  // Without the window there's no start screen to go back to.
+  if (!win?.open) break;
+  startMessage = why;
 }
+await shutdown();
 
 async function shutdown(): Promise<void> {
   if (stopping) return;

@@ -14,13 +14,14 @@
   <section id="bar" aria-label="Chat">
     <div class="bar-top drag">
       <span id="barTitle" class="small muted"></span>
-      <button id="expand" class="round no-drag" aria-label="Expand"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><path class="chev" d="M3 9l4-4 4 4"></path></svg></button>
+      <button id="expand" class="round no-drag" aria-label="Expand"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><path class="chev" d="M3 9l4-4 4 4"></path></svg><span id="unread" class="unread" hidden></span></button>
     </div>
     <div id="barFollow" class="follow-line" hidden></div>
     <ol id="barLines" class="bar-lines"></ol>
+    <div id="barHints" class="hints" role="listbox" aria-label="Commands" hidden></div>
     <form id="barForm" class="reply">
-      <label for="barInput" class="sr">Reply</label>
-      <input id="barInput" maxlength="2000" placeholder="Reply" autocomplete="off">
+      <label for="barInput" class="sr">Message</label>
+      <input id="barInput" maxlength="2000" placeholder="Say something or / for commands" autocomplete="off">
       <button class="send" aria-label="Send"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><path d="M7 12V2M3 6l4-4 4 4"></path></svg></button>
     </form>
   </section>
@@ -42,16 +43,20 @@
     </header>
     <div class="rule"></div>
     <main id="list" class="list"></main>
-    <form id="stripForm" class="reply strip-reply">
-      <label for="stripInput" class="sr">Message</label>
-      <input id="stripInput" maxlength="2000" placeholder="Message, or a timecode like 01:02:14:05" autocomplete="off">
-      <button class="send" aria-label="Send"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><path d="M7 12V2M3 6l4-4 4 4"></path></svg></button>
-    </form>
-    <footer id="status" class="status"></footer>
+    <div class="strip-foot">
+      <div id="stripHints" class="hints" role="listbox" aria-label="Commands" hidden></div>
+      <form id="stripForm" class="reply strip-reply">
+        <label for="stripInput" class="sr">Message</label>
+        <input id="stripInput" maxlength="2000" placeholder="Say something or / for commands" autocomplete="off">
+        <button class="send" aria-label="Send"><svg aria-hidden="true" width="14" height="14" viewBox="0 0 14 14"><path d="M7 12V2M3 6l4-4 4 4"></path></svg></button>
+      </form>
+    </div>
     <div id="menu" class="menu" role="menu" hidden>
       <button role="menuitem" data-panel="session">Session and invite code</button>
       <button role="menuitem" data-panel="media">Media <span id="mediaCount" class="badge" hidden></span></button>
       <button role="menuitem" data-panel="settings">Settings</button>
+      <div class="menu-rule"></div>
+      <button role="menuitem" id="leave" class="danger-text">Leave session</button>
     </div>
     <div id="panel" class="sheet" hidden></div>
   </section>

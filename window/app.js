@@ -1,10 +1,9 @@
 // Draws the companion window from the state the companion sends (SPEC §24).
 // Every bit of text is set as text, never as HTML: chat and names come from
-// other PCs. Actions go back as plain objects through window.rc.send.
+// other PCs. Actions go back as plain objects through rc.send (preload.cjs).
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-// `rc` (on, send) is put on the page by preload.cjs.
 
 // h("button", { class: "pill", onclick }, "Label", child...)
 function h(tag, props, ...children) {
@@ -19,6 +18,7 @@ function h(tag, props, ...children) {
   for (const c of children.flat()) if (c !== undefined && c !== null && c !== false) el.append(c instanceof Node ? c : String(c));
   return el;
 }
+const svg = (markup) => { const t = document.createElement("template"); t.innerHTML = markup; return t.content.firstChild; }; // our own fixed icons only
 
 let state = { view: "start", people: [], lines: [], urgent: [], missing: [], members: [] };
 let layout = { dir: "up", expanded: false };
@@ -26,21 +26,28 @@ let prefs = { closeChoice: "", sound: false };
 let tab = "chat";
 let filter = "all";
 let reviewAnswers = {};
-let seenUrgent = new Set();
+let lastSeenAt = Date.now();
+let startTab = "host";
+let startName = null; // null: not edited yet, so it follows the saved name
+let startCode = "";
+let startSettings = false;
 
+const me = () => state.people.find((p) => p.you);
 const colorOf = (id) => state.people.find((p) => p.id === id)?.color ?? "#C7C7CC";
 const time = (at) => { const d = new Date(at); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
 const TC = /(\d\d:\d\d:\d\d[:;]\d\d)/;
+const MOON = '<svg width="9" height="9" viewBox="0 0 10 10" aria-hidden="true"><path d="M7.8 6.6A3.6 3.6 0 0 1 3.4 2.2 3.6 3.6 0 1 0 7.8 6.6z" fill="#FFD60A"></path></svg>';
 
 // Chat text with timecodes as buttons that take your playhead there.
 function withTimecodes(text) {
-  return text.split(TC).map((part, i) => (i % 2 ? h("button", { class: "tc", title: "Take my playhead there", onclick: () => rc.send({ type: "jump-tc", timecode: part }) }, part) : part));
+  return text.split(TC).map((part, i) => (i % 2 ? h("button", { class: "tc", title: "Take my playhead there", onclick: (e) => { e.stopPropagation(); rc.send({ type: "jump-tc", timecode: part }); } }, part) : part));
 }
+const eventClass = (l) => (l.tone === "good" ? "event-good" : l.tone === "bad" ? "event-bad" : "event-plain");
 
 // --- the outer shape: bar, strip, review, start ---------------------------------
 
 function expanded() {
-  return state.view !== "session" || layout.expanded;
+  return state.view === "review" || (state.view === "session" && layout.expanded);
 }
 function setExpanded(on) {
   layout.expanded = on;
@@ -58,44 +65,48 @@ function render() {
   $("strip").hidden = state.view !== "session" || !big;
   $("review").hidden = state.view !== "review";
   $("start").hidden = state.view !== "start";
-  // Urgent cards sit above the bar, or at the top of the strip's list.
   const urgent = $("urgent");
   if (state.view === "session" && big) $("list").prepend(urgent);
   else if (urgent.parentElement !== root) root.prepend(urgent);
   urgent.hidden = state.view === "start";
-  // The chevrons point the way the window will go.
   $("expand").querySelector(".chev").setAttribute("d", layout.dir === "down" ? "M3 5l4 4 4-4" : "M3 9l4-4 4 4");
   $("collapse").querySelector(".chev").setAttribute("d", layout.dir === "down" ? "M3 9l4-4 4 4" : "M3 5l4 4 4-4");
+  if (state.view === "session" && big) lastSeenAt = Math.max(lastSeenAt, ...barLines().map((l) => l.at));
   renderUrgent();
   if (state.view === "session") { renderBar(); renderStrip(); }
   if (state.view === "review") renderReview();
   if (state.view === "start") renderStart();
 }
 
-// --- urgent cards (SPEC §24.2) ----------------------------------------------------
+// --- urgent cards (SPEC §24.2): kept, not rebuilt, so their pulse runs ----------------
 
+let shownIds = "";
 function renderUrgent() {
   const box = $("urgent");
   const items = state.urgent || [];
-  const fresh = items.filter((u) => !seenUrgent.has(u.id));
-  seenUrgent = new Set(items.map((u) => u.id));
-  if (fresh.length && prefs.sound) beep();
   const shown = expanded() ? items : items.slice(0, 3);
+  const ids = `${items.length}|${shown.map((u) => `${u.id}:${u.text}`).join(",")}`;
+  if (ids === shownIds) return;
+  const before = new Map([...box.querySelectorAll(".card-urgent")].map((el) => [el.dataset.id, el]));
+  const fresh = shown.filter((u) => !before.has(u.id));
+  if (fresh.length && prefs.sound) beep();
+  shownIds = ids;
   box.replaceChildren(
     ...(items.length > shown.length ? [h("div", { class: "more-waiting" }, `+${items.length - shown.length} more waiting · open to see all`)] : []),
-    ...shown.map((u) => h("section", { class: `card-urgent${fresh.includes(u) ? " pulse" : ""}`, "aria-label": `${u.who} ${u.text}`, "data-id": u.id },
-      h("div", { class: "head" }, h("span", { class: "dot", "aria-hidden": "true" }), h("p", {}, h("strong", { class: "who", style: { color: u.color || "#F5F5F7" } }, u.who), " ", u.text)),
-      h("div", { class: "actions" }, ...(u.actions || []).map((a, i) => h("button", { class: `pill${i === 0 ? " urgent" : ""}`, onclick: () => rc.send({ type: "answer", id: u.id, value: a.value }) }, a.label))),
-    )),
+    ...shown.map((u) => before.get(u.id) && before.get(u.id).dataset.text === u.text ? before.get(u.id) : card(u, fresh.includes(u))),
   );
 }
-
+function card(u, pulse) {
+  return h("section", { class: `card-urgent${pulse ? " pulse" : ""}`, "aria-label": `${u.who} ${u.text}`, "data-id": u.id, "data-text": u.text },
+    h("div", { class: "head" }, h("span", { class: "dot", "aria-hidden": "true" }), h("p", {}, u.who ? h("strong", { class: "who" }, u.who) : null, u.who ? " " : "", u.text)),
+    (u.actions || []).length ? h("div", { class: "actions" }, ...u.actions.map((a, i) => h("button", { class: `pill${i === 0 ? " urgent" : ""}`, onclick: () => rc.send({ type: "answer", id: u.id, value: a.value }) }, a.label))) : null);
+}
 // Pulse again every 30 s while something waits (SPEC §24.2).
 setInterval(() => {
-  for (const card of document.querySelectorAll(".card-urgent")) {
-    card.classList.remove("pulse");
-    void card.offsetWidth;
-    card.classList.add("pulse");
+  for (const c of document.querySelectorAll(".card-urgent")) {
+    c.classList.remove("pulse");
+    void c.offsetWidth;
+    c.classList.add("pulse");
   }
 }, 30_000);
 
@@ -115,42 +126,48 @@ function beep() {
 
 // --- the bar --------------------------------------------------------------------------
 
-function followed() {
-  return state.people.find((p) => p.id === state.following);
+const followed = () => state.people.find((p) => p.id === state.following);
+// The bar shows chat and session events, not the change lines (SPEC §24.5).
+const barLines = () => state.lines.filter((l) => l.kind !== "change");
+
+function lineItem(l) {
+  if (l.kind === "chat") return h("li", {}, h("strong", { style: { color: colorOf(l.author) } }, l.name), " ", ...withTimecodes(l.text));
+  return h("li", { class: eventClass(l) }, l.text);
 }
 
 function renderBar() {
   const online = state.people.filter((p) => p.online).length;
-  $("barTitle").replaceChildren(state.project || "ResolveCollab", " · ", h("span", { style: { color: state.live ? "var(--green)" : "var(--orange-text)" } }, state.live ? "●" : "○"), state.live ? " Live" : " Offline", ` · ${online} ${online === 1 ? "person" : "people"}`);
+  $("barTitle").replaceChildren(state.project || "ResolveCollab", " · ", h("span", { style: { color: state.live ? "var(--good)" : "var(--orange-text)" } }, state.live ? "●" : "○"), state.live ? " Live" : " Offline", ` · ${online} ${online === 1 ? "person" : "people"}`);
   const f = followed();
   $("barFollow").hidden = !f;
-  if (f) $("barFollow").replaceChildren(h("span", {}, "Following ", h("strong", { class: "who", style: { color: f.color } }, f.name)), h("button", { class: "pill", onclick: () => rc.send({ type: "follow", id: null }) }, "Stop"));
-  const chats = state.lines.filter((l) => l.kind === "chat").slice(-3);
-  $("barLines").replaceChildren(...(chats.length
-    ? chats.map((l) => h("li", {}, h("strong", { style: { color: colorOf(l.author) } }, l.name), " ", l.text))
-    : [h("li", { class: "muted" }, "No messages yet · say hi below")]));
+  if (f) $("barFollow").replaceChildren(h("span", {}, "Following ", h("strong", { class: "who", style: { color: f.color } }, f.name), f.page ? ` · ${f.page}` : ""), h("button", { class: "pill", onclick: () => rc.send({ type: "follow", id: null }) }, "Stop"));
+  const lines = barLines().slice(-3);
+  $("barLines").replaceChildren(...(lines.length ? lines.map(lineItem) : [h("li", { class: "muted" }, "No messages yet · say hi below")]));
+  const myId = me()?.id;
+  const unread = barLines().filter((l) => l.at > lastSeenAt && l.author !== myId && l.author !== "").length;
+  $("unread").hidden = !unread;
+  $("unread").textContent = unread > 99 ? "99+" : String(unread);
+  $("expand").setAttribute("aria-label", unread ? `Expand, ${unread} new` : "Expand");
 }
 
 // --- the strip ------------------------------------------------------------------------
 
 function renderStrip() {
   $("stripTitle").textContent = state.project || "ResolveCollab";
-  $("stripRole").replaceChildren(state.role === "host" ? "Hosting · " : "", h("span", { style: { color: state.live ? "var(--green)" : "var(--orange-text)" } }, state.live ? "●" : "○"), state.live ? " Live" : " Offline");
+  $("stripRole").replaceChildren(state.role === "host" ? "Hosting · " : "", h("span", { style: { color: state.live ? "var(--good)" : "var(--orange-text)" } }, state.live ? "●" : "○"), state.live ? " Live" : " Offline");
   $("people").replaceChildren(...state.people.map((p) => {
-    const tip = p.you ? `You${p.where ? ` · ${p.where}` : ""}` : `${p.name}${p.online ? (p.where ? ` · ${p.where}` : "") : " · offline"}${p.online ? (state.following === p.id ? " · click to stop following" : " · click to follow") : ""}`;
+    const tip = p.you ? "You" : !p.online ? `${p.name} · offline` : `${p.name}${p.page ? ` · ${p.page}` : ""}${p.idle ? " · Idle" : ""} · ${state.following === p.id ? "Click to stop following" : "Click to follow"}`;
     return h("button", {
       class: `person${p.online ? "" : " offline"}`, title: tip, "aria-label": tip, "aria-pressed": state.following === p.id ? "true" : "false",
       style: { borderColor: state.following === p.id ? p.color : "transparent" }, disabled: p.you || !p.online,
       onclick: () => rc.send({ type: "follow", id: state.following === p.id ? null : p.id }),
-    }, h("span", { style: { background: p.color }, "aria-hidden": "true" }, (p.name[0] || "?").toUpperCase()));
+    }, h("span", { style: { background: p.color }, "aria-hidden": "true" }, (p.name[0] || "?").toUpperCase()), p.idle && p.online ? h("span", { class: "moon" }, svg(MOON)) : null);
   }));
   const f = followed();
   $("stripFollow").hidden = !f;
-  if (f) $("stripFollow").replaceChildren(h("span", {}, "Following ", h("strong", { class: "who", style: { color: f.color } }, f.name), f.where ? ` · ${f.where}` : ""), h("button", { class: "pill", onclick: () => rc.send({ type: "follow", id: null }) }, "Stop"));
+  if (f) $("stripFollow").replaceChildren(h("span", {}, "Following ", h("strong", { class: "who", style: { color: f.color } }, f.name), f.page ? ` · ${f.page}` : ""), h("button", { class: "pill", onclick: () => rc.send({ type: "follow", id: null }) }, "Stop"));
   $("tabChat").setAttribute("aria-selected", tab === "chat" ? "true" : "false");
   $("tabChanges").setAttribute("aria-selected", tab === "changes" ? "true" : "false");
-  $("stripForm").hidden = tab !== "chat";
-  $("status").textContent = state.status || "";
   $("mediaCount").hidden = !state.missing.length;
   $("mediaCount").textContent = String(state.missing.length);
   renderList();
@@ -160,19 +177,19 @@ function renderStrip() {
 function renderList() {
   const list = $("list");
   const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40;
-  const urgent = $("urgent");
   const items = tab === "chat" ? chatItems() : changeItems();
-  // The cards live at the top of the list only while the strip is open; collapsed, above the bar.
-  list.replaceChildren(...(expanded() ? [urgent] : []), ...items);
+  list.replaceChildren(...(expanded() ? [$("urgent")] : []), ...items);
   if (tab === "chat" && nearBottom) list.scrollTop = list.scrollHeight;
 }
 
 function chatItems() {
   if (!state.lines.length) return [h("p", { class: "empty" }, "No messages yet · say hi below")];
-  return state.lines.map((l) => (l.kind === "chat"
-    ? h("div", { class: "msg" }, h("div", { class: "meta" }, h("strong", { class: "who", style: { color: colorOf(l.author) } }, l.name), h("span", { class: "time" }, time(l.at))), h("p", {}, ...withTimecodes(l.text)))
-    : h("button", { class: "change-line", title: l.timeline ? "Take me there" : undefined, disabled: !l.timeline, onclick: () => rc.send({ type: "jump", line: l.id }) },
-      h("span", { style: { color: colorOf(l.author) } }, l.name), ` · ${time(l.at)} · ${l.text}`)));
+  return state.lines.map((l) => {
+    if (l.kind === "chat") return h("div", { class: "msg" }, h("div", { class: "meta" }, h("strong", { class: "who", style: { color: colorOf(l.author) } }, l.name), h("span", { class: "time" }, time(l.at))), h("p", {}, ...withTimecodes(l.text)));
+    if (l.kind === "event") return h("div", { class: `event-line ${eventClass(l)}` }, l.text, " ", h("span", { class: "time" }, `· ${time(l.at)}`));
+    return h("button", { class: "change-line", title: l.timeline ? "Take me there" : undefined, disabled: !l.timeline, onclick: () => rc.send({ type: "jump", line: l.id }) },
+      h("span", { style: { color: colorOf(l.author) } }, l.name), ` · ${time(l.at)} · ${l.text}`);
+  });
 }
 
 function changeItems() {
@@ -196,6 +213,15 @@ function openPanel(kind) {
   renderPanel(kind);
 }
 
+function settingsBody(rerender) {
+  const choice = (value, label) => h("button", { role: "tab", "aria-selected": prefs.closeChoice === value ? "true" : "false", onclick: () => { prefs.closeChoice = value; rc.send({ type: "prefs", closeChoice: value }); rerender(); } }, label);
+  return [
+    h("div", { class: "label" }, "When I press ×"),
+    h("div", { class: "segmented", style: { gridTemplateColumns: "repeat(3, minmax(0, 1fr))" } }, choice("", "Ask"), choice("minimize", "Minimize"), choice("close", "Close")),
+    h("label", { class: "check", style: { justifyContent: "flex-start" } }, h("input", { type: "checkbox", checked: prefs.sound, onchange: (e) => { prefs.sound = e.target.checked; rc.send({ type: "prefs", sound: prefs.sound }); } }), "Play a sound for items that need me"),
+  ];
+}
+
 function renderPanel(kind) {
   const head = (title) => h("div", { class: "sheet-head" }, h("h2", {}, title), h("button", { class: "pill", onclick: () => { $("panel").hidden = true; } }, "Done"));
   let body = [];
@@ -207,7 +233,7 @@ function renderPanel(kind) {
       h("div", { class: "group" }, ...state.members.map((m) => h("div", { class: "row" },
         h("span", {}, h("strong", { class: "who" }, m.name), " ", h("span", { class: "small muted" }, m.blocked ? "blocked" : m.online ? "online" : "offline")),
         state.role === "host" ? h("button", { class: `pill${m.blocked ? "" : " danger"}`, onclick: () => rc.send({ type: m.blocked ? "unblock" : "remove", name: m.id }) }, m.blocked ? "Unblock" : "Remove") : null))),
-      state.role === "host" ? h("button", { class: "big", style: { color: "var(--red-text)", background: "var(--fill)" }, onclick: () => confirmEnd() }, "End this session for good") : null,
+      state.role === "host" ? h("button", { class: "big", style: { color: "var(--bad)", background: "var(--fill)" }, onclick: () => confirmEnd() }, "End this session for good") : null,
     ];
   } else if (kind === "media") {
     body = state.missing.length
@@ -215,18 +241,12 @@ function renderPanel(kind) {
         h("div", { class: "group" }, ...state.missing.map((m) => h("div", { class: "row" }, h("span", {}, m.name), h("button", { class: "pill primary", onclick: () => rc.send({ type: "pick-file", clip: m.id, name: m.name }) }, "Locate…"))))]
       : [h("p", { class: "empty" }, "Every clip in the session is on this PC.")];
   } else {
-    const choice = (value, label) => h("button", { role: "tab", "aria-selected": prefs.closeChoice === value ? "true" : "false", onclick: () => { prefs.closeChoice = value; rc.send({ type: "prefs", closeChoice: value }); renderPanel("settings"); } }, label);
-    body = [
-      h("div", { class: "label" }, "When I press ×"),
-      h("div", { class: "segmented", style: { gridTemplateColumns: "repeat(3, minmax(0, 1fr))" } }, choice("", "Ask"), choice("minimize", "Minimize"), choice("close", "Close")),
-      h("label", { class: "check", style: { justifyContent: "flex-start" } }, h("input", { type: "checkbox", checked: prefs.sound, onchange: (e) => { prefs.sound = e.target.checked; rc.send({ type: "prefs", sound: prefs.sound }); } }), "Play a sound for items that need me"),
-      h("p", { class: "small muted" }, `You are ${state.name || "?"}. To change your name, start the companion with --name.`),
-    ];
+    body = settingsBody(() => renderPanel("settings"));
   }
   $("panel").replaceChildren(head(kind === "session" ? "Session" : kind === "media" ? "Media" : "Settings"), h("div", { class: "sheet-body" }, ...body.flat()));
 }
 
-// --- dialogs: closing, ending ------------------------------------------------------
+// --- dialogs: closing, leaving, ending ----------------------------------------------
 
 function dialog(title, text, buttons, extra) {
   const box = $("dialog");
@@ -254,11 +274,93 @@ function askClose() {
   ], prefs.closeChoice === "close" ? null : tick);
 }
 
+// Leave, keep the app (SPEC §24.5): the host is asked first.
+function askLeave() {
+  $("menu").hidden = true;
+  if (state.role !== "host") return rc.send({ type: "leave" });
+  if (!expanded()) setExpanded(true);
+  dialog("Leave and close the session for everyone?", "You're the host, so the others are told and can rejoin when you resume it. You go back to the start screen.", [
+    { label: "Stay", cls: "", act: () => {} },
+    { label: "Leave", cls: "danger", act: () => rc.send({ type: "leave" }) },
+  ]);
+}
+
 function confirmEnd() {
   dialog("End this session for good?", "Everyone is told, and it can't be resumed afterwards. The chat history is deleted.", [
     { label: "End it", cls: "danger", act: () => rc.send({ type: "end" }) },
     { label: "Keep it", cls: "primary", act: () => {} },
   ]);
+}
+
+// --- slash commands (SPEC §24.5) ------------------------------------------------------
+
+const COMMANDS = [
+  { name: "/timestamp", what: "your playhead time" },
+  { name: "/follow", what: "follow someone" },
+  { name: "/stop", what: "stop following" },
+  { name: "/undo", what: "your last change" },
+  { name: "/redo", what: "what you undid" },
+  { name: "/invite", what: "copy the invite code" },
+  { name: "/leave", what: "leave the session" },
+];
+
+// The suggestions for what's being typed: commands after "/", names after "/follow ".
+function suggestions(value) {
+  const follow = /^\/follow\s+(\S*)$/i.exec(value);
+  if (follow) {
+    const typed = follow[1].toLowerCase();
+    return state.people.filter((p) => !p.you && p.online && p.name.toLowerCase().startsWith(typed)).map((p) => ({ name: p.name, what: p.page || "", value: `/follow ${p.name}` }));
+  }
+  const word = /(^|\s)(\/\w*)$/.exec(value);
+  if (!word) return [];
+  return COMMANDS.filter((c) => c.name.startsWith(word[2].toLowerCase()) && (c.name === "/timestamp" || word[1] === "")).map((c) => ({ ...c, value: value.slice(0, value.length - word[2].length) + c.name + (c.name === "/follow" ? " " : "") }));
+}
+
+function composer(input, box, form) {
+  let pick = 0;
+  let list = [];
+  const show = () => {
+    list = suggestions(input.value);
+    if (pick >= list.length) pick = 0;
+    box.hidden = !list.length;
+    box.replaceChildren(...list.map((s, i) => h("button", { type: "button", role: "option", "aria-selected": i === pick ? "true" : "false", onmousedown: (e) => { e.preventDefault(); take(s); } }, h("span", { class: "mono" }, s.name), h("span", { class: "what" }, s.what))));
+  };
+  const take = (s) => { input.value = s.value; pick = 0; show(); input.focus(); };
+  input.addEventListener("input", () => { pick = 0; show(); });
+  input.addEventListener("blur", () => { box.hidden = true; });
+  input.addEventListener("keydown", (e) => {
+    if (box.hidden || !list.length) return;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); pick = (pick + (e.key === "ArrowDown" ? 1 : list.length - 1)) % list.length; show(); }
+    else if (e.key === "Tab" || (e.key === "Enter" && list[pick] && list[pick].value !== input.value)) { e.preventDefault(); take(list[pick]); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); box.hidden = true; }
+  });
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    send(input.value);
+    input.value = "";
+    box.hidden = true;
+  });
+}
+
+function send(raw) {
+  const text = raw.trim();
+  if (!text) return;
+  const [cmd, ...rest] = text.split(/\s+/);
+  const arg = rest.join(" ");
+  switch (cmd.toLowerCase()) {
+    case "/follow": return arg ? rc.send({ type: "follow-name", name: arg }) : rc.send({ type: "note", text: "Who? /follow and their name" });
+    case "/stop": return state.following ? rc.send({ type: "follow", id: null }) : rc.send({ type: "note", text: "You aren't following anyone" });
+    case "/undo": return rc.send({ type: "undo" });
+    case "/redo": return rc.send({ type: "redo" });
+    case "/invite":
+      if (!state.code) return rc.send({ type: "note", text: "Only the host has the invite code" });
+      rc.send({ type: "copy", text: state.code });
+      return rc.send({ type: "note", text: "Invite code copied" });
+    case "/leave": return askLeave();
+  }
+  if (cmd.startsWith("/") && cmd.toLowerCase() !== "/timestamp") return rc.send({ type: "note", text: `There's no ${cmd} command. Type / to see them` });
+  // /timestamp becomes this person's playhead time as it's sent (left as typed without one).
+  rc.send({ type: "chat", text: state.myTimecode ? text.replace(/\/timestamp\b/gi, state.myTimecode) : text });
 }
 
 // --- review: coming back (SPEC §9.3) --------------------------------------------------
@@ -271,7 +373,7 @@ function renderReview() {
   const set = (key, v) => { reviewAnswers[key] = v; renderReview(); };
   const rest = (v) => { for (const c of items) if (!reviewAnswers[c.key]) reviewAnswers[c.key] = v; renderReview(); };
   $("review").replaceChildren(
-    h("div", { class: "pad drag" }, h("h1", {}, `Welcome back to ${state.project || "the session"}`), h("p", { style: { color: "var(--text-2)" } }, "While you were away, others changed some of the same things you did. Choose what to keep. Nothing is sent until you've answered all of them."), r.backup ? h("p", { class: "small muted" }, "Backup saved first: ", h("span", { class: "mono" }, r.backup)) : null),
+    h("div", { class: "pad drag" }, h("h1", {}, `Welcome back to ${state.project || "the session"}`), h("p", { style: { color: "var(--text-2)" } }, "While you were away, others changed some of the same things you did. Choose what to keep. Nothing is sent until you've answered all of them.")),
     h("div", { class: "rule" }),
     h("main", { class: "list" }, ...items.map((c) => h("article", { class: `conflict${reviewAnswers[c.key] ? " done" : ""}` },
       h("div", {}, h("div", { class: "small muted" }, c.kind), h("strong", {}, c.what)),
@@ -286,53 +388,54 @@ function renderReview() {
   );
 }
 
-// --- start: not in a session ----------------------------------------------------------
+// --- start: a compact card (SPEC §24.5) -------------------------------------------------
 
-let startCode = "";
-let startName = "";
 function renderStart() {
   const s = state.start || {};
+  if (startName === null && state.name) startName = state.name;
+  const name = (startName ?? "").trim();
   const clean = startCode.replace(/\s+/g, "").toLowerCase();
   const valid = /^[0-9a-f]{32}$/.test(clean);
   const wrong = clean.length > 32 || /[^0-9a-f]/.test(clean);
-  const needName = !state.name;
-  const nameOk = !needName || (startName.trim().length >= 1 && startName.trim().length <= 40);
-  const go = (mode) => rc.send({ type: "start", mode, code: clean, ...(needName ? { name: startName.trim() } : {}) });
-  const input = h("input", { id: "code", class: `field mono${wrong ? " bad" : ""}`, value: startCode, placeholder: "32 letters and digits", spellcheck: "false", oninput: (e) => { startCode = e.target.value; renderStart(); $("code").focus(); $("code").setSelectionRange(startCode.length, startCode.length); } });
-  $("start").replaceChildren(
-    h("div", { class: "pad drag", style: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" } }, h("h1", {}, "ResolveCollab"), state.name ? h("span", { class: "small muted" }, "You are ", h("strong", { style: { color: "var(--blue-text)" } }, state.name)) : null),
-    h("div", { class: "rule" }),
-    h("main", { class: "list", style: { gap: "18px" } },
-      needName ? h("div", { style: { display: "flex", flexDirection: "column", gap: "6px" } }, h("label", { for: "name", class: "label" }, "Your name, shown to the others"),
-        h("input", { id: "name", class: "field", maxlength: "40", value: startName, oninput: (e) => { startName = e.target.value; } })) : null,
-      s.bridge
-        ? h("div", { style: { display: "flex", alignItems: "center", gap: "8px", color: "var(--text-2)" } }, h("span", { style: { color: "var(--green)" } }, "●"), "Resolve is connected. Open project: ", h("strong", { style: { color: "var(--text)" } }, s.project || "none"))
-        : h("div", { class: "card-urgent" }, h("strong", { style: { color: "var(--orange-text)" } }, "Resolve isn't connected yet"), h("span", {}, "In Resolve, choose Workspace › Scripts › ResolveCollab. This notices by itself.")),
-      h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } }, h("div", { class: "label" }, "Host"),
-        h("div", { class: "group" },
-          s.canResume ? h("button", { class: "change", disabled: !s.bridge || !nameOk, onclick: () => go("resume") }, h("span", { class: "what", style: { color: "var(--blue-text)" } }, `Resume the session for ${s.project}`), h("span", { class: "small muted" }, "People who joined before get back in without asking. A new invite code is made.")) : null,
-          h("button", { class: "change", disabled: !s.bridge || !nameOk, onclick: () => go("host") }, h("span", { class: "what" }, `Start a new session from ${s.project || "the open project"}`)))),
-      h("div", { style: { display: "flex", flexDirection: "column", gap: "8px" } }, h("label", { for: "code", class: "label" }, "Join with an invite code from the host"), input,
-        wrong ? h("span", { class: "small", style: { color: "var(--red-text)" } }, "An invite code is 32 letters a–f and digits.") : null,
-        h("button", { class: "big primary", disabled: !valid || !s.bridge || !nameOk, onclick: () => go("join") }, s.joining ? "Waiting for the host to let you in…" : "Join"),
-        h("p", { class: "small muted" }, "The first time you join a session, a new project is made for it. The project open now is left as it is."))),
-    h("footer", { class: "status" }, s.message || "Not in a session"),
-  );
+  const can = !!s.bridge && name.length >= 1 && name.length <= 40 && !s.joining;
+  const go = (mode) => rc.send({ type: "start", mode, code: clean, name });
+  const keepFocus = (id) => { const el = $(id); if (el) { const at = el.value.length; el.focus(); el.setSelectionRange(at, at); } };
+  const tabBtn = (id, label) => h("button", { role: "tab", "aria-selected": startTab === id ? "true" : "false", onclick: () => { startTab = id; renderStart(); } }, label);
+  const gear = h("button", { class: "round", "aria-label": "Settings", "aria-expanded": String(startSettings), onclick: () => { startSettings = !startSettings; renderStart(); } },
+    svg('<svg aria-hidden="true" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="8" cy="8" r="2.2"></circle><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"></path></svg>'));
+  $("start").replaceChildren(...[
+    h("div", { class: "start-head drag" }, h("h1", {}, "ResolveCollab"),
+      s.bridge ? h("span", { class: "pill-status ok" }, h("span", { "aria-hidden": "true" }, "●"), s.project ? `Resolve · ${s.project}` : "Resolve") : h("span", { class: "pill-status off" }, "Resolve not connected"),
+      h("span", { class: "no-drag" }, gear)),
+    !s.bridge ? h("p", { class: "small", style: { margin: "-6px 0 0", color: "var(--text-2)" } }, "In Resolve: Workspace › Scripts › ResolveCollab.") : null,
+    startSettings ? h("div", { class: "settings-box" }, ...settingsBody(renderStart)) : null,
+    s.message ? h("p", { class: "start-message", style: { margin: 0 } }, s.message) : null,
+    h("div", { class: "field-block" }, h("label", { for: "name", class: "label", style: { margin: 0 } }, "Your name"),
+      h("input", { id: "name", class: "field", maxlength: "40", value: startName ?? "", oninput: (e) => { startName = e.target.value; renderStart(); keepFocus("name"); } })),
+    h("div", { class: "segmented", role: "tablist", "aria-label": "Host or join" }, tabBtn("host", "Host"), tabBtn("join", "Join")),
+    startTab === "host"
+      ? h("div", { class: "field-block" },
+        s.canResume
+          ? [h("button", { class: "primary-row", disabled: !can, onclick: () => go("resume") }, h("span", { style: { fontWeight: 600 } }, `Resume ${s.project}`), h("span", { class: "sub" }, "Everyone from last time gets back in")),
+            h("button", { class: "link-btn", disabled: !can, onclick: () => go("host") }, "Start a new session instead")]
+          : h("button", { class: "primary-row", disabled: !can, onclick: () => go("host") }, h("span", { style: { fontWeight: 600 } }, `Start a session from ${s.project || "the open project"}`)))
+      : h("div", { class: "field-block" },
+        h("label", { for: "code", class: "sr" }, "Invite code"),
+        h("input", { id: "code", class: `field mono${wrong ? " bad" : ""}`, value: startCode, placeholder: "Paste the invite code", spellcheck: "false", oninput: (e) => { startCode = e.target.value; renderStart(); keepFocus("code"); } }),
+        wrong ? h("span", { class: "small", style: { color: "var(--bad)" } }, "That isn't an invite code: it's 32 letters a–f and digits.") : null,
+        h("button", { class: "big primary", disabled: !can || !valid, onclick: () => go("join") }, s.joining ? "Waiting for the host to let you in…" : "Join"),
+        h("p", { class: "small muted", style: { margin: 0 } }, "Joining makes a new project for the session; yours stays as it is.")),
+  ].filter(Boolean)); // replaceChildren would print a null as "null"
 }
 
 // --- wiring -------------------------------------------------------------------------
 
-function sendChat(input) {
-  const text = input.value.trim();
-  if (!text) return;
-  rc.send({ type: "chat", text });
-  input.value = "";
-}
-$("barForm").addEventListener("submit", (e) => { e.preventDefault(); sendChat($("barInput")); });
-$("stripForm").addEventListener("submit", (e) => { e.preventDefault(); sendChat($("stripInput")); });
+composer($("barInput"), $("barHints"), $("barForm"));
+composer($("stripInput"), $("stripHints"), $("stripForm"));
 $("expand").addEventListener("click", () => setExpanded(true));
 $("collapse").addEventListener("click", () => setExpanded(false));
 $("close").addEventListener("click", askClose);
+$("leave").addEventListener("click", askLeave);
 $("more").addEventListener("click", () => { const open = $("menu").hidden; $("menu").hidden = !open; $("more").setAttribute("aria-expanded", String(open)); });
 for (const b of document.querySelectorAll("#menu [data-panel]")) b.addEventListener("click", () => openPanel(b.dataset.panel));
 $("tabChat").addEventListener("click", () => { tab = "chat"; renderStrip(); });
@@ -345,12 +448,19 @@ document.addEventListener("keydown", (e) => {
   if (state.view === "session" && layout.expanded) setExpanded(false);
 });
 
-// The bar's height follows what it shows; the window resizes to it.
+// The window's height follows what it shows when it isn't the tall strip.
 new ResizeObserver(() => { if (!expanded()) rc.send({ type: "size", height: $("root").getBoundingClientRect().height }); }).observe($("root"));
 
+let lastView = "";
 rc.on("state", (s) => {
   state = { people: [], lines: [], urgent: [], missing: [], members: [], ...s };
-  if (state.view !== "session" && layout.expanded === false) rc.send({ type: "expand", on: true });
+  // The start card is compact, the review is tall; a session keeps what the person chose.
+  if (state.view !== lastView) {
+    if (state.view === "start") { layout.expanded = false; rc.send({ type: "expand", on: false }); startName = null; }
+    if (state.view === "review") rc.send({ type: "expand", on: true });
+    if (state.view === "session" && lastView === "review") rc.send({ type: "expand", on: layout.expanded });
+    lastView = state.view;
+  }
   render();
 });
 rc.on("layout", (l) => { layout = { ...layout, ...l }; render(); });
