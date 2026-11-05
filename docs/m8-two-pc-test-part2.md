@@ -4,7 +4,7 @@ Checks SPEC §24.6. Do part 1's "On both PCs (once)" first (`git pull`, `npm ins
 
 ## Run
 1. PC 1 hosts, PC 2 joins (as in part 1). Both on the **Edit** page, Resolve in front.
-2. PC 1: move the pointer over Resolve. PC 2: an arrow in PC 1's colour moves at the same spot in its Resolve window, smoothly (about 15 times a second). PC 2 does the same: PC 1 sees it.
+2. PC 1: move the pointer over Resolve. PC 2: an arrow in PC 1's colour moves at the same spot in its Resolve window, smoothly (about 30 times a second). PC 2 does the same: PC 1 sees it.
 3. PC 2: put your pointer on PC 1's arrow: PC 1's name shows next to it; move away: it goes. The arrow never fades while PC 1 is still.
 4. PC 2: click and drag in Resolve right where PC 1's arrow is: Resolve gets every click (the arrow never gets in the way).
 5. PC 1: go to the **Color** page: its arrow goes from PC 2's screen. Back to Edit: it's back.

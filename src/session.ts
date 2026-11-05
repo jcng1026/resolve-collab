@@ -103,7 +103,7 @@ const DRT_MAX_PARTS = 200; // ~50 MB
 const DRT_TIMEOUT_MS = 30_000;
 const GRACE_MS = 10 * 60_000;
 export const IDLE_MS = 5 * 60_000;
-const POINTER_MS = 66; // ghost cursors: about 15 updates a second (SPEC §24.6) // no edits, presence changes or chat for this long: idle (SPEC §24.5)
+const POINTER_MS = 33; // ghost cursors: at most 30 positions a second (SPEC §24.6)
 const JOIN_AGAIN_MS = 3000;
 
 interface DrtRequest {
@@ -826,7 +826,7 @@ export class Session {
   // --- ghost cursors (SPEC §24.6) ----------------------------------------------------
 
   // This person's pointer in their Resolve window (0–1), or null when it's not
-  // over Resolve. Sent at most 15 times a second; the newest wins.
+  // over Resolve. Sent at most 30 times a second; the newest wins.
   sharePointer(at: { x: number; y: number } | null): void {
     if (at === null && this.pointerNext === null) return; // "off" once, not every tick
     this.pointerNext = at;

@@ -79,7 +79,8 @@ function showOverlay(o) {
     overlay = new BrowserWindow({
       show: false, frame: false, transparent: true, backgroundColor: "#00000000", hasShadow: false, resizable: false,
       focusable: false, skipTaskbar: true, maximizable: false, minimizable: false, fullscreenable: false, title: "ResolveCollab cursors",
-      webPreferences: { preload: join(HERE, "preload.cjs"), sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false },
+      // It never has the focus; it still animates at full rate.
+      webPreferences: { preload: join(HERE, "preload.cjs"), sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false },
     });
     overlay.setIgnoreMouseEvents(true);
     overlay.setAlwaysOnTop(true, "screen-saver");

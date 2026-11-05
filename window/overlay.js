@@ -5,6 +5,22 @@
 const box = document.getElementById("cursors");
 const ghosts = new Map(); // id → element
 
+// Positions arrive about 30 times a second; each frame the arrow glides most
+// of the way to the newest one, so it moves smoothly instead of jumping.
+const GLIDE_MS = 45;
+let lastFrame = performance.now();
+function frame(now) {
+  const k = 1 - Math.exp(-(now - lastFrame) / GLIDE_MS);
+  lastFrame = now;
+  for (const el of ghosts.values()) {
+    el.at.x += (el.target.x - el.at.x) * k;
+    el.at.y += (el.target.y - el.at.y) * k;
+    el.style.transform = `translate(${el.at.x * innerWidth - 2}px, ${el.at.y * innerHeight - 2}px)`;
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
 function ghost(c) {
   const el = document.createElement("div");
   el.className = "ghost";
@@ -31,8 +47,8 @@ rc.on("cursors", (list) => {
   for (const c of Array.isArray(list) ? list : []) {
     seen.add(c.id);
     const el = ghosts.get(c.id) ?? ghosts.set(c.id, ghost(c)).get(c.id);
-    el.style.left = `${c.x * 100}%`;
-    el.style.top = `${c.y * 100}%`;
+    el.target = { x: c.x, y: c.y };
+    if (!el.at) el.at = { x: c.x, y: c.y }; // a new arrow starts where it is
     el.querySelector("path").setAttribute("fill", c.color);
     const tag = el.querySelector(".tag");
     tag.textContent = c.name;

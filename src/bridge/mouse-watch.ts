@@ -55,7 +55,7 @@ public static class RcPointer {
       }
       string line = "{\\"d\\":" + (down ? 1 : 0) + ",\\"f\\":" + (front ? 1 : 0) + ",\\"p\\":[" + p.X + "," + p.Y + "],\\"w\\":" + win + "}";
       if (line != last) { Console.Out.WriteLine(line); Console.Out.Flush(); last = line; }
-      Thread.Sleep(50);
+      Thread.Sleep(16); // about 60 times a second: ghost cursors move smoothly
     }
   }
 }
