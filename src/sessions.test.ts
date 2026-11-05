@@ -373,6 +373,18 @@ describe("presence (SPEC §8)", () => {
     await waitFor("Ben sees the chat and the change", () => texts(b).includes("Ana: Hello from Ana") && texts(b).includes("Pat: recoloured p.mp4"));
     expect(texts(host)).toEqual(texts(b));
     expect(b.session!.lines().find((l) => l.text === "recoloured p.mp4")!.changes).toEqual([{ name: "colour", from: "none", to: "Blue" }]);
+    // Follow: Ben's Resolve moves with Pat's, until Ben edits (SPEC §8).
+    const pat = b.session!.people().find((p) => p.name === "Pat")!.id;
+    b.session!.follow(pat);
+    await waitFor("Ben went to Pat", () => b.fake.wentTo.some((w) => w.timecode === "01:00:04:00" && w.page === "edit"));
+    host.fake.setPresence({ ...at, timecode: "01:00:07:00" });
+    await waitFor("and follows Pat's playhead", () => b.fake.wentTo.some((w) => w.timecode === "01:00:07:00"));
+    b.fake.clipByName("p.mp4")!.color = "Green";
+    await waitFor("editing stops following", () => b.session!.following === undefined);
+    expect(b.logs).toContain("stopped following Pat: you made a change");
+    // Clicking a change line goes to its timeline and frame.
+    b.session!.jumpTo({ id: 0, kind: "change", at: 0, author: "x", name: "x", text: "", changes: [], timeline: "t".repeat(32), frame: 48 });
+    await waitFor("went to the change", () => b.fake.wentTo.some((w) => w.timeline === "t".repeat(32) && w.frame === 48));
     // Someone leaving is shown offline, and their presence goes.
     await close(a, false);
     await waitFor("Ana offline for Ben", () => b.session!.people().find((p) => p.name === "Ana")?.online === false && where(b, "Ana") === undefined);

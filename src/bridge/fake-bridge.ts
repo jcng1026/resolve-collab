@@ -54,6 +54,7 @@ export class FakeBridge {
   project = { id: "fake-project", name: "Fake Project" };
   build = ""; // reported like the real bridge's stamped build (bridge-build.ts)
   page = "edit"; // Resolve's page, as GetCurrentPage names it
+  readonly wentTo: Record<string, JsonValue>[] = []; // presence.go commands received
   readonly timelines = new FakeTimelines((id) => this.poolClips.has(id), () => this.project.id, (id) => this.poolClips.get(id)?.markers ?? []);
   private readonly seen = new Map<string, string>(); // "bin:<id>" → last reported encoding
   private readonly projectTimelines = new Map<string, {
@@ -243,6 +244,10 @@ export class FakeBridge {
       }
       case "project.backup":
         return { ok: true, path: command.path ?? "" };
+      // Follow and jump-to-change (SPEC §8, §24.3): recorded for tests.
+      case "presence.go":
+        this.wentTo.push({ ...command });
+        return { ok: true };
       case "mp.snapshot":
         this.snapshot();
         return { ok: true };

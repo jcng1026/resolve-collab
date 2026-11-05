@@ -1059,6 +1059,41 @@ local function settingsFor(cmd)
   return s
 end
 
+-- Follow and jump-to-change (SPEC §8, §24.3): a page, a timeline by collab ID,
+-- and a place on it: a timecode, or a frame counted from the timeline's start.
+local PAGES = { media = true, cut = true, edit = true, fusion = true, color = true, fairlight = true, deliver = true }
+
+function M.timecodeOf(frame, fps)
+  local f = math.max(1, math.floor((tonumber(fps) or 24) + 0.5))
+  frame = math.max(0, math.floor(frame))
+  return string.format("%02d:%02d:%02d:%02d", math.floor(frame / (3600 * f)), math.floor(frame / (60 * f)) % 60, math.floor(frame / f) % 60, frame % f)
+end
+
+handlers["presence.go"] = function(cmd)
+  if cmd.page ~= nil and cmd.page ~= "" then
+    if not PAGES[cmd.page] then return { ok = false, error = "bad-page" } end
+    if R:GetCurrentPage() ~= cmd.page then R:OpenPage(cmd.page) end
+  end
+  local p = project()
+  if not p then return { ok = false, error = "no-project" } end
+  local tl = p:GetCurrentTimeline()
+  if type(cmd.timeline) == "string" and cmd.timeline ~= "" then
+    local found
+    for _, t in ipairs(timelines()) do
+      if rcIdOf(t) == cmd.timeline then found = t break end
+    end
+    if not found then return { ok = false, error = "unknown-timeline" } end
+    if not tl or tl:GetUniqueId() ~= found:GetUniqueId() then p:SetCurrentTimeline(found) end
+    tl = found
+  end
+  if tl then
+    local tc = cmd.timecode
+    if type(cmd.frame) == "number" then tc = M.timecodeOf(tl:GetStartFrame() + cmd.frame, settingsOf(tl).fps) end
+    if type(tc) == "string" and tc:match("^%d%d:%d%d:%d%d[:;]%d%d$") then tl:SetCurrentTimecode(tc) end
+  end
+  return { ok = true }
+end
+
 handlers["tl.create"] = function(cmd)
   if not validName(cmd.name) then return { ok = false, error = "bad-name" } end
   local p = project()

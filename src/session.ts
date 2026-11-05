@@ -145,6 +145,10 @@ export class Session {
   // Where everyone is (SPEC §8), by peer ID; a member's people list comes from the host.
   private readonly presenceOf = new Map<string, Presence>();
   private ownPresence: Presence | undefined;
+  // Follow (SPEC §8, §24.3): whose page, timeline and playhead this PC moves with.
+  private followed: string | undefined;
+  private going = false;
+  private goNext: Record<string, JsonValue> | undefined;
   private hostPeople: Person[] = [];
   // Chat and changes (SPEC §24.3): kept by the host, a copy on each member.
   private activity = new Activity();
@@ -523,6 +527,11 @@ export class Session {
   // `purpose`: an edit (a new undo step), or an undo or redo of one (SPEC §23.2).
   private propose(op: SessionOp, proposal: string, base?: number, purpose: Purpose = "edit", keep = false): void {
     this.freshProject = false; // a change of this PC's own: from now on, worth a backup
+    if (purpose === "edit" && this.followed && !followsClipColor(op, this.model, () => undefined)) {
+      const name = this.people().find((p) => p.id === this.followed)?.name ?? "them";
+      this.follow(undefined);
+      this.options.log(`stopped following ${name}: you made a change`);
+    }
     const localColor = (clip: string) => [...this.sync.local.clips.values()].find((c) => c.rcId === clip)?.color;
     if (purpose !== "edit" || !followsClipColor(op, this.model, localColor)) {
       // Everything proposed in one go (one sync pass, one undo) is one step.
@@ -613,6 +622,7 @@ export class Session {
       if (name !== undefined) {
         this.admitted.delete(id);
         this.presenceOf.delete(id);
+        if (this.followed === id) this.followed = undefined;
         log(`${name} (${id}) left`);
         this.peopleChanged();
       }
@@ -648,9 +658,8 @@ export class Session {
       case "presence": {
         const p = cleanPresence(message);
         if (!p) return;
-        this.presenceOf.set(from, p);
         this.toMembers({ type: "presence", id: from, ...p });
-        this.options.onPeople?.();
+        this.presenceArrived(from, p);
         return;
       }
       case "propose":
@@ -764,6 +773,50 @@ export class Session {
     this.options.onPeople?.();
   }
 
+  get following(): string | undefined {
+    return this.followed;
+  }
+
+  // Follow someone, or stop (undefined): this PC's Resolve moves with theirs.
+  follow(id: string | undefined): void {
+    this.followed = id && id !== this.options.peers.id ? id : undefined;
+    const p = this.followed && this.presenceOf.get(this.followed);
+    if (p) this.goTo({ page: p.page, timeline: p.timeline, timecode: p.timecode });
+    this.options.onPeople?.();
+  }
+
+  // Clicking a change line (SPEC §24.3): that timeline, at that frame.
+  jumpTo(line: Line): void {
+    if (line.timeline) this.goTo({ timeline: line.timeline, ...(line.frame !== undefined ? { frame: line.frame } : {}) });
+  }
+
+  // Clicking a timecode in chat: there, on the timeline open now.
+  jumpToTimecode(timecode: string): void {
+    this.goTo({ timecode });
+  }
+
+  // One jump at a time; while one is in flight only the newest waits.
+  private goTo(where: Record<string, JsonValue>): void {
+    if (this.going) {
+      this.goNext = where;
+      return;
+    }
+    this.going = true;
+    void this.options.bridge.send({ type: "presence.go", ...where }).finally(() => {
+      this.going = false;
+      const next = this.goNext;
+      this.goNext = undefined;
+      if (next) this.goTo(next);
+    });
+  }
+
+  // A presence arrived: move with it if it's whom this PC follows.
+  private presenceArrived(id: string, p: Presence): void {
+    this.presenceOf.set(id, p);
+    if (id === this.followed) this.goTo({ page: p.page, timeline: p.timeline, timecode: p.timecode });
+    this.options.onPeople?.();
+  }
+
   private sharePresence(): void {
     const p = this.ownPresence;
     if (!p || !this.begun) return;
@@ -864,8 +917,7 @@ export class Session {
       case "presence": {
         const p = cleanPresence(message);
         if (!p || typeof message.id !== "string" || message.id === this.options.peers.id) return;
-        this.presenceOf.set(message.id, p);
-        this.options.onPeople?.();
+        this.presenceArrived(message.id, p);
         return;
       }
       case "line": {
@@ -882,6 +934,7 @@ export class Session {
         if (!people) return;
         this.hostPeople = people;
         for (const id of this.presenceOf.keys()) if (!people.some((x) => x.id === id && x.online)) this.presenceOf.delete(id);
+        if (this.followed && !people.some((x) => x.id === this.followed && x.online)) this.followed = undefined;
         this.options.onPeople?.();
         return;
       }
