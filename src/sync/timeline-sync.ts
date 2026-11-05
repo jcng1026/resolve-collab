@@ -99,6 +99,7 @@ export class TimelineSync {
   private catchUp = true;
   private readonly pending = new Map<string, Pending>();
   private basedOn: number | undefined; // seq of the session state last compared (SPEC §23.1)
+  private expiry: NodeJS.Timeout | undefined;
   private readonly busy = new Set<string>();
   private readonly warned = new Set<string>();
   private readonly waiting = new Set<string>(); // timelines with changes waiting to be opened
@@ -206,6 +207,7 @@ export class TimelineSync {
   stop(): void {
     clearTimeout(this.timer);
     clearTimeout(this.retry);
+    clearTimeout(this.expiry);
   }
 
   // A change to a timeline that isn't open waits until it is (SPEC §20.5).
@@ -401,6 +403,9 @@ export class TimelineSync {
       this.pending.set(fieldKey(kind, op.id, EXISTS), { value: op.type, at, proposal });
     }
     this.options.propose(op, proposal, this.basedOn, keep);
+    // A proposal never answered (the host went away) expires: compare again then.
+    clearTimeout(this.expiry);
+    this.expiry = setTimeout(() => this.schedule(), PENDING_EXPIRE_MS + 100);
   }
 
   private settle(proposal: string): void {

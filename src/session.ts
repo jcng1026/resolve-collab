@@ -136,6 +136,7 @@ export class Session {
   private graceTimer: NodeJS.Timeout | undefined;
   private told = new Set<string>();
   private freshProject = false;
+  private missedCommits = false; // commits came while joining (SPEC §22.3)
   // Notices to act on with a command (SPEC §23.1, §23.3).
   readonly notices = new Notices();
   // Who last changed each field, as the syncs key them ("clip:<id>:color").
@@ -758,7 +759,11 @@ export class Session {
         await this.welcomed(message, from);
         return;
     }
-    if (!this.begun || from !== this.hostId) return; // the rest only from the host
+    if (!this.begun || from !== this.hostId) {
+      // A commit while still joining (making the project) is missed: asked for again once in.
+      if (message.type === "commit") this.missedCommits = true;
+      return; // the rest only from the host
+    }
     switch (message.type) {
       case "commit": {
         const commit = message.commit as unknown as Commit;
@@ -770,6 +775,11 @@ export class Session {
           this.changed(this.member.model, commit);
         } else if (outcome === "gap") {
           this.options.peers.sendTo(from, { type: "want-state" });
+        } else if (commit.author === this.options.peers.id && commit.proposal) {
+          // Ours, and already in a state we were sent (after a gap or a
+          // reconnect): the proposal is settled all the same.
+          this.sync.sessionChanged(this.member.model.pool, commit);
+          this.timelines.sessionChanged(this.member.model.timelines, commit);
         }
         return;
       }
@@ -843,6 +853,10 @@ export class Session {
     if (!this.hostId && !said) log(`joined the session hosted by ${this.record!.hostName} (${from})`);
     this.hostId = from;
     this.member.reset({ seq: state.seq, model });
+    if (this.missedCommits) {
+      this.missedCommits = false;
+      this.options.peers.sendTo(from, { type: "want-state" });
+    }
     this.reset(this.member.model);
   }
 

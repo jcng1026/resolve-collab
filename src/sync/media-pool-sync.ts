@@ -70,6 +70,7 @@ export class MediaPoolSync {
   private catchUp = true;
   private readonly pending = new Map<string, Pending>();
   private basedOn: number | undefined; // seq of the session state last compared (SPEC §23.1)
+  private expiry: NodeJS.Timeout | undefined;
   private readonly busy = new Set<string>();
   private readonly fingerprints = new Map<string, Fingerprint | null>();
   private readonly fingerprinting = new Set<string>();
@@ -191,6 +192,7 @@ export class MediaPoolSync {
 
   stop(): void {
     clearTimeout(this.timer);
+    clearTimeout(this.expiry);
   }
 
   // --- the pass -------------------------------------------------------------
@@ -295,6 +297,9 @@ export class MediaPoolSync {
       this.pending.set(fieldKey(item, op.id, EXISTS), { value: op.type, at, proposal });
     }
     this.options.propose(op, proposal, this.basedOn, keep);
+    // A proposal never answered (the host went away) expires: compare again then.
+    clearTimeout(this.expiry);
+    this.expiry = setTimeout(() => this.schedule(), PENDING_EXPIRE_MS + 100);
   }
 
   private settle(proposal: string): void {
