@@ -26,7 +26,8 @@ const SERVE_IDLE_MS = 5 * 60_000;
 export type Kind = "proxy" | "original";
 export type JsonObject = Record<string, unknown>;
 
-export interface Prepared { path: string; size: number; sha256: string }
+// `as`: what's actually sent; an audio file or still is sent as the original when a proxy is asked for.
+export interface Prepared { path: string; size: number; sha256: string; as?: Kind }
 
 export interface TransferOptions {
   // Reliable (acknowledged) and loose messages to one peer; false if not connected.
@@ -37,7 +38,7 @@ export interface TransferOptions {
   // Source side: the file to send, made first if it's a proxy; `progress` 0–1 while making.
   prepare: (clip: string, kind: Kind, progress: (p: number) => void) => Promise<Prepared | { error: string }>;
   // Asker side: an original's fingerprint check, done after the SHA-256.
-  verify?: (clip: string, kind: Kind, path: string) => Promise<boolean>;
+  verify?: (clip: string, as: Kind, path: string) => Promise<boolean>;
   log: (message: string) => void;
   onChange?: () => void;
   now?: () => number;
@@ -49,6 +50,7 @@ export type State = "queued" | "asking" | "making" | "downloading" | "paused" | 
 export interface DownloadView {
   clip: string;
   kind: Kind;
+  as: Kind; // what's coming: the original instead of a proxy for audio and stills
   state: State;
   source: string;
   size: number;
@@ -60,6 +62,7 @@ export interface DownloadView {
 
 interface Download extends DownloadView {
   dest: string;
+  destFor: (as: Kind) => string;
   sources: () => string[]; // who has it, best first
   n: string; // this request's number
   sha256: string;
@@ -67,8 +70,10 @@ interface Download extends DownloadView {
   inFlight: Map<number, number>; // chunk → asked at
   askedAt: number;
   savedAt: number;
-  resolve?: (path: string | undefined) => void;
+  resolve?: (got: Got | undefined) => void;
 }
+
+export interface Got { path: string; as: Kind }
 
 interface Serving { peer: string; clip: string; file?: Prepared; at: number }
 
@@ -101,9 +106,10 @@ export class MediaTransfer {
 
   // --- asking -------------------------------------------------------------------
 
-  // Downloads a clip's file to `dest`; resolves with the path, or undefined
-  // if it failed or was cancelled. Asking again for one in progress joins it.
-  want(clip: string, kind: Kind, dest: string, sources: () => string[]): Promise<string | undefined> {
+  // Downloads a clip's file to `destFor(what's sent)`; resolves with where it
+  // went and what it is, or undefined if it failed or was cancelled. Asking
+  // again for one in progress joins it.
+  want(clip: string, kind: Kind, destFor: (as: Kind) => string, sources: () => string[]): Promise<Got | undefined> {
     const key = `${clip}:${kind}`;
     const existing = this.downloads.get(key);
     if (existing && existing.state !== "done" && existing.state !== "failed") {
@@ -114,7 +120,7 @@ export class MediaTransfer {
     }
     return new Promise((resolve) => {
       this.downloads.set(key, {
-        clip, kind, dest, sources, state: "queued", source: "", size: 0, received: 0, making: 0, error: "", path: "",
+        clip, kind, as: kind, dest: destFor(kind), destFor, sources, state: "queued", source: "", size: 0, received: 0, making: 0, error: "", path: "",
         n: "", sha256: "", have: new Set(), inFlight: new Map(), askedAt: 0, savedAt: 0, resolve,
       });
       this.startQueued();
@@ -123,7 +129,7 @@ export class MediaTransfer {
   }
 
   list(): DownloadView[] {
-    return [...this.downloads.values()].map(({ clip, kind, state, source, size, received, making, error, path }) => ({ clip, kind, state, source, size, received, making, error, path }));
+    return [...this.downloads.values()].map(({ clip, kind, as, state, source, size, received, making, error, path }) => ({ clip, kind, as, state, source, size, received, making, error, path }));
   }
 
   pause(clip: string, kind: Kind): void {
@@ -192,6 +198,8 @@ export class MediaTransfer {
     }
     const size = m.size;
     if (!Number.isSafeInteger(size) || (size as number) <= 0 || (size as number) > MAX_SIZE || !isHex64(m.sha256)) return this.fail(d, "a bad offer", true);
+    d.as = m.as === "original" ? "original" : d.kind;
+    d.dest = d.destFor(d.as);
     // The same file as a download already partly here? Then carry on from its chunks.
     const part = await this.loadPart(d.dest);
     d.have = part && part.size === size && part.sha256 === m.sha256 ? new Set(part.have) : new Set();
@@ -248,7 +256,7 @@ export class MediaTransfer {
       await rm(`${part}.json`, { force: true });
       return this.fail(d, "the file arrived damaged (its SHA-256 doesn't match)");
     }
-    if (this.options.verify && !(await this.options.verify(d.clip, d.kind, part))) {
+    if (this.options.verify && !(await this.options.verify(d.clip, d.as, part))) {
       await rm(part, { force: true });
       await rm(`${part}.json`, { force: true });
       return this.fail(d, "the file isn't the session's clip (its fingerprint doesn't match)");
@@ -259,7 +267,7 @@ export class MediaTransfer {
     d.state = "done";
     d.path = dest;
     this.downloads.delete(`${d.clip}:${d.kind}`);
-    d.resolve?.(dest);
+    d.resolve?.({ path: dest, as: d.as });
     this.startQueued();
     this.changed();
   }
@@ -380,7 +388,7 @@ export class MediaTransfer {
     }
     serving.file = result;
     serving.at = this.now;
-    this.options.send(from, { type: "media-offer", n, size: result.size, sha256: result.sha256, ext: extname(result.path).slice(0, 10) });
+    this.options.send(from, { type: "media-offer", n, size: result.size, sha256: result.sha256, as: result.as ?? kind, ext: extname(result.path).slice(0, 10) });
   }
 
   private async chunkGet(from: string, m: JsonObject): Promise<void> {

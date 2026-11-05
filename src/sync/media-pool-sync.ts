@@ -99,6 +99,50 @@ export class MediaPoolSync {
     return this.localClip(collabId);
   }
 
+  // --- for media transfer (SPEC §25.3) -----------------------------------------
+
+  sessionClip(id: string): Clip | undefined {
+    return this.session?.clips[id];
+  }
+
+  sessionClips(): Clip[] {
+    return Object.values(this.session?.clips ?? {});
+  }
+
+  // A clip's bins, outermost first: its sub-folders in the media folder.
+  binNames(id: string): string[] {
+    const pool = this.session;
+    const names: string[] = [];
+    if (!pool) return names;
+    for (let at = pool.bins[pool.clips[id]?.bin ?? ""]; at && at.id !== ROOT; at = pool.bins[at.parent]) names.unshift(at.name);
+    return names;
+  }
+
+  // The file this PC's clip for a session clip plays, if it has one.
+  localPath(id: string): string | undefined {
+    const local = this.localClip(id);
+    return (local && this.local.clips.get(local)?.path) || undefined;
+  }
+
+  // A downloaded file becomes the session's clip (a proxy standing in, or the original).
+  async importAs(id: string, path: string): Promise<BridgeResult> {
+    const target = this.session?.clips[id];
+    if (!target) return { ok: false, error: "not-in-session" };
+    this.missing.delete(id);
+    const result = await this.importClip(target, path);
+    this.schedule();
+    return result;
+  }
+
+  // A stand-in gets its original (SPEC §25.2, §25.3).
+  async linkFull(id: string, path: string): Promise<BridgeResult> {
+    const local = this.localClip(id);
+    if (!local) return { ok: false, error: "unknown-clip" };
+    const result = await this.run(`clip:${id}`, { type: "mp.clip.linkfull", id: local, path, rcId: id });
+    this.schedule();
+    return result;
+  }
+
   // --- inputs ---------------------------------------------------------------
 
   bridgeEvent(event: Record<string, JsonValue>): void {

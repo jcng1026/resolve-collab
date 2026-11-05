@@ -635,6 +635,20 @@ handlers["mp.clip.link"] = function(cmd)
   return result(rec, rec.rcId ~= cmd.rcId and "readback-id" or nil)
 end
 
+-- A stand-in (a proxy imported as the clip, SPEC §25.3) gets its original:
+-- the clip now plays the original and keeps the proxy attached. Resolve wipes
+-- the clip's tag doing this (§25.2), so it goes back at once.
+handlers["mp.clip.linkfull"] = function(cmd)
+  local clip, binId = clipOf(cmd.id)
+  if not clip then return { ok = false, error = "unknown-clip" } end
+  if type(cmd.path) ~= "string" or not bmd.fileexists(cmd.path) then return { ok = false, error = "file-missing" } end
+  if type(cmd.rcId) ~= "string" or not cmd.rcId:match("^[0-9a-f]+$") then return { ok = false, error = "bad-id" } end
+  if not clip:LinkFullResolutionMedia(cmd.path) then return { ok = false, error = "link-failed" } end
+  clip:SetThirdPartyMetadata({ rcId = cmd.rcId })
+  local rec = keepClip(clip, binId)
+  return result(rec, rec.rcId ~= cmd.rcId and "readback-id" or nil)
+end
+
 handlers["mp.clip.set"] = function(cmd)
   local clip, binId = clipOf(cmd.id)
   if not clip then return { ok = false, error = "unknown-clip" } end

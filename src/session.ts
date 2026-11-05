@@ -24,6 +24,7 @@ import { dirname, join } from "node:path";
 import type { JsonValue } from "./bridge-protocol/wire.ts";
 import { buildWarning } from "./bridge/bridge-build.ts";
 import type { BridgeClient } from "./bridge/bridge-client.ts";
+import { MediaManager } from "./media/manager.ts";
 import { type Spot, type Track as ScreenTrack, cleanSpot } from "./layout.ts";
 import { Activity, type Line, MAX_LINES, cleanLine, describe as describeChange } from "./activity.ts";
 import { Notices, fieldName } from "./notices.ts";
@@ -63,6 +64,10 @@ export interface SessionOptions {
   onLine?: (line: Line) => void;
   // Someone's ghost cursor moved or went (SPEC §24.6); read pointers().
   onPointers?: () => void;
+  // Missing media changed (SPEC §25); read media.
+  onMedia?: () => void;
+  // Where this PC keeps the proxies it makes for others (SPEC §25.3).
+  proxiesDir?: string;
   // Something only this PC should show in its history: the host unreachable or back (SPEC §24.5).
   onNote?: (text: string, tone?: "good" | "bad") => void;
   ask: (conflicts: Conflict[]) => Promise<Map<string, Answer>>;
@@ -157,6 +162,7 @@ export class Session {
   private readonly startedAt = Date.now();
   private lostHost = false;
   // Ghost cursors (SPEC §24.6): where each person's pointer is in their Resolve window, 0–1.
+  media: MediaManager | undefined;
   private readonly pointerOf = new Map<string, { x: number; y: number; spot?: Spot }>();
   private pointerSent = 0;
   private pointerNext: { x: number; y: number; spot?: Spot } | null | undefined;
@@ -281,6 +287,31 @@ export class Session {
       swap: (timeline, local) => this.swap(timeline, local),
       ...(this.options.userBusy ? { userBusy: this.options.userBusy } : {}),
     });
+    const me = peers.id;
+    this.media = new MediaManager({
+      me,
+      store: join(dir, "media.json"),
+      proxies: this.options.proxiesDir ?? join(this.options.storeDir, "..", "proxies"),
+      project: () => this.record?.projectName || "Project",
+      sync,
+      fingerprint: this.options.fingerprint,
+      send: (peer, m) => peers.sendTo(peer, m as unknown as JsonValue),
+      sendLoose: (peer, m) => peers.sendLoose(peer, m as unknown as JsonValue),
+      announce: (have) => {
+        const message = { type: "media-have", originals: have.originals, proxies: have.proxies };
+        if (this.host) this.toMembers({ ...message, id: me });
+        else if (this.hostId) peers.sendTo(this.hostId, message);
+      },
+      online: () => {
+        const ids = this.people().filter((p) => p.online && p.id !== me).map((p) => p.id);
+        const host = this.host ? me : this.hostId;
+        return host && ids.includes(host) ? [host, ...ids.filter((i) => i !== host)] : ids;
+      },
+      isPerson: (peer) => (this.host ? this.admitted.has(peer) : peer === this.hostId || this.people().some((p) => p.id === peer && p.online)),
+      nameOf: (peer) => this.people().find((p) => p.id === peer)?.name ?? "someone",
+      log,
+      onChange: () => this.options.onMedia?.(),
+    });
     if (this.host) this.reset(this.host.model);
   }
 
@@ -294,6 +325,7 @@ export class Session {
       this.sync.stop();
       this.timelines.stop();
     }
+    this.media?.stop();
     for (const r of this.drtRequests.values()) {
       clearTimeout(r.timer);
       r.resolve(null);
@@ -639,6 +671,7 @@ export class Session {
 
   private peerLeft(id: string): void {
     this.connected.delete(id);
+    this.media?.peerLeft(id);
     const { log } = this.options;
     if (this.host) {
       const name = this.admitted.get(id);
@@ -668,6 +701,10 @@ export class Session {
 
   private async peerMessage(message: Message, from: string): Promise<void> {
     if (this.over) return;
+    // Media files go straight between PCs (SPEC §25.3); the manager checks who's asking.
+    if (typeof message.type === "string" && message.type.startsWith("media-") && message.type !== "media-have") {
+      return this.media?.message(from, message as Record<string, unknown>);
+    }
     if (this.host) return this.hostMessage(message, from);
     return this.memberMessage(message, from);
   }
@@ -685,6 +722,10 @@ export class Session {
       case "pointer":
         this.pointerArrived(from, message);
         for (const id of this.admitted.keys()) if (id !== from) this.options.peers.sendTo(id, { ...message, id: from });
+        return;
+      case "media-have":
+        this.media?.haveArrived(from, message as Record<string, unknown>);
+        for (const id of this.admitted.keys()) if (id !== from) this.options.peers.sendTo(id, { type: "media-have", id: from, originals: message.originals ?? [], proxies: message.proxies ?? [] });
         return;
       case "follow-note":
         if (typeof message.target === "string" && typeof message.on === "boolean") this.followLine(from, message.target, message.on);
@@ -721,6 +762,7 @@ export class Session {
       people: this.hostList() as unknown as JsonValue,
       lines: this.activity.lines as unknown as JsonValue,
       presence: [...this.presenceOf].map(([id, p]) => ({ id, ...p })) as unknown as JsonValue,
+      media: (this.media?.haveList() ?? []) as unknown as JsonValue,
     };
   }
 
@@ -778,6 +820,7 @@ export class Session {
     this.event(`${name} ${how === "rejoined" ? "rejoined" : "joined"}`, "good");
     this.options.peers.sendTo(id, this.welcome(this.host!));
     this.peopleChanged(); // for everyone else; the newcomer's welcome has it
+    this.media?.peerJoined(); // what the host has, for the newcomer too
   }
 
   // --- presence (SPEC §8) ---------------------------------------------------------
@@ -1045,6 +1088,9 @@ export class Session {
       case "pointer":
         if (typeof message.id === "string" && message.id !== this.options.peers.id) this.pointerArrived(message.id, message);
         return;
+      case "media-have":
+        if (typeof message.id === "string" && message.id !== this.options.peers.id) this.media?.haveArrived(message.id, message as Record<string, unknown>);
+        return;
       case "people": {
         const people = cleanPeople(message.people);
         if (!people) return;
@@ -1153,6 +1199,11 @@ export class Session {
       const id = (raw as { id?: unknown })?.id;
       if (p && typeof id === "string" && id !== this.options.peers.id) this.presenceOf.set(id, p);
     }
+    for (const raw of Array.isArray(message.media) ? message.media : []) {
+      const id = (raw as { id?: unknown })?.id;
+      if (typeof id === "string" && id !== this.options.peers.id) this.media?.haveArrived(id, raw as Record<string, unknown>);
+    }
+    this.media?.peerJoined(); // what this PC has, now that someone hears
     this.options.onPeople?.();
     this.sharePresence(); // where this person is, now that someone hears
     if (this.missedCommits) {

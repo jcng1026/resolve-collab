@@ -305,6 +305,15 @@ export class FakeBridge {
         clip.rcId = c.rcId;
         return { ok: true, records: [this.keep(`clip:${clip.id}`, this.clipRecord(clip))] };
       }
+      case "mp.clip.linkfull": {
+        // As in Resolve (SPEC §25.2): the clip now points at the original; the tag is put back.
+        const clip = this.poolClips.get(c.id);
+        if (!clip) return { ok: false, error: "unknown-clip" };
+        if (!existsSync(c.path)) return { ok: false, error: "file-missing" };
+        clip.path = c.path;
+        clip.rcId = c.rcId;
+        return { ok: true, records: [this.keep(`clip:${clip.id}`, this.clipRecord(clip))] };
+      }
       case "mp.clip.set": {
         const clip = this.poolClips.get(c.id);
         if (!clip) return { ok: false, error: "unknown-clip" };

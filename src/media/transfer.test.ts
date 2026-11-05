@@ -62,8 +62,8 @@ describe("sending media between PCs (SPEC §25.3)", () => {
     net.add("jo", { clip1: src });
     const me = net.add("sam");
     const dest = join(tmp(), "Interviews", "Interview_03.mov");
-    const got = await me.want("clip1", "original", dest, () => ["jo"]);
-    expect(got).toBe(dest);
+    const got = await me.want("clip1", "original", () => dest, () => ["jo"]);
+    expect(got).toEqual({ path: dest, as: "original" });
     expect(readFileSync(dest).equals(readFileSync(src))).toBe(true);
     expect(existsSync(`${dest}.part`)).toBe(false);
   }, 60_000);
@@ -74,7 +74,7 @@ describe("sending media between PCs (SPEC §25.3)", () => {
     net.add("jo", { clip1: src });
     const me = net.add("sam");
     const dest = join(tmp(), "a.mov");
-    expect(await me.want("clip1", "proxy", dest, () => ["jo"])).toBe(dest);
+    expect((await me.want("clip1", "proxy", () => dest, () => ["jo"]))?.path).toBe(dest);
     expect(readFileSync(dest).equals(readFileSync(src))).toBe(true);
   });
 
@@ -93,7 +93,7 @@ describe("sending media between PCs (SPEC §25.3)", () => {
       if (!once && d?.state === "downloading" && d.received >= 3 * CHUNK) { once = true; me.pause("clip1", "original"); paused(); }
     });
     let sources = ["jo"];
-    const done = me.want("clip1", "original", dest, () => sources);
+    const done = me.want("clip1", "original", () => dest, () => sources);
     await halfway;
     await new Promise((r) => setTimeout(r, 50));
     const part = JSON.parse(readFileSync(`${dest}.part.json`, "utf8")) as { have: number[] };
@@ -102,7 +102,7 @@ describe("sending media between PCs (SPEC §25.3)", () => {
     me.peerLeft("jo");
     sources = ["kim"];
     me.resume("clip1", "original");
-    expect(await done).toBe(dest);
+    expect((await done)?.path).toBe(dest);
     expect(readFileSync(dest).equals(readFileSync(src))).toBe(true);
   });
 
@@ -113,8 +113,8 @@ describe("sending media between PCs (SPEC §25.3)", () => {
     net.add("kim", { clip1: src });
     const me = net.add("sam");
     const dest = join(tmp(), "c.mov");
-    expect(await me.want("clip1", "original", dest, () => ["jo", "kim"])).toBe(dest);
-    expect(await me.want("clip9", "original", join(tmp(), "d.mov"), () => ["kim"])).toBeUndefined();
+    expect((await me.want("clip1", "original", () => dest, () => ["jo", "kim"]))?.path).toBe(dest);
+    expect(await me.want("clip9", "original", () => join(tmp(), "d.mov"), () => ["kim"])).toBeUndefined();
   });
 
   it("keeps every name inside the media folder", () => {

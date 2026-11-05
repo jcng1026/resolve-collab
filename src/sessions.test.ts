@@ -3,8 +3,9 @@
 // a new code, the host closing or dropping out, ending for good, removing a
 // member, and a stranger answering as the host.
 
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import createTestnet from "hyperdht/testnet.js";
@@ -12,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { BridgeClient } from "./bridge/bridge-client.ts";
 import { FakeBridge } from "./bridge/fake-bridge.ts";
 import { findFile, fingerprint } from "./media/fingerprint.ts";
+import { findFfmpeg } from "./media/proxy.ts";
 import { PeerLink, newInviteCode, topicFor } from "./peer/peer-link.ts";
 import { type Approval, Session } from "./session.ts";
 import { loadRecord } from "./session-record.ts";
@@ -437,4 +439,40 @@ describe("ghost cursors (SPEC §24.6)", () => {
     await close(b, false);
     await close(host);
   }, 60_000);
+});
+
+const ffmpeg = findFfmpeg();
+describe.skipIf(!ffmpeg)("missing media (SPEC §25)", () => {
+  it("gives a member a proxy standing in for a clip it lacks, then the original when asked", async () => {
+    const host = makePc("Pat");
+    const mo = makePc("Mo");
+    const src = join(host.media, "shot.mov");
+    execFileSync(ffmpeg!, ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24:duration=1", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", src]);
+    const code = newInviteCode();
+    await connect(host, "host", code);
+    await connect(mo, "member", code);
+    await waitFor("Mo in", () => mo.session!.people().filter((p) => p.online).length === 2);
+    host.fake.importClip(src);
+    // Asked once where media goes (§25.1), then the proxy comes by itself.
+    await waitFor("Mo is asked where media goes", () => mo.session!.media?.ask?.kind === "folder", 30_000);
+    const folder = join(mo.dir, "Downloaded");
+    mo.session!.media!.useFolder(folder);
+    const at = () => mo.fake.clipByName("shot.mov")?.path ?? "";
+    await waitFor("a proxy stands in for the clip", () => at() === join(folder, "shot (proxy).mp4"), 60_000);
+    const item = mo.session!.media!.items().find((i) => i.name === "shot.mov")!;
+    expect(item.state).toBe("proxy");
+    // The original on request: Resolve's clip now plays it (§25.2), still the session's clip.
+    mo.session!.media!.original(item.id);
+    await waitFor("the original replaces the proxy", () => at() === join(folder, "shot.mov"), 60_000);
+    expect(readFileSync(at()).equals(readFileSync(src))).toBe(true);
+    expect(mo.session!.media!.standIns).toBe(0);
+    expect(mo.fake.clipByName("shot.mov")!.rcId).toBe(item.id);
+    // A file ffmpeg can't read: no proxy possible, the original only by a click (§25.1).
+    writeFileSync(join(host.media, "A001.braw"), Buffer.alloc(200_000, 3));
+    host.fake.importClip(join(host.media, "A001.braw"));
+    await waitFor("no proxy possible", () => mo.session!.media!.items().some((i) => i.name === "A001.braw" && i.state === "noproxy"), 30_000);
+    expect(clipIn(mo, "A001.braw")).toBe(false);
+    await close(mo, false);
+    await close(host);
+  }, 120_000);
 });
