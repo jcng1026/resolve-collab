@@ -2,6 +2,7 @@
 // operation and everyone applies them in that order, so all PCs end with the
 // same model.
 
+import { Races } from "./races.ts";
 import { type SessionModel, type SessionOp, applySessionOp, cloneModel, emptyModel, validateSessionOp } from "./session-model.ts";
 
 export interface Commit {
@@ -9,6 +10,8 @@ export interface Commit {
   op: SessionOp;
   author: string; // peer ID of whoever proposed it
   proposal?: string; // the proposer's own ID for it, so they can match it up
+  name?: string; // the author's name, for notices (SPEC §23.1)
+  lost?: string[]; // properties left out: someone else changed them first
 }
 
 export interface SessionState {
@@ -19,6 +22,8 @@ export interface SessionState {
 export class HostLog {
   seq = 0;
   readonly model: SessionModel;
+  // Who changed what when, since this companion started (SPEC §23.1).
+  private readonly races = new Races();
 
   constructor(state?: SessionState) {
     this.seq = state?.seq ?? 0;
@@ -26,13 +31,24 @@ export class HostLog {
   }
 
   // Validates, numbers and applies op. Returns the commit to send to everyone,
-  // or the reason it was refused.
-  propose(op: unknown, author: string, proposal?: string): Commit | { error: string } {
+  // or the reason it was refused. `base` is the seq of the state the change
+  // was made on: properties someone else changed after it are left out, and
+  // if nothing is left it's refused as "raced" (SPEC §23.1).
+  propose(op: unknown, author: string, proposal?: string, base?: number, name?: string): Commit | { error: string; lost?: string[] } {
     const error = validateSessionOp(this.model, op);
     if (error) return { error };
-    applySessionOp(this.model, op as SessionOp);
+    let accepted = op as SessionOp;
+    let lost: string[] = [];
+    if (base !== undefined && base < this.seq) {
+      const race = this.races.check(accepted, author, base);
+      if (!race.ok) return { error: "raced", lost: race.lost };
+      accepted = race.op;
+      lost = race.lost;
+    }
+    this.races.record(this.model, accepted, author, this.seq + 1);
+    applySessionOp(this.model, accepted);
     this.seq++;
-    return { seq: this.seq, op: op as SessionOp, author, ...(proposal ? { proposal } : {}) };
+    return { seq: this.seq, op: accepted, author, ...(proposal ? { proposal } : {}), ...(name ? { name } : {}), ...(lost.length ? { lost } : {}) };
   }
 
   state(): SessionState {

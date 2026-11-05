@@ -37,7 +37,10 @@ export interface MediaLookup {
 export interface TimelineSyncOptions {
   me: string;
   send: (command: { type: string } & Record<string, JsonValue>) => Promise<BridgeResult>;
-  propose: (op: TimelineOp, proposal: string) => void;
+  // `base`: the session state's seq the change was made on (SPEC §23.1).
+  propose: (op: TimelineOp, proposal: string, base?: number) => void;
+  // The seq of the session state this sync sees now.
+  seq?: () => number;
   ask: (conflicts: Conflict[]) => Promise<Map<string, Answer>>;
   confirm: (question: string) => Promise<boolean>;
   backup: () => Promise<boolean>;
@@ -92,6 +95,7 @@ export class TimelineSync {
   private localTimelines = new Map<string, string>(); // collab → local, from the last pass
   private catchUp = true;
   private readonly pending = new Map<string, Pending>();
+  private basedOn: number | undefined; // seq of the session state last compared (SPEC §23.1)
   private readonly busy = new Set<string>();
   private readonly warned = new Set<string>();
   private readonly waiting = new Set<string>(); // timelines with changes waiting to be opened
@@ -187,6 +191,8 @@ export class TimelineSync {
 
   refused(proposal: string): void {
     this.settle(proposal);
+    // Compare again: Resolve still shows the change the host refused.
+    this.schedule();
   }
 
   schedule(): void {
@@ -282,6 +288,8 @@ export class TimelineSync {
     for (const m of Object.values(session.markers)) if (m.item && busy.has(itemKey("item", m.item))) busy.add(itemKey("marker", m.id));
     const pendingValues = new Map([...this.pending].map(([k, p]) => [k, p.value]));
     const mode = this.catchUp ? "catch-up" : "live";
+    // What our proposals are based on: the session as compared, right now.
+    this.basedOn = this.options.seq?.();
     const plan = reconcileTimelines({ base: this.base && scope(this.base), local: ids.model, session: scope(session), mode, pending: pendingValues, busy });
     // Two markers on one frame (SPEC §21.5).
     frameClashes(timelineDomain, "marker", plan, ids.model, scope(session), mode, (m: Marker) => `${m.timeline}/${m.item}`);
@@ -383,7 +391,7 @@ export class TimelineSync {
     } else {
       this.pending.set(fieldKey(kind, op.id, EXISTS), { value: op.type, at, proposal });
     }
-    this.options.propose(op, proposal);
+    this.options.propose(op, proposal, this.basedOn);
   }
 
   private settle(proposal: string): void {

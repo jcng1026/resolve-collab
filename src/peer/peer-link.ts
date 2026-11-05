@@ -41,6 +41,9 @@ export interface PeerLinkOptions {
   bootstrap?: { host: string; port: number }[];
   // This PC's lasting identity (identity.ts): the same key pair every run.
   seed?: Buffer;
+  // Tests only: how long each received message is held before it's handled,
+  // to stand in for a slow or jittery network (a varying delay reorders).
+  delay?: () => number;
 }
 
 interface Outgoing {
@@ -72,11 +75,13 @@ export class PeerLink extends EventEmitter {
 
   // The invite code this link was opened with (a join request carries it, SPEC §22.1).
   readonly code: string;
+  private readonly delay: (() => number) | undefined;
 
   constructor(inviteCode: string, options: PeerLinkOptions = {}) {
     super();
     this.code = inviteCode;
     this.topic = topicFor(inviteCode);
+    this.delay = options.delay;
     this.swarm = new Hyperswarm({ ...(options.bootstrap ? { bootstrap: options.bootstrap } : {}), ...(options.seed ? { seed: options.seed } : {}) });
     this.swarm.on("connection", (socket) => this.accept(socket));
   }
@@ -223,6 +228,8 @@ export class PeerLink extends EventEmitter {
     if (peer.seen.has(frame.m)) return;
     peer.seen.add(frame.m);
     if (peer.seen.size > SEEN_MAX) peer.seen.delete(peer.seen.values().next().value!);
-    this.emit("message", frame.d ?? null, id);
+    const delay = this.delay?.() ?? 0;
+    if (delay > 0) setTimeout(() => this.emit("message", frame.d ?? null, id), delay);
+    else this.emit("message", frame.d ?? null, id);
   }
 }

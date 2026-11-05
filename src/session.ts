@@ -9,7 +9,7 @@
 //   host → member  waiting                              the host is being asked
 //   host → member  refused-join { blocked, old-code? }
 //   host → member  welcome    { session, host, state }  once let in, or when asked
-//   member → host  propose    { op, proposal }
+//   member → host  propose    { op, proposal, base }    base: the seq it was made on (§23.1)
 //   host → members commit     { commit }
 //   host → member  refused    { proposal, error }
 //   member → host  want-state                         after a gap in commits
@@ -167,7 +167,8 @@ export class Session {
     this.sync = new MediaPoolSync({
       me: peers.id,
       send,
-      propose: (op, proposal) => this.propose(op, proposal),
+      propose: (op, proposal, base) => this.propose(op, proposal, base),
+      seq: () => this.seq(),
       ask: this.options.ask,
       fingerprint: this.options.fingerprint,
       findFile: this.options.findFile,
@@ -181,7 +182,8 @@ export class Session {
     this.timelines = new TimelineSync({
       me: peers.id,
       send,
-      propose: (op, proposal) => this.propose(op, proposal),
+      propose: (op, proposal, base) => this.propose(op, proposal, base),
+      seq: () => this.seq(),
       ask: this.options.ask,
       confirm: this.options.confirm,
       backup: () => this.backup(),
@@ -282,20 +284,28 @@ export class Session {
 
   // --- ordering -----------------------------------------------------------------
 
-  private propose(op: SessionOp, proposal: string): void {
+  // The seq of the session state this PC has (SPEC §23.1).
+  private seq(): number {
+    return this.host ? this.host.seq : this.member.seq;
+  }
+
+  private propose(op: SessionOp, proposal: string, base?: number): void {
     this.freshProject = false; // a change of this PC's own: from now on, worth a backup
     if (this.host) {
-      this.commitLocally(op, this.options.peers.id, proposal);
+      this.commitLocally(op, this.options.peers.id, proposal, base);
     } else if (this.hostId) {
-      this.options.peers.sendTo(this.hostId, { type: "propose", op: op as unknown as JsonValue, proposal });
+      this.options.peers.sendTo(this.hostId, { type: "propose", op: op as unknown as JsonValue, proposal, ...(base !== undefined ? { base } : {}) });
     }
     // No host yet: the proposal expires and is made again after the welcome.
   }
 
-  private commitLocally(op: unknown, author: string, proposal: string | undefined): void {
+  private commitLocally(op: unknown, author: string, proposal: string | undefined, base?: number): void {
     const host = this.host!;
     const timeline = typeof (op as SessionOp)?.type === "string" ? timelineOf(op as SessionOp, host.model) : undefined;
-    const result = host.propose(op, author, proposal);
+    // A base from the future (or not a number) is ignored: no race check.
+    const known = typeof base === "number" && Number.isSafeInteger(base) && base >= 0 && base <= host.seq ? base : undefined;
+    const name = author === this.options.peers.id ? this.options.name : this.admitted.get(author);
+    const result = host.propose(op, author, proposal, known, name);
     if ("error" in result) {
       if (author === this.options.peers.id) this.refused(proposal ?? "", result.error);
       else this.options.peers.sendTo(author, { type: "refused", proposal: proposal ?? "", error: result.error });
@@ -384,7 +394,7 @@ export class Session {
     if (!this.admitted.has(from)) return; // nothing from PCs not let in
     switch (message.type) {
       case "propose":
-        if (typeof message.proposal === "string") this.commitLocally(message.op, from, message.proposal);
+        if (typeof message.proposal === "string") this.commitLocally(message.op, from, message.proposal, message.base as number | undefined);
         return;
       case "want-state":
         this.options.peers.sendTo(from, this.welcome(host));

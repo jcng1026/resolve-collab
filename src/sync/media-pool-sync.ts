@@ -23,7 +23,10 @@ export interface BridgeResult {
 export interface MediaPoolSyncOptions {
   me: string; // this peer's ID, to recognise our own commits
   send: (command: { type: string } & Record<string, JsonValue>) => Promise<BridgeResult>;
-  propose: (op: Op, proposal: string) => void;
+  // `base`: the session state's seq the change was made on (SPEC §23.1).
+  propose: (op: Op, proposal: string, base?: number) => void;
+  // The seq of the session state this sync sees now.
+  seq?: () => number;
   ask: (conflicts: Conflict[]) => Promise<Map<string, Answer>>;
   fingerprint: (path: string) => Promise<Fingerprint | null>;
   findFile: (file: Fingerprint, searchDirs: string[]) => Promise<string | null>;
@@ -63,6 +66,7 @@ export class MediaPoolSync {
   private bridgeSynced = false;
   private catchUp = true;
   private readonly pending = new Map<string, Pending>();
+  private basedOn: number | undefined; // seq of the session state last compared (SPEC §23.1)
   private readonly busy = new Set<string>();
   private readonly fingerprints = new Map<string, Fingerprint | null>();
   private readonly fingerprinting = new Set<string>();
@@ -153,8 +157,11 @@ export class MediaPoolSync {
   }
 
   refused(proposal: string, error: string): void {
-    this.options.log(`the host refused a change (${error})`);
+    // A lost race is told by the comparison that follows (SPEC §23.1).
+    if (error !== "raced") this.options.log(`the host refused a change (${error})`);
     this.settle(proposal);
+    // Compare again: Resolve still shows the change the host refused.
+    this.schedule();
   }
 
   // The user points to their own copy of a missing file (§10.2 "Locate").
@@ -224,6 +231,8 @@ export class MediaPoolSync {
     for (const m of Object.values(ids.model.markers)) if (busy.has(itemKey("clip", m.clip))) busy.add(itemKey("poolmarker", m.id));
     const pendingValues = new Map([...this.pending].map(([k, p]) => [k, p.value]));
     const mode = this.catchUp ? "catch-up" : "live";
+    // What our proposals are based on: the session as compared, right now.
+    this.basedOn = this.options.seq?.();
     const plan = reconcile({ base: this.base, local: ids.model, session, mode, pending: pendingValues, busy });
     // Two markers on one frame (SPEC §21.5).
     frameClashes(mediaPoolDomain, "poolmarker", plan, ids.model, session, mode, (m: PoolMarker) => m.clip);
@@ -276,7 +285,7 @@ export class MediaPoolSync {
     } else {
       this.pending.set(fieldKey(item, op.id, EXISTS), { value: op.type, at, proposal });
     }
-    this.options.propose(op, proposal);
+    this.options.propose(op, proposal, this.basedOn);
   }
 
   private settle(proposal: string): void {

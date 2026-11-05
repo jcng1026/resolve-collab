@@ -18,6 +18,8 @@ import type { Answer, Conflict } from "./sync/reconcile.ts";
 let testnet: Awaited<ReturnType<typeof createTestnet>>;
 const pcs: Pc[] = [];
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 async function waitFor(what: string, check: () => boolean, ms = 15_000): Promise<void> {
   const until = Date.now() + ms;
   while (!check()) {
@@ -40,6 +42,7 @@ interface Pc {
   logs: string[];
   questions: Conflict[][];
   answer: Answer;
+  delay: number; // ms each received message is held (a slow network)
 }
 
 function makePc(name: string): Pc {
@@ -48,7 +51,7 @@ function makePc(name: string): Pc {
   mkdirSync(media);
   mkdirSync(join(dir, "inbox"));
   writeFileSync(join(dir, "ResolveDebug.txt"), "");
-  const pc: Pc = { name, dir, media, fake: new FakeBridge(join(dir, "ResolveDebug.txt"), join(dir, "inbox")), logs: [], questions: [], answer: "mine" };
+  const pc: Pc = { name, dir, media, fake: new FakeBridge(join(dir, "ResolveDebug.txt"), join(dir, "inbox")), logs: [], questions: [], answer: "mine", delay: 0 };
   pcs.push(pc);
   return pc;
 }
@@ -56,7 +59,7 @@ function makePc(name: string): Pc {
 // keepBridge: the bridge in Resolve keeps running while the companion restarts.
 async function connect(pc: Pc, role: "host" | "member", code: string, keepBridge = false): Promise<void> {
   pc.bridge = new BridgeClient({ logPath: join(pc.dir, "ResolveDebug.txt"), inboxDir: join(pc.dir, "inbox"), pollMs: 20 });
-  pc.peers = new PeerLink(code, { bootstrap: testnet.bootstrap, seed: createHash("sha256").update(pc.dir).digest() });
+  pc.peers = new PeerLink(code, { bootstrap: testnet.bootstrap, seed: createHash("sha256").update(pc.dir).digest(), delay: () => pc.delay });
   pc.session = new Session({
     role, bridge: pc.bridge, peers: pc.peers, storeDir: join(pc.dir, "store"), backupsDir: join(pc.dir, "backups"),
     name: pc.name, approve: async () => "yes", ...(role === "host" && keepBridge ? { resume: true } : {}),
@@ -126,6 +129,27 @@ describe("media pool sync between two companions", () => {
     await waitFor("new bin on host", () => !!host.fake.binByName("Extras"));
     member.fake.clipByName("a.mp4")!.bin = extras.id;
     await waitFor("clip moved on host", () => host.fake.bins.get(host.fake.clipByName("a.mp4")!.bin)?.name === "Extras");
+  }, 30_000);
+
+  it("a race on one property: the first to reach the host wins, and the other PC is told (SPEC §23.1)", async () => {
+    // The member's messages arrive 300 ms late. The host recolours and commits
+    // it; the member recolours before it has heard, so its change is based on
+    // the older state and reaches the host second.
+    member.delay = 300;
+    const hostLog = (host.session as unknown as { host: { seq: number } }).host;
+    const seen = { host: host.logs.length, member: member.logs.length };
+    const before = hostLog.seq;
+    host.fake.clipByName("a.mp4")!.color = "Blue";
+    await waitFor("the host's change committed", () => hostLog.seq > before);
+    member.fake.clipByName("a.mp4")!.color = "Pink";
+    const told = (pc: Pc, from: number) => pc.logs.slice(from).some((l) => l.includes("at the same moment"));
+    await waitFor("the member told", () => told(member, seen.member));
+    await waitFor("both show the host's colour", () => host.fake.clipByName("a.mp4")?.color === "Blue" && member.fake.clipByName("a.mp4")?.color === "Blue");
+    expect(told(host, seen.host)).toBe(false);
+    await sleep(800); // and it stays that way
+    expect(host.fake.clipByName("a.mp4")?.color).toBe("Blue");
+    expect(member.fake.clipByName("a.mp4")?.color).toBe("Blue");
+    member.delay = 0;
   }, 30_000);
 
   it("lists media the member lacks, and imports it once located", async () => {
