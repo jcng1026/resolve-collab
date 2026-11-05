@@ -24,7 +24,7 @@ const MAPS = new Set(["meta", "props"]);
 const isMap = (field: string, value: unknown) => MAPS.has(field) && typeof value === "object" && value !== null && !Array.isArray(value);
 
 // The op's properties as race keys: "color", or "meta:Scene" for a map entry.
-function keysOf(op: SessionOp): string[] {
+export function keysOf(op: SessionOp): string[] {
   const o = op as unknown as Record<string, unknown>;
   return propsOf(op).flatMap((p) => (isMap(p, o[p]) ? Object.keys(o[p] as object).map((k) => `${p}:${k}`) : [p]));
 }
@@ -66,6 +66,17 @@ export class Races {
     const kept = without(op, lost);
     if (!propsOf(kept).length) return { ok: false, lost };
     return { ok: true, op: kept, lost };
+  }
+
+  // Who set each of a change's properties last: "Keep mine" tells them (SPEC §23.3).
+  lastAuthors(op: SessionOp): { key: string; author: string }[] {
+    if (verbOf(op) !== "set") return [];
+    const kind = kindOf(op);
+    const id = (op as { id: string }).id;
+    return keysOf(op).flatMap((key) => {
+      const c = this.fields.get(`${kind}:${id}:${key}`);
+      return c ? [{ key, author: c.author }] : [];
+    });
   }
 
   // Called with the model as it was BEFORE op was applied (a deleted object's

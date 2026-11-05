@@ -37,8 +37,9 @@ export interface MediaLookup {
 export interface TimelineSyncOptions {
   me: string;
   send: (command: { type: string } & Record<string, JsonValue>) => Promise<BridgeResult>;
-  // `base`: the session state's seq the change was made on (SPEC §23.1).
-  propose: (op: TimelineOp, proposal: string, base?: number) => void;
+  // `base`: the session state's seq the change was made on (SPEC §23.1);
+  // `keep`: it comes from a "Keep mine" answer (SPEC §23.3).
+  propose: (op: TimelineOp, proposal: string, base?: number, keep?: boolean) => void;
   // The seq of the session state this sync sees now.
   seq?: () => number;
   // Live races the session won, from one pass (SPEC §23.1); logged when absent.
@@ -297,6 +298,7 @@ export class TimelineSync {
     frameClashes(timelineDomain, "marker", plan, ids.model, scope(session), mode, (m: Marker) => `${m.timeline}/${m.item}`);
 
     let { propose, apply } = plan;
+    const kept = new Set<unknown>(); // proposals from "Keep mine" answers
     if (plan.conflicts.length) {
       const groups = groupLinked(plan.conflicts, ids.model, session);
       const answers = await this.options.ask(groups.map((g) => g[0]!));
@@ -306,6 +308,7 @@ export class TimelineSync {
       }
       const resolved = resolveWith(timelineDomain, plan.conflicts, answers, ids.model, scope(session));
       propose = [...propose, ...resolved.propose];
+      for (const op of resolved.propose) kept.add(op);
       apply = [...apply, ...resolved.apply];
     }
     if (this.options.overwritten) {
@@ -348,7 +351,7 @@ export class TimelineSync {
     this.previous = ids.model;
     this.catchUp = false;
 
-    for (const op of propose) this.sendProposal(op);
+    for (const op of propose) this.sendProposal(op, kept.has(op));
     this.retrySoon = false;
     for (const op of keep) await this.applyOp(op, session, timeline);
     await this.applyBatch(apply, session, timeline);
@@ -381,7 +384,7 @@ export class TimelineSync {
 
   // --- proposals --------------------------------------------------------------
 
-  private sendProposal(op: TimelineOp): void {
+  private sendProposal(op: TimelineOp, keep = false): void {
     const proposal = newId();
     const at = Date.now();
     const kind = op.type.split(".")[0]!;
@@ -397,7 +400,7 @@ export class TimelineSync {
     } else {
       this.pending.set(fieldKey(kind, op.id, EXISTS), { value: op.type, at, proposal });
     }
-    this.options.propose(op, proposal, this.basedOn);
+    this.options.propose(op, proposal, this.basedOn, keep);
   }
 
   private settle(proposal: string): void {

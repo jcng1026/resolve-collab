@@ -144,6 +144,8 @@ export class Session {
   private history = new History();
   private readonly stepOf = new Map<string, { step: Step; purpose: Purpose; pushed: boolean }>();
   private openStep: { step: Step; purpose: Purpose; pushed: boolean } | undefined;
+  private restoreBatch: { name: string; items: { what: string; op: unknown }[] } | undefined;
+  private restoreTimer: NodeJS.Timeout | undefined;
   private over = false;
 
   constructor(options: SessionOptions) {
@@ -203,7 +205,7 @@ export class Session {
     this.sync = new MediaPoolSync({
       me: peers.id,
       send,
-      propose: (op, proposal, base) => this.propose(op, proposal, base),
+      propose: (op, proposal, base, keep) => this.propose(op, proposal, base, "edit", keep),
       seq: () => this.seq(),
       overwritten: (c) => this.raced(c),
       ask: this.options.ask,
@@ -219,7 +221,7 @@ export class Session {
     this.timelines = new TimelineSync({
       me: peers.id,
       send,
-      propose: (op, proposal, base) => this.propose(op, proposal, base),
+      propose: (op, proposal, base, keep) => this.propose(op, proposal, base, "edit", keep),
       seq: () => this.seq(),
       overwritten: (c) => this.raced(c),
       ask: this.options.ask,
@@ -240,6 +242,7 @@ export class Session {
     this.over = true;
     clearInterval(this.joinTimer);
     clearTimeout(this.graceTimer);
+    clearTimeout(this.restoreTimer);
     if (this.begun) {
       this.sync.stop();
       this.timelines.stop();
@@ -355,6 +358,47 @@ export class Session {
     return `sent again (${ops.length} change${ops.length === 1 ? "" : "s"})`;
   }
 
+  // Someone's "Keep mine" replaced values this PC set last (SPEC §23.3): one
+  // notice for what arrives together, with restore <n>.
+  private replacedMine(model: SessionModel, commit: Commit): void {
+    const mine = (commit.replaced ?? []).filter((r) => r.author === this.options.peers.id);
+    if (!mine.length) return;
+    const op = commit.op as unknown as Record<string, unknown>;
+    const kind = String(op.type).slice(0, String(op.type).indexOf("."));
+    const id = String(op.id);
+    const inPool = POOL_KINDS.includes(kind);
+    const entity: object | undefined = inPool ? mediaPoolDomain.table(model.pool, kind)[id] : timelineDomain.table(model.timelines, kind)[id];
+    if (!entity) return;
+    const label = inPool ? mediaPoolDomain.label(kind, entity) : timelineDomain.label(kind, entity);
+    const timeline = inPool ? undefined : model.timelines.timelines[(entity as { timeline?: string }).timeline ?? ""]?.name;
+    const name = commit.name ?? "Someone";
+    const batch = this.restoreBatch?.name === name ? this.restoreBatch : (this.restoreBatch = { name, items: [] });
+    for (const r of mine) {
+      const at = r.key.indexOf(":");
+      const restore = at < 0 ? { [r.key]: r.value } : { [r.key.slice(0, at)]: { [r.key.slice(at + 1)]: r.value } };
+      const field = at < 0 ? r.key : r.key.startsWith("props:") ? `prop:${r.key.slice(at + 1)}` : r.key;
+      batch.items.push({
+        what: `${fieldName(field)} on "${label}"${timeline && kind !== "timeline" ? ` (${timeline})` : ""}`,
+        op: { type: `${kind}.set`, id, ...restore },
+      });
+    }
+    clearTimeout(this.restoreTimer);
+    this.restoreTimer = setTimeout(() => {
+      const done = this.restoreBatch;
+      this.restoreBatch = undefined;
+      const notice = done && this.notices.replaced(done.name, done.items);
+      if (notice) this.options.log(notice.text);
+    }, 500);
+  }
+
+  // `restore <n>`: puts back what someone's Keep mine replaced, as a new edit.
+  restore(n: number): string {
+    const notice = this.notices.take(n, "restore");
+    if (!notice) return `there's no notice ${n} to restore`;
+    for (const op of notice.ops as SessionOp[]) this.propose(structuredClone(op), newId(), this.seq());
+    return `put yours back (${notice.ops.length} change${notice.ops.length === 1 ? "" : "s"})`;
+  }
+
   // --- undo and redo (SPEC §23.2) -------------------------------------------------
 
   // One of this PC's own operations, about to be applied: its inverse joins its step.
@@ -447,7 +491,7 @@ export class Session {
   }
 
   // `purpose`: an edit (a new undo step), or an undo or redo of one (SPEC §23.2).
-  private propose(op: SessionOp, proposal: string, base?: number, purpose: Purpose = "edit"): void {
+  private propose(op: SessionOp, proposal: string, base?: number, purpose: Purpose = "edit", keep = false): void {
     this.freshProject = false; // a change of this PC's own: from now on, worth a backup
     // Everything proposed in one go (one sync pass, one undo) is one step.
     if (!this.openStep || this.openStep.purpose !== purpose) {
@@ -459,20 +503,20 @@ export class Session {
     // Proposals that never came back (made with no host) don't pile up.
     if (this.stepOf.size > 5000) this.stepOf.delete(this.stepOf.keys().next().value!);
     if (this.host) {
-      this.commitLocally(op, this.options.peers.id, proposal, base);
+      this.commitLocally(op, this.options.peers.id, proposal, base, keep);
     } else if (this.hostId) {
-      this.options.peers.sendTo(this.hostId, { type: "propose", op: op as unknown as JsonValue, proposal, ...(base !== undefined ? { base } : {}) });
+      this.options.peers.sendTo(this.hostId, { type: "propose", op: op as unknown as JsonValue, proposal, ...(base !== undefined ? { base } : {}), ...(keep ? { keep } : {}) });
     }
     // No host yet: the proposal expires and is made again after the welcome.
   }
 
-  private commitLocally(op: unknown, author: string, proposal: string | undefined, base?: number): void {
+  private commitLocally(op: unknown, author: string, proposal: string | undefined, base?: number, keep = false): void {
     const host = this.host!;
     const timeline = typeof (op as SessionOp)?.type === "string" ? timelineOf(op as SessionOp, host.model) : undefined;
     // A base from the future (or not a number) is ignored: no race check.
     const known = typeof base === "number" && Number.isSafeInteger(base) && base >= 0 && base <= host.seq ? base : undefined;
     const name = author === this.options.peers.id ? this.options.name : this.admitted.get(author);
-    const result = host.propose(op, author, proposal, known, name);
+    const result = host.propose(op, author, { ...(proposal ? { proposal } : {}), ...(known !== undefined ? { base: known } : {}), ...(name ? { name } : {}), keep });
     if ("error" in result) {
       if (author === this.options.peers.id) this.refused(proposal ?? "", result.error);
       else this.options.peers.sendTo(author, { type: "refused", proposal: proposal ?? "", error: result.error });
@@ -496,6 +540,7 @@ export class Session {
 
   private changed(model: SessionModel, commit: Commit): void {
     this.noteAuthor(commit);
+    this.replacedMine(model, commit);
     this.sync.sessionChanged(model.pool, commit);
     this.timelines.sessionChanged(model.timelines, commit);
   }
@@ -563,7 +608,7 @@ export class Session {
     if (!this.admitted.has(from)) return; // nothing from PCs not let in
     switch (message.type) {
       case "propose":
-        if (typeof message.proposal === "string") this.commitLocally(message.op, from, message.proposal, message.base as number | undefined);
+        if (typeof message.proposal === "string") this.commitLocally(message.op, from, message.proposal, message.base as number | undefined, message.keep === true);
         return;
       case "want-state":
         this.options.peers.sendTo(from, this.welcome(host));

@@ -237,6 +237,17 @@ describe("media pool sync between two companions", () => {
     await waitFor("host's meta on member", () => member.fake.clipByName("a (member).mp4")?.meta.Take === "3");
     expect(member.logs.some((l) => l.startsWith("backup saved"))).toBe(true);
     expect(host.questions).toEqual([]); // only the returning person is asked
+
+    // The host's name was replaced by the member's Keep mine: the host is told,
+    // and restore puts it back as a new edit (SPEC §23.3).
+    await waitFor("host told", () => host.logs.some((l) => l.includes("offline changes replaced your")));
+    const notice = host.logs.find((l) => l.includes("offline changes replaced your"))!;
+    expect(notice).toMatch(/^\[(\d+)\] member's offline changes replaced your name on "a \(member\)\.mp4"\.  restore \d+ = put yours back$/);
+    expect(member.logs.some((l) => l.includes("offline changes replaced your"))).toBe(false);
+    const n = Number(/^\[(\d+)\]/.exec(notice)![1]);
+    expect(host.session!.restore(n)).toBe("put yours back (1 change)");
+    await waitFor("host's name back on both", () => !!host.fake.clipByName("a (host).mp4") && !!member.fake.clipByName("a (host).mp4"));
+    expect(host.fake.clipByName("a (host).mp4")!.color).toBe("Blue"); // only the name went back
   }, 40_000);
 
   it("resumes after the host's companion restarts, with the member still connected", async () => {
@@ -244,8 +255,8 @@ describe("media pool sync between two companions", () => {
     await waitFor("member notices", () => member.logs.some((l) => l.startsWith("Offline: the host is unreachable")));
     await connect(host, "host", code, true);
     await waitFor("member rejoins", () => member.logs.filter((l) => /^(re)?joined the session/.test(l)).length >= 3);
-    member.fake.clipByName("a (member).mp4")!.meta.Scene = "13";
-    await waitFor("edit reaches the restarted host", () => host.fake.clipByName("a (member).mp4")?.meta.Scene === "13");
+    member.fake.clipByName("a (host).mp4")!.meta.Scene = "13";
+    await waitFor("edit reaches the restarted host", () => host.fake.clipByName("a (host).mp4")?.meta.Scene === "13");
     expect(host.fake.poolClips.size).toBe(member.fake.poolClips.size);
   }, 40_000);
 });

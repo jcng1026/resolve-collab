@@ -66,7 +66,7 @@ describe("media pool operations", () => {
 describe("host-ordered log", () => {
   it("numbers accepted operations and refuses invalid ones", () => {
     const host = new HostLog();
-    const ok = host.propose({ type: "bin.create", id: id(1), name: "A", parent: ROOT }, "peer1", "p1");
+    const ok = host.propose({ type: "bin.create", id: id(1), name: "A", parent: ROOT }, "peer1", { proposal: "p1" });
     expect(ok).toMatchObject({ seq: 1, author: "peer1", proposal: "p1" });
     expect(host.propose({ type: "bin.create", id: id(1), name: "A", parent: ROOT }, "peer1")).toHaveProperty("error");
     expect(host.seq).toBe(1);

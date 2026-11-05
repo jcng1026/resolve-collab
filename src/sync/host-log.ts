@@ -12,11 +12,28 @@ export interface Commit {
   proposal?: string; // the proposer's own ID for it, so they can match it up
   name?: string; // the author's name, for notices (SPEC §23.1)
   lost?: string[]; // properties left out: someone else changed them first
+  // "Keep mine" replaced these values set last by others (SPEC §23.3); key as in races.ts.
+  replaced?: { author: string; key: string; value: unknown }[];
+}
+
+export interface ProposeOptions {
+  proposal?: string; // the proposer's own ID for it
+  base?: number; // the seq of the state it was made on (SPEC §23.1)
+  name?: string; // the author's name, for notices
+  keep?: boolean; // a returning person's "Keep mine" (SPEC §23.3)
 }
 
 export interface SessionState {
   seq: number;
   model: SessionModel;
+}
+
+function tableOf(model: SessionModel, kind: string): Record<string, unknown> | undefined {
+  const tables: Record<string, Record<string, unknown>> = {
+    bin: model.pool.bins, clip: model.pool.clips, poolmarker: model.pool.markers,
+    timeline: model.timelines.timelines, track: model.timelines.tracks, item: model.timelines.items, marker: model.timelines.markers,
+  };
+  return tables[kind];
 }
 
 export class HostLog {
@@ -36,7 +53,8 @@ export class HostLog {
   // or the reason it was refused. `base` is the seq of the state the change
   // was made on: properties someone else changed after it are left out, and
   // if nothing is left it's refused as "raced" (SPEC §23.1).
-  propose(op: unknown, author: string, proposal?: string, base?: number, name?: string): Commit | { error: string; lost?: string[] } {
+  propose(op: unknown, author: string, options: ProposeOptions = {}): Commit | { error: string; lost?: string[] } {
+    const { proposal, base, name, keep } = options;
     const error = validateSessionOp(this.model, op);
     if (error) return { error };
     let accepted = op as SessionOp;
@@ -47,11 +65,28 @@ export class HostLog {
       accepted = race.op;
       lost = race.lost;
     }
+    const replaced = keep ? this.replacedBy(accepted, author) : [];
     this.races.record(this.model, accepted, author, this.seq + 1);
     this.onApply?.(this.model, accepted, author, proposal);
     applySessionOp(this.model, accepted);
     this.seq++;
-    return { seq: this.seq, op: accepted, author, ...(proposal ? { proposal } : {}), ...(name ? { name } : {}), ...(lost.length ? { lost } : {}) };
+    return { seq: this.seq, op: accepted, author, ...(proposal ? { proposal } : {}), ...(name ? { name } : {}), ...(lost.length ? { lost } : {}), ...(replaced.length ? { replaced } : {}) };
+  }
+
+  // The values a change replaces that someone else set last, as they are now.
+  private replacedBy(op: SessionOp, author: string): NonNullable<Commit["replaced"]> {
+    const kind = op.type.slice(0, op.type.indexOf("."));
+    const id = (op as { id: string }).id;
+    const entity = tableOf(this.model, kind)?.[id] as Record<string, unknown> | undefined;
+    if (!entity) return [];
+    const valueOf = (key: string) => {
+      const at = key.indexOf(":");
+      return at < 0 ? entity[key] : (entity[key.slice(0, at)] as Record<string, unknown> | undefined)?.[key.slice(at + 1)];
+    };
+    return this.races.lastAuthors(op)
+      .filter((r) => r.author !== author)
+      .map((r) => ({ author: r.author, key: r.key, value: structuredClone(valueOf(r.key) ?? (r.key.startsWith("meta:") ? "" : null)) }))
+      .filter((r) => r.value !== null);
   }
 
   state(): SessionState {

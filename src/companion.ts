@@ -248,6 +248,8 @@ terminal.on("line", async (line) => {
     log(await session.undo());
   } else if (command === "redo") {
     log(await session.redo());
+  } else if (command === "restore" && /^\d+$/.test(rest[0] ?? "")) {
+    log(session.restore(Number(rest[0])));
   } else if (command === "reapply" && /^\d+$/.test(rest[0] ?? "")) {
     log(session.reapply(Number(rest[0])));
   } else if (command === "members" && mode === "host") {
@@ -260,7 +262,7 @@ terminal.on("line", async (line) => {
   } else if (command === "end" && mode === "host") {
     if (await confirm("End this session for good? It can't be resumed afterwards.")) session.endForGood();
   } else if (command) {
-    const common = "missing | locate <clip> <path> | undo | redo | reapply <n>";
+    const common = "missing | locate <clip> <path> | undo | redo | reapply <n> | restore <n>";
     log(mode === "host" ? `commands: ${common} | members | remove <name> | unblock <name> | end` : `commands: ${common}`);
   }
 });

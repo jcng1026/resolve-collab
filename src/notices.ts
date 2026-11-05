@@ -60,6 +60,20 @@ export class Notices {
     return notice;
   }
 
+  // Someone's "Keep mine" replaced this PC's values (SPEC §23.3).
+  replaced(name: string, items: { what: string; op: unknown }[]): Notice | undefined {
+    if (!items.length) return undefined;
+    const n = this.next++;
+    const notice: Notice = {
+      n, kind: "restore",
+      text: `[${n}] ${name}'s offline changes replaced your ${list(items.map((i) => i.what))}.  restore ${n} = put yours back`,
+      changes: [],
+      ops: items.map((i) => i.op),
+    };
+    this.open.set(n, notice);
+    return notice;
+  }
+
   // Takes a notice to act on it (once).
   take(n: number, kind: Notice["kind"]): Notice | undefined {
     const notice = this.open.get(n);

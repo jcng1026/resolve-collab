@@ -23,8 +23,9 @@ export interface BridgeResult {
 export interface MediaPoolSyncOptions {
   me: string; // this peer's ID, to recognise our own commits
   send: (command: { type: string } & Record<string, JsonValue>) => Promise<BridgeResult>;
-  // `base`: the session state's seq the change was made on (SPEC §23.1).
-  propose: (op: Op, proposal: string, base?: number) => void;
+  // `base`: the session state's seq the change was made on (SPEC §23.1);
+  // `keep`: it comes from a "Keep mine" answer (SPEC §23.3).
+  propose: (op: Op, proposal: string, base?: number, keep?: boolean) => void;
   // The seq of the session state this sync sees now.
   seq?: () => number;
   // Live races the session won, from one pass (SPEC §23.1); logged when absent.
@@ -240,10 +241,12 @@ export class MediaPoolSync {
     frameClashes(mediaPoolDomain, "poolmarker", plan, ids.model, session, mode, (m: PoolMarker) => m.clip);
 
     let { propose, apply } = plan;
+    const kept = new Set<unknown>(); // proposals from "Keep mine" answers
     if (plan.conflicts.length) {
       const answers = await this.options.ask(plan.conflicts);
       const resolved = resolveConflicts(plan.conflicts, answers, ids.model, session);
       propose = [...propose, ...resolved.propose];
+      for (const op of resolved.propose) kept.add(op);
       apply = [...apply, ...resolved.apply];
     }
     if (this.options.overwritten) {
@@ -266,14 +269,14 @@ export class MediaPoolSync {
 
     this.base = plan.base;
     this.catchUp = false;
-    for (const op of propose) this.sendProposal(op);
+    for (const op of propose) this.sendProposal(op, kept.has(op));
     for (const op of apply) if (await this.applyOp(op, session)) this.agree(op, session);
     this.save();
   }
 
   // --- proposals --------------------------------------------------------------
 
-  private sendProposal(op: Op): void {
+  private sendProposal(op: Op, keep = false): void {
     const proposal = newId();
     const at = Date.now();
     const item = op.type.split(".")[0]!;
@@ -291,7 +294,7 @@ export class MediaPoolSync {
     } else {
       this.pending.set(fieldKey(item, op.id, EXISTS), { value: op.type, at, proposal });
     }
-    this.options.propose(op, proposal, this.basedOn);
+    this.options.propose(op, proposal, this.basedOn, keep);
   }
 
   private settle(proposal: string): void {
