@@ -907,3 +907,28 @@ The part-2 test: arrows were placed by their spot in the whole Resolve window, s
 - **Bar probe, 2026-11-05: works** (findings "M8 bar probe"): the always-on-top acrylic bar stays above Resolve, other apps and Resolve's Full Screen Window.
 - **Bridge check, 2026-11-05, Free 21.1.2 (`tools/m8-bridge-check.ts`): all checks passed.** Presence reports (page, timeline, timecode, clip under the playhead) only on a change; `presence.go` moves the playhead by timecode and by frame from the timeline's start, switches page and back, and refuses an unknown page or timeline.
 - Then, as for the earlier milestones: unit tests for the history (grouping, the 500 lines, filtering), a real-Resolve check (presence, Follow, jumping to a change), and a two-PC checklist.
+
+---
+
+## 25. M9 design: media
+
+### 25.1 Decisions (2026-11-05, a grilling; all recommendations accepted)
+1. **Proxy first.** A PC missing a clip's file gets a proxy (H.264, half resolution, at most 1080p, AAC) that stands in for the clip; the original comes on request and replaces it by itself.
+2. **Automatic proxies.** Proxies download by themselves, after a free-space check, asking first when the batch is over 5 GB. Originals only by a click.
+3. **Who makes the proxy:** a PC that has the original, when someone first needs it; it's kept for the next one. Progress is shown.
+4. **Where files go:** a media folder per project, asked once, default `Videos\ResolveCollab\<Project>\`, with sub-folders following the **media pool's bins** (not the host's folders: nothing about anyone's disk is shown). Replaces "mirroring the host's folder structure" in §10.4.
+5. **One source per file:** each file comes from one PC that has it (the host first); different files from different PCs at once. Replaces "several peers at once" in §10.4; splitting a file can come later if needed.
+6. **Pause and resume** each download; it carries on after a dropped connection or a restart. No speed limit in v1.
+7. **ffmpeg:** in M9 the one on the PC (PATH, winget's folder, or a path in Settings); M10 bundles the LGPL build. A PC without ffmpeg can still receive proxies, just not make them.
+8. **Deliver page warning** while any clip is still a proxy: "3 clips are proxies; the render will be lower quality", with **Download originals**.
+9. **In the window:** an orange card above the bar ("4 clips missing · downloading proxies 1.2 GB · 35%"), and a **Media** panel (⋯ menu) listing each clip with Download original, Pause and Locate file…. A preview mockup is reviewed before building.
+10. **Downloaded files stay** when leaving or ending a session; Settings shows the folder's size with Open folder. The app deletes nothing.
+
+### 25.2 Probe, 2026-11-05, Free 21.1.2 (`tools/feasibility/ResolveCollab_MediaProbe.lua`, results `results-2026-11-05-m9-media.json`)
+Test footage: 1920×1080, 24 fps, 240 frames, start timecode 10:00:00:00; its proxy made the companion's way (`-vf scale=-2:'min(1080,ih/2)'`, H.264 CRF 23, AAC 160k, `-map_metadata 0`) kept the frames and the timecode at 960×540, a seventh of the size.
+- **A proxy imported in place of the clip** has the original's start timecode, frames and rate; a timeline item cut from it covers the same source frames (24–119) as one cut from the original.
+- Giving it the session clip's name (`SetClipProperty("Clip Name")`: returns false but renames), colour and tag works.
+- **`ReplaceClip(original)`**: works; the timeline item keeps its range and zoom, the clip keeps its name, colour and media ID; **its third-party metadata (our `rcId` tag) is wiped**.
+- **`LinkFullResolutionMedia(original)`**: works and keeps the proxy attached as the clip's proxy (Resolve can play it for speed; Deliver renders from the original by default). The tag is wiped too.
+- `LinkProxyMedia` on a clip with its original: works. All of it holds after saving and reopening.
+- **So:** a missing clip is imported from its proxy and tagged as the session's clip; when the original arrives the bridge calls `LinkFullResolutionMedia` and puts the tag back at once, finding the clip by its media ID.

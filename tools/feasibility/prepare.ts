@@ -55,6 +55,11 @@ if (!installOnly) {
   testClip(join(MEDIA, "fps30.mp4"), "testsrc", 330, 30); // a frame rate other than the timeline's
   ffmpeg(["-i", join(MEDIA, "original.mp4"), "-vf", "scale=960:540", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "aac", join(MEDIA, "proxy.mp4")]);
   copyFileSync(join(MEDIA, "spare.mp4"), join(MEDIA, "moved", "spare.mp4"));
+  // M9: camera-style footage with a start timecode, and its proxy made the companion's way.
+  ffmpeg(["-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=24:duration=10", "-f", "lavfi", "-i", "sine=frequency=500:duration=10",
+    "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-timecode", "10:00:00:00", join(MEDIA, "camera.mp4")]);
+  ffmpeg(["-i", join(MEDIA, "camera.mp4"), "-map", "0:v:0", "-map", "0:a?", "-vf", "scale=-2:'min(1080,ih/2)'", "-c:v", "libx264", "-preset", "veryfast",
+    "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k", "-map_metadata", "0", "-movflags", "+faststart", join(MEDIA, "camera (proxy).mp4")]);
 
   // The loop echoes request n back; collect.ts keeps rewriting this file.
   writeFileSync(join(STATE_DIR, "request.lua"), `return ${toLuaLiteral({ n: 0 })}\n`);
@@ -63,7 +68,7 @@ if (!installOnly) {
 }
 
 mkdirSync(SCRIPTS_UTILITY, { recursive: true });
-for (const probe of ["ResolveCollab_Feasibility.lua", "ResolveCollab_MediaPoolProbe.lua", "ResolveCollab_TimelineProbe.lua", "ResolveCollab_TimelineAltProbe.lua", "ResolveCollab_MarkerProbe.lua", "ResolveCollab_MarkerCopyProbe.lua"]) {
+for (const probe of ["ResolveCollab_Feasibility.lua", "ResolveCollab_MediaPoolProbe.lua", "ResolveCollab_TimelineProbe.lua", "ResolveCollab_TimelineAltProbe.lua", "ResolveCollab_MarkerProbe.lua", "ResolveCollab_MarkerCopyProbe.lua", "ResolveCollab_MediaProbe.lua"]) {
   const lua = readFileSync(join(HERE, probe), "utf8");
   writeFileSync(join(SCRIPTS_UTILITY, probe), stampStateDir(lua, STATE_DIR));
 }

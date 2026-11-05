@@ -1,0 +1,542 @@
+{
+  "collectedAt": "2026-11-05T10:34:36.507Z",
+  "roundTripMs": null,
+  "requestsSent": 0,
+  "echoesSeen": 0,
+  "stages": [
+    {
+      "stage": "started",
+      "at": 12390
+    },
+    {
+      "stage": "product",
+      "at": 12390
+    },
+    {
+      "stage": "saveOriginal",
+      "at": 12390
+    },
+    {
+      "stage": "createScratchProject",
+      "at": 12422
+    },
+    {
+      "stage": "original",
+      "at": 12961
+    },
+    {
+      "stage": "nameTagColour",
+      "at": 13900
+    },
+    {
+      "stage": "appendStandIn",
+      "at": 14370
+    },
+    {
+      "stage": "appendReal",
+      "at": 14402
+    },
+    {
+      "stage": "items",
+      "at": 14433
+    },
+    {
+      "stage": "zoomStandIn",
+      "at": 14465
+    },
+    {
+      "stage": "replaceClip",
+      "at": 14465
+    },
+    {
+      "stage": "before",
+      "at": 14779
+    },
+    {
+      "stage": "linkFullResolution",
+      "at": 14779
+    },
+    {
+      "stage": "linkProxy",
+      "at": 14842
+    },
+    {
+      "stage": "unlinkProxy",
+      "at": 14873
+    },
+    {
+      "stage": "saveScratch",
+      "at": 14935
+    },
+    {
+      "stage": "reopen",
+      "at": 15091
+    },
+    {
+      "stage": "reopenOriginal",
+      "at": 15122
+    },
+    {
+      "stage": "done",
+      "at": 16064
+    }
+  ],
+  "probe": {
+    "realClip": {
+      "Start TC": "10:00:00:00",
+      "End TC": "10:00:10:00",
+      "Duration": "00:00:10:00",
+      "Proxy": "None",
+      "Proxy Media Path": "",
+      "Clip Color": "",
+      "Video Codec": "H.264 High L4.0",
+      "Online Status": "Online",
+      "rcId": "",
+      "color": "",
+      "name": "camera.mp4",
+      "mediaId": "485b939e-3114-42dd-af9f-ca4af017cac3",
+      "Clip Name": "camera.mp4",
+      "File Name": "camera.mp4",
+      "File Path": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\camera.mp4",
+      "Resolution": "1920x1080",
+      "FPS": 24,
+      "Frames": "240"
+    },
+    "proxyClip": {
+      "Start TC": "10:00:00:00",
+      "End TC": "10:00:10:00",
+      "Duration": "00:00:10:00",
+      "Proxy": "None",
+      "Proxy Media Path": "",
+      "Clip Color": "",
+      "Video Codec": "H.264 High L3.1",
+      "Online Status": "Online",
+      "rcId": "",
+      "color": "",
+      "name": "camera (proxy).mp4",
+      "mediaId": "70a4a655-a7f5-4b7d-bab5-faf8b6af7092",
+      "Clip Name": "camera (proxy).mp4",
+      "File Name": "camera (proxy).mp4",
+      "File Path": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\camera (proxy).mp4",
+      "Resolution": "960x540",
+      "FPS": 24,
+      "Frames": "240"
+    },
+    "note": "Completed.",
+    "persist": {},
+    "probes": {
+      "1": {
+        "value": "DaVinci Resolve",
+        "extra": "21.1.2.10",
+        "ok": true,
+        "label": "product",
+        "id": "ENV",
+        "dt": 0.00016230001347139478
+      },
+      "2": {
+        "value": "Test0",
+        "extra": true,
+        "ok": true,
+        "label": "saveOriginal",
+        "id": "SAFE",
+        "dt": 0.005417800013674423
+      },
+      "3": {
+        "value": "<userdata>",
+        "ok": true,
+        "label": "createScratchProject",
+        "id": "SAFE",
+        "dt": 0.43087520002154633
+      },
+      "4": {
+        "value": 1,
+        "ok": true,
+        "label": "original",
+        "id": "IMPORT",
+        "dt": 0.01692419999744743
+      },
+      "5": {
+        "value": {
+          "tag": true,
+          "name": false,
+          "after": {
+            "Start TC": "10:00:00:00",
+            "End TC": "10:00:10:00",
+            "Duration": "00:00:10:00",
+            "Proxy": "None",
+            "Proxy Media Path": "",
+            "Clip Color": "Orange",
+            "Video Codec": "H.264 High L3.1",
+            "Online Status": "Online",
+            "rcId": "rc:standin-a",
+            "color": "Orange",
+            "name": "camera.mp4",
+            "mediaId": "70a4a655-a7f5-4b7d-bab5-faf8b6af7092",
+            "Clip Name": "camera.mp4",
+            "File Name": "camera (proxy).mp4",
+            "File Path": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\camera (proxy).mp4",
+            "Resolution": "960x540",
+            "FPS": 24,
+            "Frames": "240"
+          },
+          "color": true
+        },
+        "ok": true,
+        "label": "nameTagColour",
+        "id": "STANDIN",
+        "dt": 0.07629260001704097
+      },
+      "6": {
+        "value": "<userdata>",
+        "ok": true,
+        "label": "appendStandIn",
+        "id": "STANDIN",
+        "dt": 0.011410699982661754
+      },
+      "7": {
+        "value": "<userdata>",
+        "ok": true,
+        "label": "appendReal",
+        "id": "STANDIN",
+        "dt": 0.022355399996740744
+      },
+      "8": {
+        "value": {
+          "real": {
+            "zoomX": 1,
+            "pan": 0,
+            "clip": "camera.mp4",
+            "duration": 95,
+            "leftOffset": 24,
+            "start": 86600,
+            "sourceStart": 24,
+            "name": "camera.mp4",
+            "sourceEnd": 119
+          },
+          "standIn": {
+            "zoomX": 1,
+            "pan": 0,
+            "clip": "camera.mp4",
+            "duration": 95,
+            "leftOffset": 24,
+            "start": 86400,
+            "sourceStart": 24,
+            "name": "camera.mp4",
+            "sourceEnd": 119
+          }
+        },
+        "ok": true,
+        "label": "items",
+        "id": "STANDIN",
+        "dt": 0.01570199997513555
+      },
+      "9": {
+        "value": {
+          "set": true,
+          "after": {
+            "zoomX": 1.25,
+            "pan": 0,
+            "clip": "camera.mp4",
+            "duration": 95,
+            "leftOffset": 24,
+            "start": 86400,
+            "sourceStart": 24,
+            "name": "camera.mp4",
+            "sourceEnd": 119
+          }
+        },
+        "ok": true,
+        "label": "zoomStandIn",
+        "id": "STANDIN",
+        "dt": 0.00680500001180917
+      },
+      "10": {
+        "value": {
+          "item": {
+            "zoomX": 1.25,
+            "pan": 0,
+            "clip": "camera.mp4",
+            "duration": 95,
+            "leftOffset": 24,
+            "start": 86400,
+            "sourceStart": 24,
+            "name": "camera.mp4",
+            "sourceEnd": 119
+          },
+          "clip": {
+            "Start TC": "10:00:00:00",
+            "End TC": "10:00:10:00",
+            "Duration": "00:00:10:00",
+            "Proxy": "None",
+            "Proxy Media Path": "",
+            "Clip Color": "Orange",
+            "Video Codec": "H.264 High L4.0",
+            "Online Status": "Online",
+            "rcId": "",
+            "color": "Orange",
+            "name": "camera.mp4",
+            "mediaId": "70a4a655-a7f5-4b7d-bab5-faf8b6af7092",
+            "Clip Name": "camera.mp4",
+            "File Name": "camera.mp4",
+            "File Path": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\camera.mp4",
+            "Resolution": "1920x1080",
+            "FPS": 24,
+            "Frames": "240"
+          },
+          "items": 2,
+          "ok": true
+        },
+        "ok": true,
+        "label": "replaceClip",
+        "id": "REPLACE",
+        "dt": 0.07619999998132698
+      },
+      "11": {
+        "value": {
+          "clip": {
+            "Start TC": "10:00:00:00",
+            "End TC": "10:00:10:00",
+            "Duration": "00:00:10:00",
+            "Proxy": "None",
+            "Proxy Media Path": "",
+            "Clip Color": "Teal",
+            "Video Codec": "H.264 High L3.1",
+            "Online Status": "Online",
+            "rcId": "rc:standin-b",
+            "color": "Teal",
+            "name": "camera B",
+            "mediaId": "ba2fd56f-bfc5-459f-bad9-12d2383eb0fb",
+            "Clip Name": "camera B",
+            "File Name": "camera (proxy).mp4",
+            "File Path": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\camera (proxy).mp4",
+            "Resolution": "960x540",
+            "FPS": 24,
+            "Frames": "240"
+          },
+          "item": {}
+        },
+        "ok": true,
+        "label": "before",
+        "id": "LINKFULL",
+        "dt": 0.004648900008760393
+      },
+      "12": {
+        "value": {
+          "clip": {
+            "Start TC": "10:00:00:00",
+            "End TC": "10:00:10:00",
+            "Duration": "00:00:10:00",
+            "Proxy": "960x540",
+            "Proxy Media Path": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\camera (proxy).mp4",
+            "Clip Color": "Teal",
+            "Video Codec": "H.264 High L4.0",
+            "Online Status": "Online",
+            "rcId": "",
+            "color": "Teal",
+            "name": "camera B",
+            "mediaId": "ba2fd56f-bfc5-459f-bad9-12d2383eb0fb",
+            "Clip Name": "camera B",
+            "File Name": "camera.mp4",
+            "File Path": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\camera.mp4",
+            "Resolution": "1920x1080",
+            "FPS": 24,
+            "Frames": "240"
+          },
+          "item": {},
+          "ok": true
+        },
+        "ok": true,
+        "label": "linkFullResolution",
+        "id": "LINKFULL",
+        "dt": 0.06147770001552999
+      },
+      "13": {
+        "value": {
+          "clip": {
+            "Start TC": "10:00:00:00",
+            "End TC": "10:00:10:00",
+            "Duration": "00:00:10:00",
+            "Proxy": "960x540",
+            "Proxy Media Path": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\camera (proxy).mp4",
+            "Clip Color": "",
+            "Video Codec": "H.264 High L4.0",
+            "Online Status": "Online",
+            "rcId": "",
+            "color": "",
+            "name": "camera.mp4",
+            "mediaId": "485b939e-3114-42dd-af9f-ca4af017cac3",
+            "Clip Name": "camera.mp4",
+            "File Name": "camera.mp4",
+            "File Path": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\camera.mp4",
+            "Resolution": "1920x1080",
+            "FPS": 24,
+            "Frames": "240"
+          },
+          "ok": true
+        },
+        "ok": true,
+        "label": "linkProxy",
+        "id": "LINKPROXY",
+        "dt": 0.04620529999374412
+      },
+      "14": {
+        "value": {
+          "clip": {
+            "Start TC": "10:00:00:00",
+            "End TC": "10:00:10:00",
+            "Duration": "00:00:10:00",
+            "Proxy": "None",
+            "Proxy Media Path": "",
+            "Clip Color": "",
+            "Video Codec": "H.264 High L4.0",
+            "Online Status": "Online",
+            "rcId": "",
+            "color": "",
+            "name": "camera.mp4",
+            "mediaId": "485b939e-3114-42dd-af9f-ca4af017cac3",
+            "Clip Name": "camera.mp4",
+            "File Name": "camera.mp4",
+            "File Path": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\camera.mp4",
+            "Resolution": "1920x1080",
+            "FPS": 24,
+            "Frames": "240"
+          },
+          "ok": true
+        },
+        "ok": true,
+        "label": "unlinkProxy",
+        "id": "LINKPROXY",
+        "dt": 0.06729400000767782
+      },
+      "15": {
+        "value": true,
+        "ok": true,
+        "label": "saveScratch",
+        "id": "SAVE",
+        "dt": 0.13436370002455078
+      },
+      "16": {
+        "value": {
+          "clips": {
+            "1": {
+              "Start TC": "10:00:00:00",
+              "End TC": "10:00:10:00",
+              "Duration": "00:00:10:00",
+              "Proxy": "None",
+              "Proxy Media Path": "",
+              "Clip Color": "",
+              "Video Codec": "H.264 High L4.0",
+              "Online Status": "Online",
+              "rcId": "",
+              "color": "",
+              "name": "camera.mp4",
+              "mediaId": "485b939e-3114-42dd-af9f-ca4af017cac3",
+              "Clip Name": "camera.mp4",
+              "File Name": "camera.mp4",
+              "File Path": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\camera.mp4",
+              "Resolution": "1920x1080",
+              "FPS": 24,
+              "Frames": "240"
+            },
+            "2": {
+              "Start TC": "10:00:00:00",
+              "End TC": "10:00:10:00",
+              "Duration": "00:00:10:00",
+              "Proxy": "None",
+              "Proxy Media Path": "",
+              "Clip Color": "Orange",
+              "Video Codec": "H.264 High L4.0",
+              "Online Status": "Online",
+              "rcId": "",
+              "color": "Orange",
+              "name": "camera.mp4",
+              "mediaId": "70a4a655-a7f5-4b7d-bab5-faf8b6af7092",
+              "Clip Name": "camera.mp4",
+              "File Name": "camera.mp4",
+              "File Path": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\camera.mp4",
+              "Resolution": "1920x1080",
+              "FPS": 24,
+              "Frames": "240"
+            },
+            "3": {
+              "Start TC": "01:00:00:00",
+              "End TC": "01:00:12:07",
+              "Duration": "00:00:12:07",
+              "Proxy": "",
+              "Proxy Media Path": "",
+              "Clip Color": "",
+              "Video Codec": "",
+              "Online Status": "",
+              "rcId": "",
+              "color": "",
+              "name": "RC Media",
+              "mediaId": "8d858fd7-0b8e-445a-b6fb-1fb5154f529a",
+              "Clip Name": "RC Media",
+              "File Name": "RC Media",
+              "File Path": "",
+              "Resolution": "0x0",
+              "FPS": 24,
+              "Frames": "295"
+            },
+            "4": {
+              "Start TC": "10:00:00:00",
+              "End TC": "10:00:10:00",
+              "Duration": "00:00:10:00",
+              "Proxy": "960x540",
+              "Proxy Media Path": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\camera (proxy).mp4",
+              "Clip Color": "Teal",
+              "Video Codec": "H.264 High L4.0",
+              "Online Status": "Online",
+              "rcId": "",
+              "color": "Teal",
+              "name": "camera B",
+              "mediaId": "ba2fd56f-bfc5-459f-bad9-12d2383eb0fb",
+              "Clip Name": "camera B",
+              "File Name": "camera.mp4",
+              "File Path": "C:\\dev\\resolve-collab\\local\\feasibility\\media\\camera.mp4",
+              "Resolution": "1920x1080",
+              "FPS": 24,
+              "Frames": "240"
+            }
+          },
+          "items": {
+            "1": {
+              "zoomX": 1.25,
+              "pan": 0,
+              "clip": "camera.mp4",
+              "duration": 95,
+              "leftOffset": 24,
+              "start": 86400,
+              "sourceStart": 24,
+              "name": "camera.mp4",
+              "sourceEnd": 119
+            },
+            "2": {
+              "zoomX": 1,
+              "pan": 0,
+              "clip": "camera.mp4",
+              "duration": 95,
+              "leftOffset": 24,
+              "start": 86600,
+              "sourceStart": 24,
+              "name": "camera.mp4",
+              "sourceEnd": 119
+            }
+          }
+        },
+        "ok": true,
+        "label": "reopen",
+        "id": "SAVE",
+        "dt": 0.01866080000763759
+      },
+      "17": {
+        "value": true,
+        "ok": true,
+        "label": "reopenOriginal",
+        "id": "SAFE",
+        "dt": 0.9230924999865238
+      }
+    },
+    "scratchName": "ResolveCollab M9 Media Probe d98bf7f7"
+  }
+}
