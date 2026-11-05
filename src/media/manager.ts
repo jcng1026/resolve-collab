@@ -96,6 +96,7 @@ export class MediaManager {
       allowed: (peer, clip) => options.isPerson(peer) && !!options.sync.sessionClip(clip),
       prepare: (clip, kind, progress) => this.prepare(clip, kind, progress),
       verify: (clip, as, path) => this.verify(clip, as, path),
+      accept: (clip, as, size) => this.accept(clip, as, size),
       log: options.log,
       onChange: () => this.changed(),
     });
@@ -336,6 +337,17 @@ export class MediaManager {
     }
     log(`${name}: ${what} is in Resolve`);
     return `${name}: ${what} is in Resolve`;
+  }
+
+  // A source can't fill the disk (SPEC §13): an original is exactly the
+  // session's size, a proxy at most twice its original, and there must be room.
+  private async accept(id: string, as: Kind, size: number): Promise<string | undefined> {
+    const expected = this.options.sync.sessionClip(id)?.file?.size ?? 0;
+    if (as === "original" && size !== expected) return "the offered file isn't the session's clip (its size differs)";
+    if (as === "proxy" && expected && size > Math.max(2 * expected, 64 * 1024 ** 2)) return "the offered proxy is bigger than it can be";
+    const free = await freeSpace(this.folder);
+    if (free && size > free - 512 * 1024 ** 2) return `there isn't room for it in ${this.folder} (it needs ${Math.ceil(size / 1024 ** 2)} MB)`;
+    return undefined;
   }
 
   private async verify(id: string, as: Kind, path: string): Promise<boolean> {

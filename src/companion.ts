@@ -21,10 +21,11 @@
 //   chat <message>, missing, locate <clip> <path>, undo, redo, reapply <n>, restore <n>,
 //   and as host: members, remove <name or ID>, unblock <name or ID>, end
 
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
+import { spawn } from "node:child_process";
 import { parseArgs } from "node:util";
 import { localBridgeBuild } from "./bridge/bridge-build.ts";
 import { BridgeClient } from "./bridge/bridge-client.ts";
@@ -41,6 +42,9 @@ import { type Approval, Session } from "./session.ts";
 import { findHostSession } from "./session-record.ts";
 import type { Answer, Conflict } from "./sync/reconcile.ts";
 import { CompanionWindow } from "./window/window-host.ts";
+import { installBridge } from "./bridge/install.ts";
+import { diagnostics } from "./diagnostics.ts";
+import { APP_VERSION } from "./version.ts";
 
 const RESOLVE_LOG = join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"),
   "Blackmagic Design", "DaVinci Resolve", "Support", "logs", "ResolveDebug.txt");
@@ -99,10 +103,33 @@ let session: Session | undefined;
 let peers: PeerLink | undefined;
 let inviteCode = "";
 let stopping = false;
+let ready = false; // set once everything refresh() reads exists (log lines come earlier)
+// The log is also kept in files, one a day, deleted after 14 days (SPEC §14).
+const logsDir = join(home, "logs");
+try {
+  mkdirSync(logsDir, { recursive: true });
+  for (const f of readdirSync(logsDir)) if (Date.now() - statSync(join(logsDir, f)).mtimeMs > 14 * 86_400_000) rmSync(join(logsDir, f), { force: true });
+} catch { /* a log that can't be kept isn't fatal */ }
 const log = (message: string) => {
-  console.log(`${new Date().toISOString().slice(11, 23)}  ${message}`);
+  const now = new Date();
+  const line = `${now.toISOString().slice(11, 23)}  ${message}`;
+  console.log(line);
+  try { appendFileSync(join(logsDir, `companion-${now.toISOString().slice(0, 10)}.log`), `${line}\n`); } catch { /* see above */ }
   refresh();
 };
+log(`ResolveCollab ${APP_VERSION}`);
+// For the Start-menu launcher: a companion already running isn't started twice.
+const pidFile = join(home, "companion.pid");
+if (!values.fake) try { writeFileSync(pidFile, String(process.pid)); } catch { /* the launcher may start a second one */ }
+// Resolve's bridge script is kept up to date by the companion itself (SPEC §12.2).
+if (!values.fake) {
+  try {
+    const installed = installBridge(inboxDir);
+    if (installed.changed) log("Installed the latest ResolveCollab bridge into Resolve. In Resolve, start Workspace › Scripts › ResolveCollab (again if it was running; restart Resolve if it isn't listed).");
+  } catch (e) {
+    log(`couldn't install the bridge into Resolve: ${(e as Error).message}`);
+  }
+}
 
 // --- questions: in the terminal and the window, the first answer wins --------------
 
@@ -276,6 +303,11 @@ bridge.on("event", (e: { type?: unknown; project?: { id?: unknown; name?: unknow
   refresh();
 });
 bridge.on("attached", () => void bridge.send({ type: "mp.snapshot" }));
+// What Resolve and its bridge said, for Export diagnostics (SPEC §14).
+let resolveInfo: unknown;
+let runningBuild: string | undefined;
+bridge.on("resolve", (p: { product?: unknown; version?: unknown; studio?: unknown }) => { resolveInfo = { product: p.product, version: p.version, studio: p.studio }; });
+bridge.on("build", (b: string | undefined) => { if (b) runningBuild = b; });
 bridge.on("alive", (alive: boolean) => {
   resolveAnswers = alive;
   allowKeys();
@@ -365,6 +397,7 @@ function note(text: string, tone?: "good" | "bad"): void {
 }
 
 function refresh(): void {
+  if (!ready) return;
   if (!win?.open) return;
   const state = windowState();
   const text = JSON.stringify(state);
@@ -421,6 +454,7 @@ if (values.name !== undefined) {
   saveName(home, values.name);
 }
 let identity = loadIdentity(home);
+ready = true;
 
 let chooseStart: ((choice: Choice) => void) | undefined;
 win?.on("action", (a: Record<string, unknown>) => void act(a));
@@ -491,6 +525,7 @@ async function runSession(choice: Choice): Promise<string> {
     ...(forceTier ? { forceTier: forceTier as 2 | 3 } : {}),
     userBusy: () => mouse.held,
     ...(values.fake ? {} : { bridgeBuild: localBridgeBuild() }),
+    version: APP_VERSION,
   });
   session = s;
   layoutWatch.start();
@@ -608,6 +643,18 @@ async function act(a: Record<string, unknown>): Promise<void> {
     case "window-log":
       console.log(`${new Date().toISOString().slice(11, 23)}  window: ${text(a.text).slice(0, 500)}`);
       return;
+    case "diagnostics": {
+      const say = (m: string) => { if (session) note(m); else startMessage = m; log(m); };
+      try {
+        const zip = await diagnostics({ logsDir, resolve: resolveInfo, bridgeExpected: localBridgeBuild(), bridgeRunning: runningBuild,
+          extra: { session: session?.record ? { role: mode, project: session.record.projectName, people: session.people().length } : null } });
+        say(`Diagnostics saved: ${zip}`);
+        spawn("explorer.exe", [`/select,${zip}`], { detached: true, stdio: "ignore" }).unref();
+      } catch (e) {
+        say(`couldn't export diagnostics: ${(e as Error).message}`);
+      }
+      return;
+    }
   }
   if (!session) return;
   const s = session;
@@ -793,6 +840,7 @@ async function shutdown(): Promise<void> {
   bridge.stop();
   fake?.stop();
   await peers?.stop();
+  if (!values.fake) rmSync(pidFile, { force: true });
   process.exit(0);
 }
 process.on("SIGINT", shutdown);

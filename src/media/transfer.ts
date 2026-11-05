@@ -39,6 +39,8 @@ export interface TransferOptions {
   prepare: (clip: string, kind: Kind, progress: (p: number) => void) => Promise<Prepared | { error: string }>;
   // Asker side: an original's fingerprint check, done after the SHA-256.
   verify?: (clip: string, as: Kind, path: string) => Promise<boolean>;
+  // Asker side: may a file of this size come? An error says why not (too big, no room).
+  accept?: (clip: string, as: Kind, size: number) => Promise<string | undefined>;
   log: (message: string) => void;
   onChange?: () => void;
   now?: () => number;
@@ -199,6 +201,8 @@ export class MediaTransfer {
     const size = m.size;
     if (!Number.isSafeInteger(size) || (size as number) <= 0 || (size as number) > MAX_SIZE || !isHex64(m.sha256)) return this.fail(d, "a bad offer", true);
     d.as = m.as === "original" ? "original" : d.kind;
+    const refused = await this.options.accept?.(d.clip, d.as, size as number);
+    if (refused) return this.fail(d, refused, true);
     d.dest = d.destFor(d.as);
     // The same file as a download already partly here? Then carry on from its chunks.
     const part = await this.loadPart(d.dest);

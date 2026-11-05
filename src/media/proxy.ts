@@ -7,15 +7,18 @@ import { execFile, spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
 const STILLS = new Set([".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".webp", ".exr", ".dpx", ".tga", ".psd", ".heic"]);
 
-// ffmpeg: $FFMPEG, then winget's shim or package folder, then PATH.
-// shortcut: M10 bundles an LGPL build and looks there first (SPEC §25.1).
+// ffmpeg: $FFMPEG, the one bundled with the app (SPEC §12.2), winget's shim
+// or package folder, then PATH.
+const BUNDLED = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "ffmpeg", "ffmpeg.exe");
 export function findFfmpeg(): string | undefined {
   if (process.env.FFMPEG && existsSync(process.env.FFMPEG)) return process.env.FFMPEG;
+  if (existsSync(BUNDLED)) return BUNDLED;
   const winget = join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WinGet");
   const link = join(winget, "Links", "ffmpeg.exe");
   if (existsSync(link)) return link;
@@ -54,6 +57,23 @@ export async function classify(path: string, ffmpeg = findFfmpeg()): Promise<Med
   }
 }
 
+// The best H.264 encoder this ffmpeg has: x264 in GPL builds; an LGPL build
+// (the bundled one, SPEC §25.1) has Windows' own Media Foundation encoder.
+const encoders = new Map<string, Promise<string[]>>();
+function h264(ffmpeg: string): Promise<string[]> {
+  let job = encoders.get(ffmpeg);
+  if (!job) {
+    job = run(ffmpeg, ["-hide_banner", "-encoders"], { windowsHide: true, timeout: 30_000 }).then(({ stdout }) => {
+      if (/libx264/.test(stdout)) return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"];
+      if (/h264_mf/.test(stdout)) return ["-c:v", "h264_mf", "-b:v", "6M"];
+      if (/libopenh264/.test(stdout)) return ["-c:v", "libopenh264", "-b:v", "6M"];
+      return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"];
+    }, () => ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]);
+    encoders.set(ffmpeg, job);
+  }
+  return job;
+}
+
 // H.264 at half size (at most 1080 tall), AAC, the original's timecode and
 // metadata kept (§25.2: the proxy then has the original's frames and start TC).
 export async function makeProxy(src: string, dest: string, duration: number, progress: (p: number) => void, ffmpeg = findFfmpeg()): Promise<void> {
@@ -61,7 +81,7 @@ export async function makeProxy(src: string, dest: string, duration: number, pro
   await mkdir(dirname(dest), { recursive: true });
   const tmp = `${dest}.making.mp4`;
   const args = ["-hide_banner", "-loglevel", "error", "-nostats", "-y", "-i", src, "-map", "0:v:0", "-map", "0:a?",
-    "-vf", "scale=-2:'min(1080,trunc(ih/4)*2)'", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+    "-vf", "scale=-2:'min(1080,trunc(ih/4)*2)'", ...(await h264(ffmpeg)), "-pix_fmt", "yuv420p",
     "-c:a", "aac", "-b:a", "160k", "-map_metadata", "0", "-movflags", "+faststart", "-progress", "pipe:1", tmp];
   await new Promise<void>((resolve, reject) => {
     const child = spawn(ffmpeg, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
