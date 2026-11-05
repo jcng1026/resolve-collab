@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import { ROOT, emptyPool } from "./sync/media-pool.ts";
 import { type SessionModel, type SessionOp, applySessionOp, cloneModel, validateSessionOp } from "./sync/session-model.ts";
 import { emptyTimelines } from "./sync/timeline.ts";
-import { History, MAX_STEPS, inverseOf } from "./undo.ts";
+import { History, MAX_STEPS, followsClipColor, inverseOf } from "./undo.ts";
 
 const id = (n: number) => n.toString(16).padStart(32, "0");
 const HASH = "a".repeat(64);
@@ -74,6 +74,20 @@ describe("inverse operations (SPEC §23.2)", () => {
     roundTrip({ type: "timeline.delete", id: id(20) });
     roundTrip({ type: "clip.delete", id: id(10) }); // its pool marker
     roundTrip({ type: "bin.delete", id: id(1) }); // the bin inside, the clip, its marker
+  });
+});
+
+describe("items following their clip's colour (SPEC §23.2)", () => {
+  it("isn't a step of its own; any other item change is", () => {
+    const m = model();
+    m.pool.clips[id(10)]!.color = "Blue";
+    const none = () => undefined;
+    expect(followsClipColor({ type: "item.set", id: id(30), color: "Blue" }, m, none)).toBe(true);
+    expect(followsClipColor({ type: "item.set", id: id(30), color: "Pink" }, m, (c) => (c === id(10) ? "Pink" : undefined))).toBe(true); // Resolve's clip changed first
+    expect(followsClipColor({ type: "item.set", id: id(30), color: "Pink" }, m, none)).toBe(false);
+    expect(followsClipColor({ type: "item.set", id: id(30), color: "Blue", start: 4 }, m, none)).toBe(false);
+    expect(followsClipColor({ type: "item.set", id: id(31), color: "Blue" }, m, none)).toBe(false); // a transition has no clip
+    expect(followsClipColor({ type: "clip.set", id: id(10), color: "Blue" }, m, none)).toBe(false);
   });
 });
 

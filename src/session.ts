@@ -34,7 +34,7 @@ import { type Answer, type Conflict, EXISTS, fieldKey, mediaPoolDomain } from ".
 import { type SessionModel, type SessionOp, validateModel } from "./sync/session-model.ts";
 import { timelineDomain } from "./sync/timeline-reconcile.ts";
 import { TimelineSync } from "./sync/timeline-sync.ts";
-import { History, type Step, inverseOf } from "./undo.ts";
+import { History, type Step, followsClipColor, inverseOf } from "./undo.ts";
 
 export type Approval = "yes" | "no" | "block";
 
@@ -409,8 +409,12 @@ export class Session {
     if (!entry) return;
     this.stepOf.delete(proposal);
     if (entry.purpose === "undo") return; // an undo's step went to the redo list already
+    const inverse = inverseOf(before, op);
+    // A change that leaves everything as it was (Resolve reporting what the
+    // session already has) is nothing to undo.
+    if (op.type.endsWith(".set") && inverse.length === 1 && JSON.stringify(inverse[0]) === JSON.stringify(op)) return;
     entry.step.forward.push(structuredClone(op));
-    entry.step.inverse.unshift(...inverseOf(before, op));
+    entry.step.inverse.unshift(...inverse);
     if (!entry.pushed) {
       this.history.push(entry.step, entry.purpose === "edit");
       entry.pushed = true;
@@ -494,15 +498,18 @@ export class Session {
   // `purpose`: an edit (a new undo step), or an undo or redo of one (SPEC §23.2).
   private propose(op: SessionOp, proposal: string, base?: number, purpose: Purpose = "edit", keep = false): void {
     this.freshProject = false; // a change of this PC's own: from now on, worth a backup
-    // Everything proposed in one go (one sync pass, one undo) is one step.
-    if (!this.openStep || this.openStep.purpose !== purpose) {
-      const open = { step: { forward: [], inverse: [] }, purpose, pushed: false };
-      this.openStep = open;
-      setImmediate(() => { if (this.openStep === open) this.openStep = undefined; });
+    const localColor = (clip: string) => [...this.sync.local.clips.values()].find((c) => c.rcId === clip)?.color;
+    if (purpose !== "edit" || !followsClipColor(op, this.model, localColor)) {
+      // Everything proposed in one go (one sync pass, one undo) is one step.
+      if (!this.openStep || this.openStep.purpose !== purpose) {
+        const open = { step: { forward: [], inverse: [] }, purpose, pushed: false };
+        this.openStep = open;
+        setImmediate(() => { if (this.openStep === open) this.openStep = undefined; });
+      }
+      this.stepOf.set(proposal, this.openStep);
+      // Proposals that never came back (made with no host) don't pile up.
+      if (this.stepOf.size > 5000) this.stepOf.delete(this.stepOf.keys().next().value!);
     }
-    this.stepOf.set(proposal, this.openStep);
-    // Proposals that never came back (made with no host) don't pile up.
-    if (this.stepOf.size > 5000) this.stepOf.delete(this.stepOf.keys().next().value!);
     if (this.host) {
       this.commitLocally(op, this.options.peers.id, proposal, base, keep);
     } else if (this.hostId) {

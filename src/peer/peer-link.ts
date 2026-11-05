@@ -42,7 +42,7 @@ export interface PeerLinkOptions {
   // This PC's lasting identity (identity.ts): the same key pair every run.
   seed?: Buffer;
   // Tests only: how long each received message is held before it's handled,
-  // to stand in for a slow or jittery network (a varying delay reorders).
+  // to stand in for a slow or jittery network. Order is kept, as on a real connection.
   delay?: () => number;
 }
 
@@ -57,6 +57,7 @@ interface Peer {
   outstanding: Map<number, Outgoing>;
   seen: Set<number>;
   run: string; // the peer's run its seen numbers belong to
+  held: { at: number; data: JsonValue }[]; // tests' delay: received, not yet handled, in order
 }
 
 // Events: "peer" (id), "peer-left" (id), "message" (message, fromId).
@@ -174,7 +175,7 @@ export class PeerLink extends EventEmitter {
     this.keys.set(id, key);
     let peer = this.peers.get(id);
     if (!peer) {
-      peer = { sockets: [], outstanding: new Map(), seen: new Set(), run: "" };
+      peer = { sockets: [], outstanding: new Map(), seen: new Set(), run: "", held: [] };
       this.peers.set(id, peer);
     }
     peer.sockets.push(socket);
@@ -229,7 +230,16 @@ export class PeerLink extends EventEmitter {
     peer.seen.add(frame.m);
     if (peer.seen.size > SEEN_MAX) peer.seen.delete(peer.seen.values().next().value!);
     const delay = this.delay?.() ?? 0;
-    if (delay > 0) setTimeout(() => this.emit("message", frame.d ?? null, id), delay);
-    else this.emit("message", frame.d ?? null, id);
+    if (delay <= 0 && !peer.held.length) return void this.emit("message", frame.d ?? null, id);
+    peer.held.push({ at: Math.max(Date.now() + delay, peer.held.at(-1)?.at ?? 0), data: frame.d ?? null });
+    if (peer.held.length === 1) this.release(peer, id);
+  }
+
+  // Hands held messages on in the order they came (one timer, so none overtakes).
+  private release(peer: Peer, id: string): void {
+    setTimeout(() => {
+      while (peer.held.length && peer.held[0]!.at <= Date.now()) this.emit("message", peer.held.shift()!.data, id);
+      if (peer.held.length) this.release(peer, id);
+    }, Math.max(0, peer.held[0]!.at - Date.now()));
   }
 }

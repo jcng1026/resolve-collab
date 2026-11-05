@@ -131,7 +131,8 @@ await waitFor("Resolve told it lost the race", () => memberLogs.some((l) => /^\[
 await waitFor("Resolve shows the host's Blue", () => both("Blue"), 20_000);
 const notice = memberLogs.find((l) => l.includes("at the same moment"))!;
 const n = Number(/^\[(\d+)\]/.exec(notice)?.[1]);
-check(`reapply ${n}: ${member.reapply(n)}`, true);
+const reapplied = member.reapply(n);
+check(`reapply ${n}: ${reapplied}`, reapplied.startsWith("sent again"));
 await waitFor("Pink on both after reapply", () => both("Pink"), 20_000);
 
 say("STEP 2  undo and redo of Resolve's own change (the reapply)");

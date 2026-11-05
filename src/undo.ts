@@ -91,6 +91,17 @@ function order(kind: string, ids: string[], table: Table): string[] {
   return ids;
 }
 
+// In Resolve a media pool clip's colour also colours its clips on timelines,
+// so a clip recoloured (by anyone, or by an undo) makes its items change too.
+// That follows the clip; it isn't a step of this person's own.
+export function followsClipColor(op: SessionOp, model: SessionModel, localColor: (clip: string) => string | undefined): boolean {
+  if (op.type !== "item.set") return false;
+  const { type: _, id, color, ...rest } = op as { type: string; id: string; color?: string };
+  if (color === undefined || Object.keys(rest).length) return false;
+  const media = model.timelines.items[id]?.media;
+  return !!media && (model.pool.clips[media]?.color === color || localColor(media) === color);
+}
+
 export class History {
   undo: Step[] = [];
   redo: Step[] = [];
