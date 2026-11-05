@@ -95,6 +95,18 @@ function verb(fields: string[]): string {
   return "changed";
 }
 
+// Where a marker is on its timeline, in frames from the start: a timeline
+// marker's own frame; an item marker's is in its clip's source, so it's
+// placed through the clip (start, source start, speed).
+function markerFrame(model: SessionModel, m: Rec): number | undefined {
+  if (typeof m.frame !== "number") return undefined;
+  if (!m.item) return m.frame;
+  const it = model.timelines.items[String(m.item)] as { start?: number; srcStart?: number; speed?: number } | undefined;
+  if (!it || typeof it.start !== "number") return undefined;
+  const speed = it.speed && it.speed > 0 ? it.speed : 100;
+  return Math.max(0, Math.round(it.start + ((m.frame - (it.srcStart ?? 0)) * 100) / speed));
+}
+
 // What one change did, with old → new, from the session just before it.
 export function describe(before: SessionModel, op: SessionOp): Pick<Line, "text" | "changes" | "timeline" | "frame"> & { key: string } {
   const kind = kindOf(op);
@@ -109,7 +121,8 @@ export function describe(before: SessionModel, op: SessionOp): Pick<Line, "text"
   const label = labelOf(kind, entity as Rec, verbName === "create");
   const trackName = item?.track ? labelOf("track", before.timelines.tracks[item.track] as Rec | undefined).slice(6) : "";
   const on = kind === "item" && trackName ? ` on ${trackName}` : kind === "marker" || kind === "track" ? ` on ${before.timelines.timelines[timelineId]?.name ?? "a timeline"}` : "";
-  const where = { ...(timelineId ? { timeline: timelineId } : {}), ...(kind === "item" && typeof (item?.start ?? o.start) === "number" ? { frame: Number(o.start ?? item?.start) } : {}), ...(kind === "marker" && typeof ((entity as Rec).frame) === "number" && (entity as Rec).item === "" ? { frame: Number((entity as Rec).frame) } : {}) };
+  const frame = kind === "item" && typeof (o.start ?? item?.start) === "number" ? Number(o.start ?? item?.start) : kind === "marker" ? markerFrame(before, { ...(old ?? {}), ...o }) : undefined;
+  const where = { ...(timelineId ? { timeline: timelineId } : {}), ...(frame !== undefined ? { frame } : {}) };
   // A linked video and audio pair is one thing.
   const key = `${kind}:${item?.link || id}`;
   if (verbName === "create") return { text: `added ${label}${on}`, changes: [], key, ...where };

@@ -185,3 +185,8 @@ body:has(.panel.collapsed) { background: var(--panel); }
 .link-btn:disabled { color: var(--text-3); }
 .settings-box { padding: 10px 12px; border-radius: 10px; background: var(--raised); display: flex; flex-direction: column; gap: 10px; }
 .start-message { font-size: 12px; color: var(--text-2); }
+/* The bar's line colour mustn't hide the event colours. */
+.bar-lines li.event-good { color: var(--good); }
+.bar-lines li.event-bad { color: var(--bad); }
+.bar-lines li.event-plain { color: var(--text-3); }
+.pill.done { background: rgba(48, 209, 88, 0.18); color: var(--good); }

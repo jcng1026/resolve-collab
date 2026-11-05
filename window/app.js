@@ -222,12 +222,25 @@ function settingsBody(rerender) {
   ];
 }
 
+// Copy, showing it worked (SPEC §24.5): "✓ Copied" for 2 s.
+let copiedUntil = 0;
+function copyButton() {
+  const done = Date.now() < copiedUntil;
+  return h("button", { class: `pill ${done ? "done" : "primary"}`, "aria-live": "polite", onclick: () => {
+    rc.send({ type: "copy", text: state.code });
+    rc.send({ type: "note", text: "Invite code copied" });
+    copiedUntil = Date.now() + 2000;
+    renderPanel("session");
+    setTimeout(() => { if (!$("panel").hidden && $("panel").dataset.kind === "session") renderPanel("session"); }, 2050);
+  } }, done ? "✓ Copied" : "Copy");
+}
+
 function renderPanel(kind) {
   const head = (title) => h("div", { class: "sheet-head" }, h("h2", {}, title), h("button", { class: "pill", onclick: () => { $("panel").hidden = true; } }, "Done"));
   let body = [];
   if (kind === "session") {
     body = [
-      state.code ? [h("div", { class: "label" }, "Invite code, for this opening only"), h("div", { class: "group" }, h("div", { class: "row" }, h("span", { class: "mono" }, state.code.match(/.{1,4}/g).join(" ")), h("button", { class: "pill primary", onclick: () => rc.send({ type: "copy", text: state.code }) }, "Copy")))] : [],
+      state.code ? [h("div", { class: "label" }, "Invite code, for this opening only"), h("div", { class: "group" }, h("div", { class: "row" }, h("span", { class: "mono" }, state.code.match(/.{1,4}/g).join(" ")), copyButton()))] : [],
       h("div", { class: "label" }, "People"),
       state.members.length ? null : h("p", { class: "small muted", style: { margin: "0 4px" } }, "Nobody has joined yet. Send them the invite code."),
       h("div", { class: "group" }, ...state.members.map((m) => h("div", { class: "row" },

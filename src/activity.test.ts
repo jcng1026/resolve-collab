@@ -38,6 +38,17 @@ describe("describing a change", () => {
     expect(describeOp(m, { type: "timeline.set", id: id(20), name: "Cut 2" })).toMatchObject({ text: "renamed the timeline “Edit”", changes: [{ name: "name", from: "Edit", to: "Cut 2" }] });
   });
 
+  it("knows where a marker is on its timeline, also one on a clip", () => {
+    const m = model();
+    m.timelines.markers[id(40)] = { id: id(40), timeline: id(20), item: "", frame: 100, duration: 1, color: "Red", name: "a", note: "" };
+    m.timelines.markers[id(41)] = { id: id(41), timeline: id(20), item: id(30), frame: 12, duration: 1, color: "Red", name: "b", note: "" };
+    expect(describeOp(m, { type: "marker.set", id: id(40), frame: 120 })).toMatchObject({ timeline: id(20), frame: 120 }); // where it went
+    expect(describeOp(m, { type: "marker.set", id: id(41), color: "Blue" })).toMatchObject({ timeline: id(20), frame: 240 + 12 }); // the clip starts at 240
+    m.timelines.items[id(30)]!.speed = 200;
+    m.timelines.items[id(30)]!.srcStart = 4;
+    expect(describeOp(m, { type: "marker.set", id: id(41), color: "Green" }).frame).toBe(240 + 4); // (12 - 4) source frames at double speed
+  });
+
   it("writes timecode from the frame", () => {
     expect(timecode(0, 24)).toBe("01:00:00:00");
     expect(timecode(24 * 61 + 5, 24)).toBe("01:01:01:05");
