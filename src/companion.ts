@@ -29,7 +29,9 @@ import { parseArgs } from "node:util";
 import { localBridgeBuild } from "./bridge/bridge-build.ts";
 import { BridgeClient } from "./bridge/bridge-client.ts";
 import { FakeBridge } from "./bridge/fake-bridge.ts";
+import { LayoutWatch } from "./bridge/layout-watch.ts";
 import { MouseWatch } from "./bridge/mouse-watch.ts";
+import { type Placed, locate, place, prepare } from "./layout.ts";
 import { UndoKeys } from "./bridge/undo-keys.ts";
 import { findFile, fingerprint, userFolders } from "./media/fingerprint.ts";
 import { loadIdentity, saveName, validName } from "./peer/identity.ts";
@@ -294,12 +296,36 @@ mouse.start();
 const cursorPrefs = { show: true, share: true }; // the window's Settings say otherwise
 const NEAR = 24; // screen pixels: your pointer this close to someone's shows their name
 
-// Mine goes out while Resolve is in front and the pointer is over it.
+// Where Resolve's panels, timeline frames and tracks are on this screen (SPEC
+// §24.6.1), read while in a session; worked out again when any of it changes.
+const layoutWatch = new LayoutWatch(log);
+let placed: Placed | undefined;
+let placedKey = "";
+const myTimeline = () => String((lastPresence as { timeline?: unknown } | undefined)?.timeline ?? "");
+const myFps = () => session?.timelineInfo(myTimeline())?.fps ?? 24;
+function relayout(): void {
+  const l = layoutWatch.latest;
+  const r = mouse.latest?.resolve;
+  const info = session?.timelineInfo(myTimeline());
+  const key = l && r && session ? JSON.stringify([r, info]) : "";
+  if (!key) return void (placed = undefined, placedKey = "");
+  if (key === placedKey && placed?.layout.panels === l!.panels) return;
+  placedKey = key;
+  placed = prepare({ ...l!, window: r! }, info?.fps ?? 24, info?.tracks ?? []);
+}
+layoutWatch.onChange = () => { relayout(); cursors(); };
+setInterval(relayout, 1000).unref(); // a timeline switch or renamed track
+
+// Mine goes out while Resolve is in front and the pointer is over it, with
+// where it is in the project.
+let lastRect = "";
 mouse.onChange = (st) => {
   const r = st.resolve;
+  if (String(r) !== lastRect) { lastRect = String(r); relayout(); }
   const [px, py] = st.pointer;
   const over = r && st.front && cursorPrefs.share && px >= r[0] && py >= r[1] && px < r[0] + r[2] && py < r[1] + r[3];
-  session?.sharePointer(over ? { x: (px - r[0]) / r[2], y: (py - r[1]) / r[3] } : null);
+  const spot = over && placed ? locate(placed, px, py) : undefined;
+  session?.sharePointer(over ? { x: (px - r[0]) / r[2], y: (py - r[1]) / r[3], ...(spot ? { spot } : {}) } : null);
   cursors();
 };
 
@@ -310,13 +336,17 @@ function cursors(): void {
   const r = st?.resolve;
   const page = (lastPresence as { page?: unknown } | undefined)?.page;
   const list = session && st && r && cursorPrefs.show ? session.pointers().filter((p) => p.page === page) : [];
-  win.overlay(r && list.length ? {
-    rect: r,
-    cursors: list.map((p) => ({
-      id: p.id, name: p.name, color: p.color, x: p.x, y: p.y,
-      near: Math.hypot(st!.pointer[0] - (r[0] + p.x * r[2]), st!.pointer[1] - (r[1] + p.y * r[3])) <= NEAR,
-    })),
-  } : null);
+  const shown = r ? list.flatMap((p) => {
+    // By panel, frame and track when both sides know them; else the whole window.
+    const at = p.spot && placed ? place(placed, p.spot, myFps(), p.timeline !== "" && p.timeline === myTimeline()) : { x: r[0] + p.x * r[2], y: r[1] + p.y * r[3] };
+    if (!at) return []; // in a panel this PC doesn't show
+    return [{
+      id: p.id, name: p.name, color: p.color, x: (at.x - r[0]) / r[2], y: (at.y - r[1]) / r[3],
+      near: Math.hypot(st!.pointer[0] - at.x, st!.pointer[1] - at.y) <= NEAR,
+      ...("edge" in at && at.edge ? { edge: at.edge, hint: at.hint } : {}),
+    }];
+  }) : [];
+  win.overlay(r && shown.length ? { rect: r, cursors: shown } : null);
 }
 
 // --- what the window shows ----------------------------------------------------------
@@ -459,6 +489,7 @@ async function runSession(choice: Choice): Promise<string> {
     ...(values.fake ? {} : { bridgeBuild: localBridgeBuild() }),
   });
   session = s;
+  layoutWatch.start();
   // The bridge was attached before the session listened: its state again,
   // and where this person is (/timestamp needs it before the playhead moves).
   void bridge.send({ type: "mp.snapshot" });
@@ -478,6 +509,8 @@ async function runSession(choice: Choice): Promise<string> {
   await s.close();
   await link.stop();
   session = undefined;
+  layoutWatch.stop();
+  relayout();
   peers = undefined;
   joining = false;
   refresh();
@@ -669,6 +702,7 @@ async function shutdown(): Promise<void> {
   stopping = true;
   await session?.close();
   mouse.stop();
+  layoutWatch.stop();
   clearInterval(keysTimer);
   keys.stop();
   win?.stop();

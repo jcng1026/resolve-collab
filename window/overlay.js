@@ -51,9 +51,12 @@ rc.on("cursors", (list) => {
     if (!el.at) el.at = { x: c.x, y: c.y }; // a new arrow starts where it is
     el.querySelector("path").setAttribute("fill", c.color);
     const tag = el.querySelector(".tag");
-    tag.textContent = c.name;
+    // The name shows when your pointer comes near; at the timeline's edge,
+    // where they are always shows ("→ 01:00:40:00", SPEC §24.6.1).
+    tag.textContent = c.hint ? (c.near ? `${c.name} ${c.hint}` : c.hint) : c.name;
     tag.style.background = c.color;
-    tag.hidden = !c.near; // the name shows when your pointer comes near
+    tag.hidden = !c.near && !c.hint;
+    el.classList.toggle("at-right", c.edge === "right");
   }
   for (const [id, el] of ghosts) if (!seen.has(id)) { el.remove(); ghosts.delete(id); }
 });

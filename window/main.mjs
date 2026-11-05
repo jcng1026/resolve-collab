@@ -83,6 +83,9 @@ function showOverlay(o) {
       webPreferences: { preload: join(HERE, "preload.cjs"), sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false, backgroundThrottling: false },
     });
     overlay.setIgnoreMouseEvents(true);
+    // Left out of screen captures, so reading Resolve's ruler never reads
+    // the cursors back (SPEC §24.6.1); also out of screen recordings.
+    if (!process.env.RC_OVERLAY_CAPTURE) overlay.setContentProtection(true); // the probe's screenshots need it
     overlay.setAlwaysOnTop(true, "screen-saver");
     overlay.webContents.on("will-navigate", (e) => e.preventDefault());
     overlay.webContents.setWindowOpenHandler(() => ({ action: "deny" }));

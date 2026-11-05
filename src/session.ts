@@ -24,6 +24,7 @@ import { dirname, join } from "node:path";
 import type { JsonValue } from "./bridge-protocol/wire.ts";
 import { buildWarning } from "./bridge/bridge-build.ts";
 import type { BridgeClient } from "./bridge/bridge-client.ts";
+import { type Spot, type Track as ScreenTrack, cleanSpot } from "./layout.ts";
 import { Activity, type Line, MAX_LINES, cleanLine, describe as describeChange } from "./activity.ts";
 import { Notices, fieldName } from "./notices.ts";
 import type { PeerLink } from "./peer/peer-link.ts";
@@ -156,9 +157,9 @@ export class Session {
   private readonly startedAt = Date.now();
   private lostHost = false;
   // Ghost cursors (SPEC §24.6): where each person's pointer is in their Resolve window, 0–1.
-  private readonly pointerOf = new Map<string, { x: number; y: number }>();
+  private readonly pointerOf = new Map<string, { x: number; y: number; spot?: Spot }>();
   private pointerSent = 0;
-  private pointerNext: { x: number; y: number } | null | undefined;
+  private pointerNext: { x: number; y: number; spot?: Spot } | null | undefined;
   private pointerTimer: NodeJS.Timeout | undefined;
   // Follow (SPEC §8, §24.3): whose page, timeline and playhead this PC moves with.
   private followed: string | undefined;
@@ -825,9 +826,10 @@ export class Session {
 
   // --- ghost cursors (SPEC §24.6) ----------------------------------------------------
 
-  // This person's pointer in their Resolve window (0–1), or null when it's not
-  // over Resolve. Sent at most 30 times a second; the newest wins.
-  sharePointer(at: { x: number; y: number } | null): void {
+  // This person's pointer in their Resolve window (0–1), with where it is in
+  // the project (SPEC §24.6.1), or null when it's not over Resolve. Sent at
+  // most 30 times a second; the newest wins.
+  sharePointer(at: { x: number; y: number; spot?: Spot } | null): void {
     if (at === null && this.pointerNext === null) return; // "off" once, not every tick
     this.pointerNext = at;
     if (this.pointerTimer) return;
@@ -837,25 +839,37 @@ export class Session {
       this.pointerSent = Date.now();
       const p = this.pointerNext;
       if (p === undefined || !this.begun) return;
-      const message = p ? { type: "pointer", x: p.x, y: p.y } : { type: "pointer", off: true };
+      const message = p ? { type: "pointer", x: p.x, y: p.y, ...(p.spot ? { spot: p.spot as unknown as JsonValue } : {}) } : { type: "pointer", off: true };
       if (this.host) this.toMembers({ ...message, id: this.options.peers.id });
       else if (this.hostId) this.options.peers.sendTo(this.hostId, message);
     }, wait);
   }
 
   // The others' pointers, with the page they're on.
-  pointers(): { id: string; name: string; color: string; page: string; x: number; y: number }[] {
+  pointers(): { id: string; name: string; color: string; page: string; timeline: string; x: number; y: number; spot?: Spot }[] {
     return this.people().flatMap((p) => {
       const at = this.pointerOf.get(p.id);
-      return at && p.id !== this.options.peers.id && p.online ? [{ id: p.id, name: p.name, color: p.color, page: p.presence?.page ?? "", ...at }] : [];
+      return at && p.id !== this.options.peers.id && p.online ? [{ id: p.id, name: p.name, color: p.color, page: p.presence?.page ?? "", timeline: p.presence?.timeline ?? "", ...at }] : [];
     });
+  }
+
+  // A timeline's frame rate and tracks, to read this PC's timeline (SPEC §24.6.1).
+  timelineInfo(id: string): { fps: number; tracks: ScreenTrack[] } | undefined {
+    if (!this.begun) return undefined;
+    const m = this.model.timelines;
+    const t = m.timelines[id];
+    if (!t) return undefined;
+    return { fps: t.fps, tracks: Object.values(m.tracks).filter((k) => k.timeline === id).map((k) => ({ kind: k.kind, order: k.order, name: k.name })) };
   }
 
   private pointerArrived(id: string, message: Message): void {
     const x = message.x;
     const y = message.y;
     if (message.off === true) this.pointerOf.delete(id);
-    else if (typeof x === "number" && typeof y === "number" && x >= 0 && x <= 1 && y >= 0 && y <= 1) this.pointerOf.set(id, { x, y });
+    else if (typeof x === "number" && typeof y === "number" && x >= 0 && x <= 1 && y >= 0 && y <= 1) {
+      const spot = cleanSpot(message.spot);
+      this.pointerOf.set(id, spot ? { x, y, spot } : { x, y });
+    }
     else return;
     this.options.onPointers?.();
   }

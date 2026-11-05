@@ -417,6 +417,12 @@ describe("ghost cursors (SPEC §24.6)", () => {
     await waitFor("Ben sees both", () => seen(b).join() === "Ana@0.25,0.5:color,Pat@0.75,0.1:");
     await waitFor("Pat sees Ana", () => seen(host).join() === "Ana@0.25,0.5:color");
     expect(seen(a)).toEqual(["Pat@0.75,0.1:"]); // never your own
+    // With where it is in the project (SPEC §24.6.1); a bad spot is dropped, the pointer kept.
+    a.session!.sharePointer({ x: 0.5, y: 0.5, spot: { panel: "timeline", u: 0.4, v: 0.3, frame: 86642, track: "V1", dy: 0.3 } });
+    await waitFor("Ben gets Ana's spot", () => b.session!.pointers().find((p) => p.name === "Ana")?.spot?.frame === 86642);
+    expect(b.session!.pointers().find((p) => p.name === "Ana")!.spot).toEqual({ panel: "timeline", u: 0.4, v: 0.3, frame: 86642, track: "V1", dy: 0.3 });
+    a.session!.sharePointer({ x: 0.25, y: 0.5, spot: { panel: "desktop", u: 0, v: 0 } as never });
+    await waitFor("Ana's spot dropped", () => { const p = b.session!.pointers().find((q) => q.name === "Ana"); return p?.x === 0.25 && p.spot === undefined; });
     // Moving off Resolve takes it away; out-of-range positions are ignored.
     a.session!.sharePointer(null);
     await waitFor("Ana's went", () => seen(b).join() === "Pat@0.75,0.1:");
