@@ -880,6 +880,8 @@ Goal (§16): §8, §11 and §12.1. Decisions of 2026-11-05 (asked before buildin
 
   Following by clicking an initial says the same as `/follow`. A mistake ("No one called Kim is here") shows only on this PC. Shared lines stay in the history and don't fade.
 
+- **Two-PC test, part 1 (`docs/m8-two-pc-test.md`), 2026-11-05, Free 21.1.2 on both PCs: passed** after fixes found while testing: Copy shows it worked; event colours in the bar; item-marker change lines know where to jump; a close button on the start card; long chats no longer squeeze and cut lines; `/timestamp` works before the playhead first moves.
+
 ### 24.6 Verification
 - The mockup reviewed against the guidelines (the apple-design skill) and approved by the user, before building. **Approved 2026-11-05.**
 - **Bar probe, 2026-11-05: works** (findings "M8 bar probe"): the always-on-top acrylic bar stays above Resolve, other apps and Resolve's Full Screen Window.
