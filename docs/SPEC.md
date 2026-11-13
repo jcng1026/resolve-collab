@@ -966,4 +966,6 @@ Test footage: 1920×1080, 24 fps, 240 frames, start timecode 10:00:00:00; its pr
 7. **Logs, no Export diagnostics** (the user's choice; replaces §14's export): what the terminal prints today goes to a log file per day in `%USERPROFILE%\ResolveCollab\logs`, deleted after 14 days, never media. Whoever needs them takes them from there. M10's "diagnostics export works" is dropped.
 8. **An icon:** simple, previewed first.
 9. **Order, one step at a time,** each built, tested and committed before the next: (1) no terminal, one copy; (2) self-installing bridge; (3) logs; (4) version warning; (5) ffmpeg inside; (6) icon; (7) the installer; (8) security review and fixes; (9) the installed app on PC 2, then a two-PC run with the installed app on both.
+11. **Only the installed app installs the bridge by itself**; the repo copy (`node src/companion.ts`) keeps `node tools/install-bridge.ts`, so the two never overwrite each other's script.
+12. **Both copies share `%USERPROFILE%\ResolveCollab`:** one PC identity, name, sessions, downloads and settings, so a host recognizes the PC whichever copy runs, and Resume works across them.
 10. **The clean-PC test is PC 2** (Windows Sandbox can't run Resolve): the installed app doesn't use PC 2's own Node.
