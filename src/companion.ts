@@ -41,6 +41,7 @@ import { whereText } from "./presence.ts";
 import { type Approval, Session } from "./session.ts";
 import { findHostSession } from "./session-record.ts";
 import type { Answer, Conflict } from "./sync/reconcile.ts";
+import { logToFiles } from "./logfile.ts";
 import { claimOneCopy } from "./one-copy.ts";
 import { CompanionWindow } from "./window/window-host.ts";
 
@@ -92,6 +93,8 @@ if (values.fake) {
 // The bridge only writes backups under <inbox parent>\backups (SPEC §19.4).
 const home = dirname(inboxDir);
 const sessionsDir = join(home, "sessions");
+// Everything printed also goes to a log file per day, kept 14 days (SPEC §26.1).
+if (!values.fake) logToFiles(join(home, "logs"));
 
 // --- one companion at a time (SPEC §26.1) ------------------------------------------------
 
