@@ -43,6 +43,7 @@ import { findHostSession } from "./session-record.ts";
 import type { Answer, Conflict } from "./sync/reconcile.ts";
 import { logToFiles } from "./logfile.ts";
 import { claimOneCopy } from "./one-copy.ts";
+import { APP_VERSION } from "./version.ts";
 import { CompanionWindow } from "./window/window-host.ts";
 
 const RESOLVE_LOG = join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"),
@@ -535,6 +536,7 @@ async function runSession(choice: Choice): Promise<string> {
     ...(forceTier ? { forceTier: forceTier as 2 | 3 } : {}),
     userBusy: () => mouse.held,
     ...(values.fake ? {} : { bridgeBuild: localBridgeBuild() }),
+    version: APP_VERSION,
   });
   session = s;
   layoutWatch.start();

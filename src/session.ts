@@ -80,6 +80,8 @@ export interface SessionOptions {
   // The build of the bridge this companion was installed with: a bridge in
   // Resolve reporting another one is out of date (bridge-build.ts).
   bridgeBuild?: string;
+  // This app's version, compared with the others' (SPEC §26.1).
+  version?: string;
 }
 
 type Message = Record<string, JsonValue>;
@@ -146,6 +148,7 @@ export class Session {
   private readonly connected = new Set<string>();
   // Host: members let in and connected now (short ID → name), and PCs being asked about.
   private readonly admitted = new Map<string, string>();
+  private readonly versionOf = new Map<string, string>(); // a joining PC's app version, "" when it didn't say
   private readonly asking = new Set<string>();
   private approvals: Promise<void> = Promise.resolve();
   // Member.
@@ -652,7 +655,7 @@ export class Session {
 
   // The code says which opening of the session this PC was invited to (§22.1).
   private joinMessage(): Message {
-    return { type: "join", name: this.options.name, code: this.options.peers.code };
+    return { type: "join", name: this.options.name, code: this.options.peers.code, ...(this.options.version ? { version: this.options.version } : {}) };
   }
 
   private peerJoined(id: string): void {
@@ -713,7 +716,10 @@ export class Session {
 
   private async hostMessage(message: Message, from: string): Promise<void> {
     const host = this.host!;
-    if (message.type === "join") return this.joinRequest(cleanName(message.name), from, message.code);
+    if (message.type === "join") {
+      this.versionOf.set(from, typeof message.version === "string" && /^\d{1,4}\.\d{1,4}\.\d{1,4}$/.test(message.version) ? message.version : "");
+      return this.joinRequest(cleanName(message.name), from, message.code);
+    }
     if (!this.admitted.has(from)) return; // nothing from PCs not let in
     switch (message.type) {
       case "chat":
@@ -818,6 +824,12 @@ export class Session {
     this.admitted.set(id, name);
     this.options.log(`${name} (${id}) ${how}`);
     this.event(`${name} ${how === "rejoined" ? "rejoined" : "joined"}`, "good");
+    // Different versions may not understand each other fully: a red line for everyone (SPEC §26.1).
+    const theirs = this.versionOf.get(id) ?? "";
+    const mine = this.options.version;
+    if (mine && theirs !== mine) {
+      this.event(`${name} is on ${theirs ? `ResolveCollab ${theirs}` : "an older ResolveCollab"} and ${this.record?.hostName ?? "the host"} is on ${mine}: install the same version on both`, "bad");
+    }
     this.options.peers.sendTo(id, this.welcome(this.host!));
     this.peopleChanged(); // for everyone else; the newcomer's welcome has it
     this.media?.peerJoined(); // what the host has, for the newcomer too

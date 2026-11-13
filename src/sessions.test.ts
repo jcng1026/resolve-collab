@@ -64,7 +64,7 @@ function makePc(name: string): Pc {
   return pc;
 }
 
-async function connect(pc: Pc, role: "host" | "member", code: string, extra: { resume?: boolean; graceMs?: number } = {}): Promise<void> {
+async function connect(pc: Pc, role: "host" | "member", code: string, extra: { resume?: boolean; graceMs?: number; version?: string } = {}): Promise<void> {
   pc.ended = undefined;
   pc.bridge = new BridgeClient({ logPath: join(pc.dir, "ResolveDebug.txt"), inboxDir: join(pc.dir, "inbox"), pollMs: 20 });
   pc.peers = new PeerLink(code, { bootstrap: testnet.bootstrap, seed: pc.seed });
@@ -475,4 +475,19 @@ describe.skipIf(!ffmpeg)("missing media (SPEC §25)", () => {
     await close(mo, false);
     await close(host);
   }, 120_000);
+});
+
+describe("versions (SPEC §26.1)", () => {
+  it("tells everyone when a PC on another version joins, and lets it in", async () => {
+    const host = makePc("Pat");
+    const jo = makePc("Jo");
+    const code = newInviteCode();
+    await connect(host, "host", code, { version: "1.0.0" });
+    await connect(jo, "member", code, { version: "1.0.1" });
+    const warning = "Jo is on ResolveCollab 1.0.1 and Pat is on 1.0.0: install the same version on both";
+    await waitFor("both see the warning", () => [host, jo].every((pc) => pc.session!.lines().some((l) => l.text === warning && l.tone === "bad")));
+    expect(jo.session!.people().filter((p) => p.online).length).toBe(2);
+    await close(jo, false);
+    await close(host);
+  }, 60_000);
 });
