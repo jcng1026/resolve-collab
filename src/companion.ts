@@ -27,6 +27,7 @@ import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import { parseArgs } from "node:util";
 import { localBridgeBuild } from "./bridge/bridge-build.ts";
+import { installBridge } from "./bridge/install.ts";
 import { BridgeClient } from "./bridge/bridge-client.ts";
 import { FakeBridge } from "./bridge/fake-bridge.ts";
 import { LayoutWatch } from "./bridge/layout-watch.ts";
@@ -98,6 +99,32 @@ let reveal = () => {};
 if (!(await claimOneCopy(() => reveal()))) {
   console.log("ResolveCollab is already running; its window was brought forward.");
   process.exit(0);
+}
+
+// --- the bridge in Resolve: the installed app puts it there itself (SPEC §26.1) ---------------
+
+let bridgeInstalled: "new" | "updated" | "same" | "failed" | undefined;
+if (values.app && !values.fake) {
+  try {
+    const r = installBridge(DEFAULT_INBOX);
+    bridgeInstalled = r.state;
+    if (r.state !== "same") console.log(`${r.state === "new" ? "added" : "updated"} the ResolveCollab script in Resolve (${r.path})`);
+  } catch (e) {
+    bridgeInstalled = "failed";
+    console.log(`couldn't put the ResolveCollab script into Resolve: ${(e as Error).message}`);
+  }
+}
+
+// What the start card says about Resolve's bridge.
+function bridgeHint(): string {
+  const start = "Workspace › Scripts › ResolveCollab";
+  if (bridgeInstalled === "failed") return "ResolveCollab couldn't put its script into Resolve; see the log.";
+  if (!resolveAnswers) return bridgeInstalled === "new" ? `ResolveCollab added its script to Resolve. Restart Resolve, then ${start}.` : `In Resolve: ${start}.`;
+  if (!values.fake && runningBuild !== undefined && runningBuild !== localBridgeBuild()) {
+    return values.app ? `Resolve is running an older ResolveCollab script. In Resolve, start ${start} again.`
+      : `Resolve is running another ResolveCollab script: run node tools/install-bridge.ts, then start ${start} again.`;
+  }
+  return "";
 }
 
 // --- the window (SPEC §24) --------------------------------------------------------
@@ -287,6 +314,9 @@ bridge.on("event", (e: { type?: unknown; project?: { id?: unknown; name?: unknow
   refresh();
 });
 bridge.on("attached", () => void bridge.send({ type: "mp.snapshot" }));
+// Which bridge Resolve runs: an older one after an update is started again (SPEC §26.1).
+let runningBuild: string | undefined;
+bridge.on("build", (build: string | undefined) => { runningBuild = build; refresh(); });
 bridge.on("alive", (alive: boolean) => {
   resolveAnswers = alive;
   allowKeys();
@@ -390,7 +420,7 @@ const pageName = (page: string | undefined) => (page ? `${page[0]!.toUpperCase()
 
 function windowState(): object {
   const name = identity?.name ?? "";
-  const start = { bridge: resolveAnswers, project: openProject?.name ?? "", canResume: !!openProject && !!findHostSession(sessionsDir, openProject.id), joining, message: startMessage };
+  const start = { bridge: resolveAnswers, hint: bridgeHint(), project: openProject?.name ?? "", canResume: !!openProject && !!findHostSession(sessionsDir, openProject.id), joining, message: startMessage };
   if (!session) return { view: "start", name, start };
   const s = session;
   const review = [...waiting].find(([, w]) => w.kind === "review");

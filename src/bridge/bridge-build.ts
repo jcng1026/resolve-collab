@@ -23,6 +23,6 @@ export function localBridgeBuild(): string {
 
 export function buildWarning(expected: string, running: string | undefined): string | null {
   if (running === expected) return null;
-  return "The ResolveCollab bridge running in Resolve isn't the one this companion was installed with. "
-    + "Run `node tools/install-bridge.ts`, then start Workspace > Scripts > ResolveCollab again in Resolve.";
+  return "The ResolveCollab bridge running in Resolve isn't the one this companion has. "
+    + "Start Workspace > Scripts > ResolveCollab again in Resolve (from the repo, run `node tools/install-bridge.ts` first).";
 }
