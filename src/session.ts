@@ -645,7 +645,7 @@ export class Session {
   private refused(proposal: string, error: string): void {
     this.stepOf.delete(proposal);
     this.sync.refused(proposal, error);
-    this.timelines.refused(proposal);
+    this.timelines.refused(proposal, error);
   }
 
   // --- peers ----------------------------------------------------------------------

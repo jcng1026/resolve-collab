@@ -30,6 +30,12 @@ function input(extra: Partial<TimelineIdentifyInput>): TimelineIdentifyInput {
 }
 
 describe("timeline identification", () => {
+  it("reads a still image's speed of 0 as no speed (100), which the session accepts", () => {
+    const out = identifyTimelineState(input({ items: [local(1, 1, 0, { name: "images.png", speed: 0 })] }));
+    const item = Object.values(out.model.items).find((i) => i.name === "images.png")!;
+    expect(item.speed).toBe(100); // a speed of 0 is refused by the host as "bad speed"
+  });
+
   it("keeps the right tracks when a middle track is deleted", () => {
     const trackMap = new Map<string, TrackLists>([[id(1), { video: [id(11), id(12), id(13)], audio: [] }]]);
     const itemMap = new Map([["L1", id(30)], ["L3", id(31)]]);

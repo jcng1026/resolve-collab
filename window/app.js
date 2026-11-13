@@ -95,7 +95,7 @@ function renderUrgent() {
   box.replaceChildren(
     ...(items.length > shown.length ? [h("div", { class: "more-waiting" }, `+${items.length - shown.length} more waiting · open to see all`)] : []),
     ...shown.map((u) => before.get(u.id) && before.get(u.id).dataset.text === u.text ? before.get(u.id) : card(u, fresh.includes(u))),
-    prog ? progressCard(prog) : null,
+    ...(prog ? [progressCard(prog)] : []),
   );
 }
 // Media on its way (SPEC §25.1): plain glass, since nothing waits on the person.

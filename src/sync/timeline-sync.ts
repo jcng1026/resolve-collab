@@ -98,6 +98,10 @@ export class TimelineSync {
   private localTimelines = new Map<string, string>(); // collab → local, from the last pass
   private catchUp = true;
   private readonly pending = new Map<string, Pending>();
+  // Changes the host refused as bad data: not proposed again until they differ
+  // (else the same refusal repeats every pass, many times a second).
+  private readonly sent = new Map<string, string>(); // proposal → the op, as JSON
+  private readonly refusedOps = new Set<string>();
   private basedOn: number | undefined; // seq of the session state last compared (SPEC §23.1)
   private expiry: NodeJS.Timeout | undefined;
   private readonly busy = new Set<string>();
@@ -193,7 +197,12 @@ export class TimelineSync {
     this.schedule();
   }
 
-  refused(proposal: string): void {
+  refused(proposal: string, error = ""): void {
+    const op = this.sent.get(proposal);
+    if (op && error !== "raced" && !this.refusedOps.has(op)) {
+      this.refusedOps.add(op);
+      this.options.log(`a timeline change can't be synced (${error}); it's tried again once it changes in Resolve`);
+    }
     this.settle(proposal);
     // Compare again: Resolve still shows the change the host refused.
     this.schedule();
@@ -353,7 +362,7 @@ export class TimelineSync {
     this.previous = ids.model;
     this.catchUp = false;
 
-    for (const op of propose) this.sendProposal(op, kept.has(op));
+    for (const op of propose) if (!this.refusedOps.has(JSON.stringify(op))) this.sendProposal(op, kept.has(op));
     this.retrySoon = false;
     for (const op of keep) await this.applyOp(op, session, timeline);
     await this.applyBatch(apply, session, timeline);
@@ -402,6 +411,8 @@ export class TimelineSync {
     } else {
       this.pending.set(fieldKey(kind, op.id, EXISTS), { value: op.type, at, proposal });
     }
+    this.sent.set(proposal, JSON.stringify(op));
+    if (this.sent.size > 1000) this.sent.delete(this.sent.keys().next().value!);
     this.options.propose(op, proposal, this.basedOn, keep);
     // A proposal never answered (the host went away) expires: compare again then.
     clearTimeout(this.expiry);

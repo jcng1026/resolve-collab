@@ -250,7 +250,8 @@ export function identifyTimelineState(input: TimelineIdentifyInput): TimelineIde
     if (it.kind === "clip") {
       item.media = media!;
       item.srcStart = it.srcStart ?? 0;
-      item.speed = it.speed ?? 100;
+      // A still image has no playback speed: Resolve reports 0 for it.
+      item.speed = it.speed !== undefined && it.speed > 0 ? it.speed : 100;
       item.link = "";
     }
     if (it.kind === "clip" || it.kind === "textplus") {
