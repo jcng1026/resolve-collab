@@ -1,0 +1,83 @@
+{
+  "collectedAt": "2026-11-13T15:02:26.878Z",
+  "roundTripMs": null,
+  "requestsSent": 0,
+  "echoesSeen": 0,
+  "stages": [
+    {
+      "stage": "started",
+      "at": 12600
+    },
+    {
+      "stage": "done",
+      "at": 15495
+    }
+  ],
+  "probe": {
+    "open": "Test10",
+    "failed": {},
+    "kept": {
+      "1": "Test10",
+      "2": "Test",
+      "3": "Test0",
+      "4": "Test1",
+      "5": "Test2",
+      "6": "test2 (collab · hosted by niga)",
+      "7": "Test3",
+      "8": "Test5",
+      "9": "Test6",
+      "10": "Test7",
+      "11": "Test8"
+    },
+    "note": "Completed.",
+    "stillOpen": "Test10",
+    "probes": {},
+    "persist": {},
+    "deleted": {
+      "1": "RC M3 Check",
+      "2": "RC M3 Check 2",
+      "3": "RC M4 Check",
+      "4": "RC M4 Check 10",
+      "5": "RC M4 Check 11",
+      "6": "RC M4 Check 12",
+      "7": "RC M4 Check 13",
+      "8": "RC M4 Check 14",
+      "9": "RC M4 Check 2",
+      "10": "RC M4 Check 3",
+      "11": "RC M4 Check 4",
+      "12": "RC M4 Check 5",
+      "13": "RC M4 Check 6",
+      "14": "RC M4 Check 7",
+      "15": "RC M4 Check 8",
+      "16": "RC M4 Check 9",
+      "17": "RC M4 Check Tier2",
+      "18": "RC M5 Check 1",
+      "19": "RC M5 Check 2",
+      "20": "RC M5 Check 3",
+      "21": "RC M6 Host (collab · hosted by Fake host)",
+      "22": "RC M7 Host (collab · hosted by Fake host)",
+      "23": "RC M7 Host (collab · hosted by Fake host) (2)",
+      "24": "RC M7 Host (collab · hosted by Fake host) (3)",
+      "25": "RC M7 Host (collab · hosted by Fake host) (4)",
+      "26": "RC M7 Host (collab · hosted by Fake host) (5)",
+      "27": "RC M7 Host (collab · hosted by Fake host) (6)",
+      "28": "RC M9 Host (collab · hosted by Fake host)",
+      "29": "RC M9 Host (collab · hosted by Fake host) (2)",
+      "30": "RC M9 Host (collab · hosted by Fake host) (3)",
+      "31": "ResolveCollab Feasibility 46ba87e8",
+      "32": "ResolveCollab Feasibility bd7d72c7",
+      "33": "ResolveCollab Feasibility bd7d72c7 imported",
+      "34": "ResolveCollab FPS Probe fa17d34e",
+      "35": "ResolveCollab M3 Probe 014efd7b",
+      "36": "ResolveCollab M3 Probe 014efd7b imported",
+      "37": "ResolveCollab M4 Alt Probe 0513d4dc",
+      "38": "ResolveCollab M4 Alt Probe 09c3064d",
+      "39": "ResolveCollab M4 Alt Probe 78daea24",
+      "40": "ResolveCollab M4 Probe 4bf35f99",
+      "41": "ResolveCollab M4 Probe e7d44300",
+      "42": "ResolveCollab M5 Copy Probe a1e6cb62",
+      "43": "ResolveCollab M5 Probe 3fafd012",
+      "44": "ResolveCollab M9 Media Probe d98bf7f7"
+    }
+  }
+}
