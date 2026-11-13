@@ -46,10 +46,19 @@ const eventClass = (l) => (l.tone === "good" ? "event-good" : l.tone === "bad" ?
 
 // --- the outer shape: bar, strip, review, start ---------------------------------
 
+// Collapsing is seamless: the strip fades out while the window shrinks (0.18 s,
+// window/main.mjs), then the bar fades in. Until then the strip counts as open.
+const GROW_MS = 180;
+let closingUntil = 0;
 function expanded() {
-  return state.view === "review" || (state.view === "session" && layout.expanded);
+  return state.view === "review" || (state.view === "session" && (layout.expanded || Date.now() < closingUntil));
 }
 function setExpanded(on) {
+  if (!on && layout.expanded && state.view === "session") {
+    closingUntil = Date.now() + GROW_MS;
+    $("strip").classList.add("fading");
+    setTimeout(() => { $("strip").classList.remove("fading"); render(); }, GROW_MS + 10);
+  }
   layout.expanded = on;
   rc.send({ type: "expand", on });
   render();
@@ -202,8 +211,16 @@ function renderList() {
 
 function chatItems() {
   if (!state.lines.length) return [h("p", { class: "empty" }, "No messages yet · say hi below")];
-  return state.lines.map((l) => {
-    if (l.kind === "chat") return h("div", { class: "msg" }, h("div", { class: "meta" }, h("strong", { class: "who", style: { color: colorOf(l.author) } }, l.name), h("span", { class: "time" }, time(l.at))), h("p", {}, ...withTimecodes(l.text)));
+  return state.lines.map((l, i) => {
+    if (l.kind === "chat") {
+      // One name for a run of messages from the same person within 5 minutes; the time on hover.
+      const prev = state.lines[i - 1];
+      const more = prev && prev.kind === "chat" && prev.author === l.author && l.at - prev.at < 5 * 60_000;
+      const at = h("span", { class: "time on-hover" }, time(l.at));
+      return h("div", { class: `msg${more ? " more" : ""}`, title: new Date(l.at).toLocaleString() },
+        more ? null : h("div", { class: "meta" }, h("strong", { class: "who", style: { color: colorOf(l.author) } }, l.name), at),
+        h("p", {}, ...withTimecodes(l.text), more ? at : null));
+    }
     if (l.kind === "event") return h("div", { class: `event-line ${eventClass(l)}` }, l.text, " ", h("span", { class: "time" }, `· ${time(l.at)}`));
     return h("button", { class: "change-line", title: l.timeline ? "Take me there" : undefined, disabled: !l.timeline, onclick: () => rc.send({ type: "jump", line: l.id }) },
       h("span", { style: { color: colorOf(l.author) } }, l.name), ` · ${time(l.at)} · ${l.text}`);
@@ -240,6 +257,13 @@ function settingsBody(rerender) {
     tick("sound", "Play a sound for items that need me"),
     tick("showCursors", "Show others' cursors"),
     tick("shareCursor", "Share my cursor"),
+    // This project's media folder (SPEC §25.1); new downloads go to a new one, earlier ones stay.
+    state.view === "session" && state.media ? [
+      h("div", { class: "label" }, "Downloaded media for this project"),
+      h("div", { class: "folder-box" }, h("p", { class: "mono small path" }, state.media.folder),
+        h("div", { class: "head" }, h("button", { class: "pill", onclick: () => rc.send({ type: "open-folder", path: state.media.folder }) }, "Open folder"),
+          h("button", { class: "pill", onclick: () => rc.send({ type: "pick-folder" }) }, "Change…"))),
+    ] : null,
   ];
 }
 
@@ -277,27 +301,31 @@ function renderPanel(kind) {
   $("panel").replaceChildren(head(kind === "session" ? "Session" : kind === "media" ? "Media" : "Settings"), h("div", { class: "sheet-body" }, ...body.flat()));
 }
 
-// The Media panel (SPEC §25.1, the approved mockup): the folder, then each clip by what it needs.
+// The Media panel (SPEC §25.1): the folder, then each clip by what it needs, as
+// a grid of first-frame thumbnails like Resolve's media pool (touch-ups).
+let mediaPicked = null;
+const length = (sec) => {
+  const t = Math.round(sec);
+  const two = (n) => String(n).padStart(2, "0");
+  return t >= 3600 ? `${Math.floor(t / 3600)}:${two(Math.floor(t / 60) % 60)}:${two(t % 60)}` : `${Math.floor(t / 60)}:${two(t % 60)}`;
+};
 const size = (n) => (n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1024 ** 2))} MB`);
 function mediaBody() {
   const m = state.media;
   if (!m) return [h("p", { class: "empty" }, "Media shows here once you're in a session.")];
   const locate = (i) => h("button", { class: "pill", onclick: () => rc.send({ type: "pick-file", clip: i.id, name: i.name }) }, "Locate file\u2026");
   const original = (i, cls) => h("button", { class: `pill ${cls}`, onclick: () => rc.send({ type: "media-original", clip: i.id }) }, `Download original \u00b7 ${size(i.size)}`);
-  const row = (i) => {
+  // What a clip needs, and its buttons: shown under the grid when its tile is picked.
+  const about = (i) => {
     let status = "Original, here";
     let buttons = [];
-    let bar = null;
-    let cls = "media-row";
     if (i.state === "noproxy" || i.state === "failed") {
-      cls += " needs";
       status = i.state === "noproxy" ? `No proxy possible: this format can't be converted. The original is ${size(i.size)}.` : i.note || "The download didn't work.";
       buttons = [original(i, "urgent"), locate(i)];
     } else if (i.state === "downloading" || i.state === "paused") {
       const pct = Math.round(i.progress * 100);
       const what = i.kind === "proxy" ? "Proxy" : "Original";
       status = i.making ? `${i.from || "Someone"} is making the proxy \u00b7 ${pct}%` : `${i.state === "paused" ? "Paused \u00b7 " : ""}${what}${i.from ? ` from ${i.from}` : ""} \u00b7 ${pct}%`;
-      bar = meter(i.name, pct, i.state === "paused");
       buttons = [h("button", { class: "pill", onclick: () => rc.send({ type: i.state === "paused" ? "media-resume" : "media-pause", clip: i.id }) }, i.state === "paused" ? "Resume" : "Pause")];
     } else if (i.state === "queued") {
       status = `${i.kind === "proxy" ? "Proxy" : "Original"} next in line`;
@@ -309,9 +337,31 @@ function mediaBody() {
       status = i.note || "Waiting for someone who has it";
       buttons = [locate(i)];
     }
-    return h("li", { class: cls },
+    return { status, buttons };
+  };
+  // A tile like Resolve's media pool: the clip's first frame, its length, a
+  // badge for what it is; picking it shows what it needs below the grid.
+  const badge = (i) => {
+    if (i.state === "noproxy" || i.state === "failed") return h("span", { class: "badge-tile needs", "aria-hidden": "true" }, "!");
+    if (i.state === "proxy") return h("span", { class: "badge-tile" }, "Proxy");
+    if (i.state === "queued") return h("span", { class: "badge-tile" }, "Next");
+    if (i.state === "waiting") return h("span", { class: "badge-tile" }, "Waiting");
+    if (i.state === "paused") return h("span", { class: "badge-tile" }, "Paused");
+    if (i.state === "downloading") return h("span", { class: "badge-tile" }, i.making ? "Making" : `${Math.round(i.progress * 100)}%`);
+    return null;
+  };
+  const tile = (i) => h("li", { class: `tile${mediaPicked === i.id ? " picked" : ""}${i.state === "noproxy" || i.state === "failed" ? " needs" : ""}` },
+    h("button", { class: "thumb", "aria-label": i.name, "aria-pressed": mediaPicked === i.id ? "true" : "false", onclick: () => { mediaPicked = mediaPicked === i.id ? null : i.id; renderPanel("media"); } },
+      i.thumb ? h("img", { src: `rcthumb://t/${i.thumb}`, alt: "", draggable: "false" }) : h("span", { class: "no-thumb", "aria-hidden": "true" }, i.kind === "original" && i.state === "here" && !i.duration ? "\u266b" : ""),
+      badge(i),
+      i.duration ? h("span", { class: "length" }, length(i.duration)) : null,
+      i.state === "downloading" || i.state === "paused" ? h("span", { class: "tile-bar" }, h("span", { style: { width: `${Math.round(i.progress * 100)}%` } })) : null),
+    h("span", { class: "tile-name", title: i.name }, i.name));
+  const detail = (i) => {
+    const { status, buttons } = about(i);
+    return h("div", { class: `tile-detail${i.state === "noproxy" || i.state === "failed" ? " needs" : ""}` },
       h("div", { class: "head" }, h("span", { class: "name" }, i.name), h("span", { class: "small muted" }, i.bin)),
-      h("p", { class: "small muted" }, status), bar,
+      h("p", { class: "small muted" }, status),
       buttons.length ? h("div", { class: "actions" }, ...buttons) : null);
   };
   const groups = [
@@ -328,7 +378,11 @@ function mediaBody() {
         h("button", { class: "pill", onclick: () => rc.send({ type: "open-folder", path: m.folder }) }, "Open folder"))),
     m.originalsBytes ? h("button", { class: "big soft", onclick: () => rc.send({ type: "media-all" }) }, `Download all originals \u00b7 ${size(m.originalsBytes)}`) : null,
     !groups.length && !m.sending.length ? h("p", { class: "empty" }, "Every clip in the session is on this PC.") : null,
-    ...groups.map(([name, rows, cls]) => h("section", { class: "media-group", "aria-label": name }, h("h3", { class: `label ${cls}` }, name), h("ul", {}, ...rows.map(row)))),
+    ...groups.map(([name, rows, cls]) => {
+      const picked = rows.find((i) => i.id === mediaPicked);
+      return h("section", { class: "media-group", "aria-label": name }, h("h3", { class: `label ${cls}` }, name),
+        h("ul", { class: "grid" }, ...rows.map(tile)), picked ? detail(picked) : null);
+    }),
     m.sending.length ? h("section", { class: "media-group", "aria-label": "Sending to others" }, h("h3", { class: "label" }, "Sending to others"),
       h("ul", {}, ...m.sending.map((x) => h("li", { class: "media-row" },
         h("div", { class: "head" }, h("span", { class: "name" }, x.clip), h("span", { class: "small muted" }, `to ${x.name}`)),
@@ -559,3 +613,27 @@ rc.on("state", (s) => {
 rc.on("layout", (l) => { layout = { ...layout, ...l }; render(); });
 rc.on("prefs", (p) => { prefs = { ...prefs, ...p }; });
 render();
+
+// --- quieter when idle (touch-ups): the collapsed bar fades to 60% while the
+// mouse is elsewhere, nothing is typed, no card waits and nothing new came in
+// the last 8 s. Electron fades the whole window, glass included.
+let hovering = false;
+let typing = false;
+let activeUntil = Date.now() + 8000;
+let newest = 0;
+let dimmed = false;
+document.documentElement.addEventListener("mouseenter", () => { hovering = true; quiet(); });
+document.documentElement.addEventListener("mouseleave", () => { hovering = false; quiet(); });
+document.addEventListener("focusin", () => { typing = true; quiet(); });
+document.addEventListener("focusout", () => { typing = false; quiet(); });
+function quiet() {
+  const last = Math.max(0, ...(state.lines || []).map((l) => l.at));
+  if (last > newest) { newest = last; activeUntil = Date.now() + 8000; }
+  const waiting = (state.urgent || []).length > 0 || !!(state.media && state.media.progress);
+  const dim = state.view === "session" && !expanded() && !hovering && !typing && !waiting && Date.now() > activeUntil;
+  if (dim !== dimmed) {
+    dimmed = dim;
+    rc.send({ type: "dim", on: dim });
+  }
+}
+setInterval(quiet, 500);

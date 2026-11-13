@@ -9,7 +9,7 @@
 // package.json, the runtime packages in node_modules\, and ffmpeg\.
 
 import { execFileSync, execSync } from "node:child_process";
-import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -37,6 +37,8 @@ cpSync(join(ROOT, "vendor", "ffmpeg"), join(APP, "ffmpeg"), { recursive: true })
 // Electron as the app's own runtime, its exe named after the app.
 cpSync(join(ROOT, "node_modules", "electron", "dist"), join(APP, "runtime"), { recursive: true });
 renameSync(join(APP, "runtime", "electron.exe"), join(APP, "runtime", "ResolveCollab.exe"));
+// English only: the app's text is English, and Electron's 55 languages are 49 MB.
+for (const f of readdirSync(join(APP, "runtime", "locales"))) if (f !== "en-US.pak") rmSync(join(APP, "runtime", "locales", f));
 
 // Only the packages the app runs on (not Electron's npm wrapper, tests or tools).
 const packages = execSync("npm ls --omit=dev --all --parseable", { cwd: ROOT, encoding: "utf8" })

@@ -4,9 +4,16 @@
 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ThumbCache } from "../src/media/thumbs.ts";
 import { CompanionWindow } from "../src/window/window-host.ts";
 
 const GB = 1024 ** 3;
+// Real first-frame thumbnails from the test media (node tools/feasibility/prepare.ts), under made-up fingerprints.
+const MEDIA = join(import.meta.dirname, "..", "local", "feasibility", "media");
+const thumbsDir = join(tmpdir(), "rc-preview-thumbs");
+const cache = new ThumbCache(thumbsDir);
+const thumbOf = async (n: number, file: string) => (await cache.make(String(n).repeat(64).slice(0, 64), join(MEDIA, file)))?.hash;
+const t = [await thumbOf(1, "camera.mp4"), await thumbOf(2, "original.mp4"), await thumbOf(3, "spare.mp4"), await thumbOf(4, "alt.mp4"), await thumbOf(5, "fps30.mp4")];
 const item = (id: string, name: string, bin: string, state: string, extra: object = {}) =>
   ({ id, name, bin, state, kind: "proxy", progress: 0, got: 0, total: 0, making: false, from: "", size: 2 * GB, note: "", ...extra });
 
@@ -22,17 +29,18 @@ const state = {
     sending: [{ name: "Kim", clip: "Interview_03.mov", making: false }],
     items: [
       item("1", "A001_C003.braw", "Day 1", "noproxy", { size: 4.2 * GB }),
-      item("2", "Interview_03.mov", "Interviews", "downloading", { progress: 0.35, from: "Jo" }),
-      item("3", "Interview_04.mov", "Interviews", "queued"),
-      item("4", "Broll_beach.mp4", "B-roll", "proxy", { size: 2.1 * GB }),
-      item("5", "Broll_city.mp4", "B-roll", "paused", { kind: "original", progress: 0.6, from: "Alex" }),
+      item("2", "Interview_03.mov", "Interviews", "downloading", { progress: 0.35, from: "Jo", thumb: t[0], duration: 754 }),
+      item("3", "Interview_04.mov", "Interviews", "queued", { thumb: t[1], duration: 612 }),
+      item("4", "Broll_beach.mp4", "B-roll", "proxy", { size: 2.1 * GB, thumb: t[2], duration: 18 }),
+      item("8", "Broll_park.mp4", "B-roll", "proxy", { size: 1.4 * GB, thumb: t[4], duration: 9 }),
+      item("5", "Broll_city.mp4", "B-roll", "paused", { kind: "original", progress: 0.6, from: "Alex", thumb: t[3], duration: 31 }),
       item("6", "Drone_01.mp4", "B-roll", "waiting", { note: "Only Kim has it, and they're offline" }),
       item("7", "Theme_v2.wav", "Music", "here", { kind: "original" }),
     ],
   },
 };
 
-const win = new CompanionWindow(join(tmpdir(), "rc-m9-preview.json"));
+const win = new CompanionWindow(join(tmpdir(), "rc-m9-preview.json"), thumbsDir);
 if (!win.start()) throw new Error("Electron didn't start");
 win.on("closed", () => process.exit(0));
 win.on("action", (a: { type: string }) => console.log("action", JSON.stringify(a)));

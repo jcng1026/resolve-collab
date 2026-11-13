@@ -25,9 +25,12 @@ export class CompanionWindow extends EventEmitter {
   private timer: NodeJS.Timeout | undefined;
   private lastOverlay = "";
 
-  constructor(prefsFile: string) {
+  private readonly thumbsDir: string;
+
+  constructor(prefsFile: string, thumbsDir = "") {
     super();
     this.prefsFile = prefsFile;
+    this.thumbsDir = thumbsDir;
   }
 
   get open(): boolean {
@@ -58,7 +61,7 @@ export class CompanionWindow extends EventEmitter {
     server.on("error", () => {});
     server.listen(pipe);
     this.server = server;
-    const env: NodeJS.ProcessEnv = { ...process.env, RC_WINDOW_PREFS: this.prefsFile, RC_PIPE: pipe };
+    const env: NodeJS.ProcessEnv = { ...process.env, RC_WINDOW_PREFS: this.prefsFile, RC_PIPE: pipe, RC_THUMBS: this.thumbsDir };
     delete env.ELECTRON_RUN_AS_NODE;
     const child = spawn(exe, [MAIN], { stdio: "ignore", env });
     this.child = child;

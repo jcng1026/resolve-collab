@@ -295,6 +295,7 @@ export class Session {
       me,
       store: join(dir, "media.json"),
       proxies: this.options.proxiesDir ?? join(this.options.storeDir, "..", "proxies"),
+      thumbs: join(this.options.storeDir, "..", "thumbs"),
       project: () => this.record?.projectName || "Project",
       sync,
       fingerprint: this.options.fingerprint,

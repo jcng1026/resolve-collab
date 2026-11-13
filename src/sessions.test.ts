@@ -455,12 +455,16 @@ describe.skipIf(!ffmpeg)("missing media (SPEC §25)", () => {
     host.fake.importClip(src);
     // Asked once where media goes (§25.1), then the proxy comes by itself.
     await waitFor("Mo is asked where media goes", () => mo.session!.media?.ask?.kind === "folder", 30_000);
+    // Nothing downloaded yet: the grid's thumbnail comes from the host (a small JPEG), checked.
+    await waitFor("the host's thumbnail", () => !!mo.session!.media!.items().find((i) => i.name === "shot.mov")?.thumb, 30_000);
     const folder = join(mo.dir, "Downloaded");
     mo.session!.media!.useFolder(folder);
     const at = () => mo.fake.clipByName("shot.mov")?.path ?? "";
     await waitFor("a proxy stands in for the clip", () => at() === join(folder, "shot (proxy).mp4"), 60_000);
     const item = mo.session!.media!.items().find((i) => i.name === "shot.mov")!;
     expect(item.state).toBe("proxy");
+    // Its thumbnail for the Media grid: the first frame, and its length.
+    await waitFor("a thumbnail", () => !!mo.session!.media!.items().find((i) => i.name === "shot.mov")?.thumb, 30_000);
     // The original on request: Resolve's clip now plays it (§25.2), still the session's clip.
     mo.session!.media!.original(item.id);
     await waitFor("the original replaces the proxy", () => at() === join(folder, "shot.mov"), 60_000);

@@ -133,7 +133,7 @@ function bridgeHint(): string {
 
 // --- the window (SPEC §24) --------------------------------------------------------
 
-const win = values["no-window"] ? undefined : new CompanionWindow(join(home, "window.json"));
+const win = values["no-window"] ? undefined : new CompanionWindow(join(home, "window.json"), join(home, "thumbs"));
 const windowOpen = win?.start() ?? false;
 if (win && !windowOpen) console.log("the window can't start here (is Electron installed?); the terminal keeps working");
 reveal = () => win?.reveal();
@@ -409,8 +409,18 @@ function note(text: string, tone?: "good" | "bad"): void {
   refresh();
 }
 
+// At most 10 a second (a download changes things many times a second):
+// at once when the last was over 0.1 s ago, else at the end of that 0.1 s.
+let refreshAt = 0;
+let refreshTimer: NodeJS.Timeout | undefined;
 function refresh(): void {
-  if (!win?.open) return;
+  if (!win?.open || refreshTimer) return;
+  const wait = refreshAt + 100 - Date.now();
+  if (wait > 0) {
+    refreshTimer = setTimeout(() => { refreshTimer = undefined; refresh(); }, wait);
+    return;
+  }
+  refreshAt = Date.now();
   const state = windowState();
   const text = JSON.stringify(state);
   if (text === lastSent) return;

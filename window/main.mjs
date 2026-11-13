@@ -4,14 +4,26 @@
 // RC_PIPE (Electron's main process can't read stdin on Windows). Nothing from
 // other PCs runs here: the page shows text it's given.
 
-import { app, BrowserWindow, clipboard, dialog, ipcMain, screen, shell } from "electron";
+import { app, BrowserWindow, clipboard, dialog, ipcMain, net, protocol, screen, shell } from "electron";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { connect } from "node:net";
 import { dirname, join } from "node:path";
 import { createInterface } from "node:readline";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+
+// The Media grid's thumbnails: rcthumb://t/<clip fingerprint>, served only
+// from the companion's thumbnail folder, only for a 64-hex name.
+const THUMBS = process.env.RC_THUMBS ?? "";
+protocol.registerSchemesAsPrivileged([{ scheme: "rcthumb", privileges: { standard: true, secure: true } }]);
+function serveThumbs() {
+  protocol.handle("rcthumb", (request) => {
+    const name = new URL(request.url).pathname.slice(1);
+    if (!THUMBS || !/^[0-9a-f]{64}$/.test(name)) return new Response("", { status: 404 });
+    return net.fetch(pathToFileURL(join(THUMBS, `${name}.jpg`)).toString());
+  });
+}
 const PREFS = process.env.RC_WINDOW_PREFS ?? join(app.getPath("userData"), "window.json");
 const WIDTH = 360;
 const MARGIN = 16; // from the screen's right edge
@@ -44,17 +56,41 @@ function area() {
   const at = { x: Math.round(prefs.x ?? 0), y: Math.round(prefs.anchorY ?? 0) };
   return (prefs.x === undefined ? screen.getPrimaryDisplay() : screen.getDisplayNearestPoint(at)).workArea;
 }
-function place() {
+// `smooth`: grown or shrunk over 0.18 s, eased, the anchored edge kept still
+// (expanding and collapsing are seamless). Otherwise at once.
+const GROW_MS = 180;
+let fading;
+let growing;
+function place(smooth = false) {
   const a = area();
   if (prefs.x === undefined) Object.assign(prefs, { x: a.x + a.width - WIDTH - MARGIN, anchorY: a.y + a.height - BOTTOM_GAP, dir: "up" });
   const max = Math.round(a.height * 0.8);
   const height = Math.min(max, expanded ? max : Math.max(60, Math.ceil(contentHeight)));
   const x = Math.min(Math.max(prefs.x, a.x), a.x + a.width - WIDTH);
   const y = prefs.dir === "down" ? Math.max(prefs.anchorY, a.y) : Math.min(prefs.anchorY, a.y + a.height) - height;
-  placing = true;
-  win.setBounds({ x, y: Math.max(a.y, y), width: WIDTH, height });
-  placing = false;
+  const target = { x, y: Math.max(a.y, y), width: WIDTH, height };
   win.webContents.send("layout", { dir: prefs.dir, expanded });
+  clearInterval(growing);
+  if (!smooth) {
+    placing = true;
+    win.setBounds(target);
+    placing = false;
+    return;
+  }
+  const from = win.getBounds();
+  const start = Date.now();
+  placing = true;
+  growing = setInterval(() => {
+    const t = Math.min(1, (Date.now() - start) / GROW_MS);
+    const e = 1 - (1 - t) ** 3;
+    const at = (p, q) => Math.round(p + (q - p) * e);
+    win.setBounds({ x: target.x, y: at(from.y, target.y), width: WIDTH, height: at(from.height, target.height) });
+    if (t >= 1) {
+      clearInterval(growing);
+      placing = false;
+      if (!expanded) place(); // the bar's height may have changed meanwhile
+    }
+  }, 1000 / 60);
 }
 
 // After the person drags it: remember where, and which way it now opens.
@@ -105,6 +141,7 @@ function showOverlay(o) {
 }
 
 app.whenReady().then(() => {
+  serveThumbs();
   win = new BrowserWindow({
     width: WIDTH, height: contentHeight, show: false, frame: false, resizable: false, maximizable: false, fullscreenable: false,
     title: "ResolveCollab", icon: join(HERE, "icon", "icon.ico"), backgroundMaterial: "acrylic", backgroundColor: "#00000000",
@@ -136,12 +173,24 @@ app.whenReady().then(() => {
     switch (message.type) {
       case "size":
         if (Number.isFinite(message.height)) contentHeight = message.height;
-        if (!expanded) place();
+        if (!expanded && !placing) place(); // while growing, the end settles it
         return;
       case "expand":
         expanded = message.on === true;
-        place();
+        place(true);
         return;
+      case "dim": { // quieter when idle: the whole window to 60%, over 0.2 s
+        const to = message.on === true ? 0.6 : 1;
+        const from = win.getOpacity();
+        const start = Date.now();
+        clearInterval(fading);
+        fading = setInterval(() => {
+          const t = Math.min(1, (Date.now() - start) / 200);
+          win.setOpacity(from + (to - from) * t);
+          if (t >= 1) clearInterval(fading);
+        }, 1000 / 60);
+        return;
+      }
       case "copy":
         if (typeof message.text === "string") clipboard.writeText(message.text.slice(0, 200));
         return;

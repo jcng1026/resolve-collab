@@ -9,6 +9,7 @@ import type { Clip, Fingerprint } from "../sync/media-pool.ts";
 import type { BridgeResult } from "../sync/media-pool-sync.ts";
 import { defaultMediaFolder, mediaPath } from "./paths.ts";
 import { ProxyCache, classify } from "./proxy.ts";
+import { ThumbCache } from "./thumbs.ts";
 import { type DownloadView, type Got, type JsonObject, type Kind, MediaTransfer, type Prepared, sha256File } from "./transfer.ts";
 
 const ASK_ABOVE = 5 * 1024 ** 3; // a batch of proxies bigger than this is asked first (§25.1)
@@ -29,6 +30,7 @@ export interface MediaManagerOptions {
   me: string;
   store: string; // media.json in the session's folder
   proxies: string; // the companion's proxy folder
+  thumbs: string; // the companion's thumbnail folder
   project: () => string;
   sync: MediaSync;
   fingerprint: (path: string) => Promise<Fingerprint | null>;
@@ -65,12 +67,16 @@ export interface MediaItem {
   from: string;
   size: number; // the original's
   note: string;
+  thumb?: string; // its thumbnail's name (the clip's fingerprint), once there is one
+  duration: number; // seconds, 0 when not known
 }
 
 export class MediaManager {
   private readonly options: MediaManagerOptions;
   private readonly transfer: MediaTransfer;
   private readonly cache: ProxyCache;
+  private readonly thumbs: ThumbCache;
+  private readonly thumbAsked = new Map<string, number>(); // clip → when its thumbnail was asked for
   private store: Store;
   private readonly haveOf = new Map<string, { originals: Set<string>; proxies: Set<string> }>();
   private readonly fps = new Map<string, { key: string; fp: Fingerprint | null }>(); // path → its fingerprint, by size and time
@@ -89,6 +95,7 @@ export class MediaManager {
   constructor(options: MediaManagerOptions) {
     this.options = options;
     this.cache = new ProxyCache(options.proxies);
+    this.thumbs = new ThumbCache(options.thumbs);
     this.store = { standIns: {}, downloaded: {}, approved: [], later: [], ...load(options.store) };
     this.transfer = new MediaTransfer({
       send: options.send,
@@ -139,7 +146,9 @@ export class MediaManager {
       const clip = sync.sessionClip(id);
       if (!clip) continue;
       const d = downloads.get(id);
-      const item: MediaItem = { id, name: clip.name, bin: sync.binNames(id).join(" / "), state: "here", kind: "original", progress: 0, got: 0, total: 0, making: false, from: "", size: clip.file?.size ?? 0, note: "" };
+      const item: MediaItem = { id, name: clip.name, bin: sync.binNames(id).join(" / "), state: "here", kind: "original", progress: 0, got: 0, total: 0, making: false, from: "", size: clip.file?.size ?? 0, note: "", duration: 0 };
+      const t = clip.file ? this.thumbs.get(clip.file.hash) : undefined;
+      if (t) Object.assign(item, { thumb: t.hash, duration: t.duration });
       if (d) Object.assign(item, this.fromDownload(d));
       else if (this.store.standIns[id]) Object.assign(item, { state: "proxy", kind: "proxy" });
       else if (this.store.downloaded[id] && !sync.missing.has(id)) Object.assign(item, { state: "here" });
@@ -222,6 +231,7 @@ export class MediaManager {
 
   private async pass(): Promise<void> {
     await this.announce();
+    this.thumbnails();
     const { sync } = this.options;
     // Proxies for missing clips, by themselves (§25.1): the folder asked once, a big batch asked first.
     const want = [...sync.missing.keys()].filter((id) => !this.store.standIns[id] && !this.noProxy.has(id) && !this.failed.has(id)
@@ -360,7 +370,48 @@ export class MediaManager {
 
   // --- serving ----------------------------------------------------------------------
 
+  // --- thumbnails (the Media grid) ----------------------------------------------------
+
+  // Each clip the Media panel shows gets one: made here from its file on this
+  // PC, else asked from a PC that has it (again after a minute if none came).
+  private thumbnails(): void {
+    for (const item of this.items()) {
+      const clip = this.options.sync.sessionClip(item.id);
+      const hash = clip?.file?.hash;
+      if (!hash || item.thumb) continue;
+      const local = this.store.standIns[item.id] ?? this.store.downloaded[item.id] ?? this.options.sync.localPath(item.id);
+      if (local && existsSync(local)) {
+        void this.thumbs.make(hash, local).then((t) => { if (t) this.changed(); });
+        continue;
+      }
+      const source = this.sources(item.id, "proxy")[0];
+      if (!source || Date.now() - (this.thumbAsked.get(item.id) ?? 0) < 60_000) continue;
+      this.thumbAsked.set(item.id, Date.now());
+      this.options.send(source, { type: "media-thumb-get", clip: item.id });
+    }
+  }
+
+  private async thumbAsk(from: string, m: JsonObject): Promise<void> {
+    const id = typeof m.clip === "string" ? m.clip : "";
+    const clip = this.options.sync.sessionClip(id);
+    const hash = clip?.file?.hash;
+    if (!hash || !this.options.isPerson(from)) return;
+    const path = this.options.sync.localPath(id) ?? this.store.standIns[id];
+    const t = this.thumbs.get(hash) ?? (path && existsSync(path) ? await this.thumbs.make(hash, path) : undefined);
+    const jpg = t && (await this.thumbs.read(hash));
+    if (jpg) this.options.send(from, { type: "media-thumb", clip: id, jpg: jpg.toString("base64"), duration: t.duration });
+  }
+
+  private async thumbArrived(from: string, m: JsonObject): Promise<void> {
+    const id = typeof m.clip === "string" ? m.clip : "";
+    const hash = this.options.sync.sessionClip(id)?.file?.hash;
+    if (!hash || !this.options.isPerson(from) || typeof m.jpg !== "string" || m.jpg.length > 100_000) return;
+    if (await this.thumbs.put(hash, Buffer.from(m.jpg, "base64"), Number(m.duration))) this.changed();
+  }
+
   async message(from: string, m: JsonObject): Promise<void> {
+    if (m.type === "media-thumb-get") return this.thumbAsk(from, m);
+    if (m.type === "media-thumb") return this.thumbArrived(from, m);
     if (m.type === "media-offer" && typeof m.error === "string" && /no proxy/.test(m.error)) {
       const d = this.transfer.list().find((x) => x.source === from && x.kind === "proxy");
       if (d) this.noProxy.add(d.clip);
