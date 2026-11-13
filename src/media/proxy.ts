@@ -7,15 +7,22 @@ import { execFile, spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { dirname, extname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const run = promisify(execFile);
 const STILLS = new Set([".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp", ".gif", ".webp", ".exr", ".dpx", ".tga", ".psd", ".heic"]);
 
-// ffmpeg: $FFMPEG, then winget's shim or package folder, then PATH.
-// shortcut: M10 bundles an LGPL build and looks there first (SPEC §25.1).
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+// ffmpeg: $FFMPEG; then the LGPL build that comes with the app (SPEC §26.1:
+// the installed app's "ffmpeg" folder, the repo's "vendorfmpeg"); then
+// winget's shim or package folder; then PATH.
 export function findFfmpeg(): string | undefined {
   if (process.env.FFMPEG && existsSync(process.env.FFMPEG)) return process.env.FFMPEG;
+  for (const dir of [join(ROOT, "ffmpeg"), join(ROOT, "vendor", "ffmpeg")]) {
+    if (existsSync(join(dir, "ffmpeg.exe"))) return join(dir, "ffmpeg.exe");
+  }
   const winget = join(process.env.LOCALAPPDATA ?? "", "Microsoft", "WinGet");
   const link = join(winget, "Links", "ffmpeg.exe");
   if (existsSync(link)) return link;
@@ -35,6 +42,23 @@ export function findFfmpeg(): string | undefined {
 }
 
 const probeOf = (ffmpeg: string) => join(dirname(ffmpeg), `ffprobe${extname(ffmpeg)}`);
+
+// The H.264 encoder to use: x264 where this ffmpeg has it (a GPL build), else
+// Windows' own (h264_mf, in the LGPL build), which takes a bitrate, not a quality.
+const encoders = new Map<string, Promise<string[]>>();
+async function h264Args(ffmpeg: string, src: string): Promise<string[]> {
+  if (!encoders.has(ffmpeg)) encoders.set(ffmpeg, run(ffmpeg, ["-hide_banner", "-encoders"], { windowsHide: true, timeout: 30_000 }).then((r) => {
+    if (/\blibx264\b/.test(r.stdout)) return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p"];
+    if (/\bh264_mf\b/.test(r.stdout)) return ["-c:v", "h264_mf", "-rate_control", "u_vbr", "-pix_fmt", "nv12"]; // u_vbr: the bitrate is kept
+    throw new Error("this ffmpeg has no H.264 encoder");
+  }));
+  const args = await encoders.get(ffmpeg)!;
+  if (!args.includes("h264_mf")) return args;
+  // A bitrate for the proxy's height (half the original's, at most 1080).
+  const height = await run(probeOf(ffmpeg), ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=height", "-of", "csv=p=0", src], { windowsHide: true, timeout: 30_000 })
+    .then((r) => Math.min(1080, Math.floor(Number.parseInt(r.stdout, 10) / 4) * 2) || 1080, () => 1080); // ffmpeg 9 prints it twice
+  return [...args, "-b:v", height <= 540 ? "2M" : height <= 720 ? "3M" : "5M"];
+}
 
 export type MediaKind = { kind: "video"; duration: number } | { kind: "audio" } | { kind: "still" } | { kind: "unreadable" };
 
@@ -61,7 +85,7 @@ export async function makeProxy(src: string, dest: string, duration: number, pro
   await mkdir(dirname(dest), { recursive: true });
   const tmp = `${dest}.making.mp4`;
   const args = ["-hide_banner", "-loglevel", "error", "-nostats", "-y", "-i", src, "-map", "0:v:0", "-map", "0:a?",
-    "-vf", "scale=-2:'min(1080,trunc(ih/4)*2)'", "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p",
+    "-vf", "scale=-2:'min(1080,trunc(ih/4)*2)'", ...(await h264Args(ffmpeg, src)),
     "-c:a", "aac", "-b:a", "160k", "-map_metadata", "0", "-movflags", "+faststart", "-progress", "pipe:1", tmp];
   await new Promise<void>((resolve, reject) => {
     const child = spawn(ffmpeg, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });

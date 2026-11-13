@@ -447,7 +447,7 @@ describe.skipIf(!ffmpeg)("missing media (SPEC §25)", () => {
     const host = makePc("Pat");
     const mo = makePc("Mo");
     const src = join(host.media, "shot.mov");
-    execFileSync(ffmpeg!, ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24:duration=1", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", src]);
+    execFileSync(ffmpeg!, ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24:duration=1", "-c:v", "mpeg4", "-q:v", "3", src]);
     const code = newInviteCode();
     await connect(host, "host", code);
     await connect(mo, "member", code);

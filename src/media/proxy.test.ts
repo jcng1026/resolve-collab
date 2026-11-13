@@ -16,7 +16,7 @@ describe.skipIf(!ffmpeg)("proxies (SPEC §25.2, §25.3)", () => {
     const dir = mkdtempSync(join(tmpdir(), "rc-proxy-"));
     const src = join(dir, "camera.mov");
     execFileSync(ffmpeg!, ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=24:duration=2", "-f", "lavfi", "-i", "sine=duration=2",
-      "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-timecode", "10:00:00:00", src]);
+      "-c:v", "mpeg4", "-q:v", "3", "-c:a", "aac", "-timecode", "10:00:00:00", src]);
     expect(await classify(src)).toEqual({ kind: "video", duration: expect.closeTo(2, 1) });
     const cache = new ProxyCache(join(dir, "proxies"));
     const seen: number[] = [];

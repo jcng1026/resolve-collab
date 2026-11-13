@@ -9,3 +9,5 @@ local/
 
 # Claude Code instructions, kept on this PC only
 CLAUDE.md
+# Third-party binaries the installer bundles (the LGPL ffmpeg), not committed
+vendor/
