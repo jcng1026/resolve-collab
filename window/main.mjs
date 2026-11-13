@@ -107,7 +107,7 @@ function showOverlay(o) {
 app.whenReady().then(() => {
   win = new BrowserWindow({
     width: WIDTH, height: contentHeight, show: false, frame: false, resizable: false, maximizable: false, fullscreenable: false,
-    title: "ResolveCollab", backgroundMaterial: "acrylic", backgroundColor: "#00000000",
+    title: "ResolveCollab", icon: join(HERE, "icon", "icon.ico"), backgroundMaterial: "acrylic", backgroundColor: "#00000000",
     webPreferences: { preload: join(HERE, "preload.cjs"), sandbox: true, contextIsolation: true, nodeIntegration: false, spellcheck: false },
   });
   // Always on top of every window, by the user's choice (SPEC §24.1).
