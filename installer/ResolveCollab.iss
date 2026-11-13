@@ -38,6 +38,7 @@ Type: filesandordirs; Name: "{app}\bridge"
 Type: filesandordirs; Name: "{app}\node_modules"
 Type: filesandordirs; Name: "{app}\runtime"
 Type: filesandordirs; Name: "{app}\ffmpeg"
+Type: files; Name: "{app}\package-lock.json"
 
 [Files]
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion

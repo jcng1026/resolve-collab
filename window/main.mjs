@@ -126,6 +126,8 @@ app.whenReady().then(() => {
     place();
     win.webContents.send("prefs", { closeChoice: prefs.closeChoice ?? "", sound: prefs.sound === true, ...cursorPrefs() });
     win.showInactive();
+    // Started from something minimised or hidden, Windows can open it minimised: it never should.
+    if (win.isMinimized()) win.restore();
   });
 
   // From the page.
