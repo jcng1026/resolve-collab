@@ -315,7 +315,7 @@ Every feature follows: spec section → automated tests (using a **fake bridge**
 | M7 Locks, undo, merge | §5, §7, §9 complete, proven by simulator tests including 5 peers |
 | M8 Presence and chat | §8, §11 complete |
 | M9 Media | §10 complete including safety rules |
-| M10 Release v1 | Installer works on a clean PC; security review passed; diagnostics export works |
+| M10 Release v1 | Installer works on a clean PC; security review passed (diagnostics export dropped, §26.1) |
 | v2 | Color → Fusion → Fairlight → viewer role |
 
 ---
@@ -951,3 +951,19 @@ Test footage: 1920×1080, 24 fps, 240 frames, start timecode 10:00:00:00; its pr
 - **Window:** the cards and the Media panel checked against the approved mockup with made-up state (`tools/m9-window-preview.ts`).
 - **Real Resolve, 2026-11-05, Free 21.1.2 (`tools/m9-resolve-check.ts`): all checks passed.** Resolve as a member missing the host's clip: the folder asked; the host's proxy stands in, with the session's tag, and the clip's timeline item comes; the original on request replaces it (`mp.clip.linkfull`), byte for byte, the tag put back, the item unchanged, nothing duplicated on the next pass. Found and fixed on the way: a first-time joiner dropped the host's "what I have" (it's still making its project), so it now comes with the welcome too and is asked for again if missed; and what a PC has is looked at again every 3 s.
 - **Two-PC test (2026-11-13): passed** (`docs/m9-two-pc-test.md`). It found that a still image dragged onto a timeline never reached the other PC: Resolve gives a still's item a speed of 0, which the host refused as "bad speed", and the refused change was proposed again every pass. A speed of 0 now reads as 100, and a change refused as bad data waits until it changes in Resolve. **M9 is done.**
+
+---
+
+## 26. M10 design: release v1
+
+### 26.1 Decisions (2026-11-13, a grilling; built step by step this time)
+1. **Installer:** a Windows installer, per user (no admin), into `%LOCALAPPDATA%\Programs\ResolveCollab`, a Start-menu shortcut and an optional desktop one. Unsigned: SmartScreen warns once ("More info → Run anyway").
+2. **No terminal:** the installed app shows only its window; Electron's own Node runs the companion. Whatever is still terminal-only moves into the window. Starting it again brings the window forward instead of a second companion. Closing as now (× → Minimize or Close).
+3. **The bridge installs itself:** at every start the app puts its bridge script into Resolve's Scripts folder if it's missing or different. The start card says what to do; the first time, "Restart Resolve, then Workspace → Scripts → ResolveCollab" (Resolve lists a new script only after a restart). Uninstalling removes the script.
+4. **ffmpeg inside: the LGPL build** (as §25.1). It has no x264, so proxies use Windows' own H.264 encoder (a little larger, the same frames and timecode).
+5. **Versions:** each PC tells the others its version; if they differ, a red line for both ("PC 2 is on 1.0.0 and you're on 1.0.1: install the same version on both"). Joining isn't blocked.
+6. **Updates:** none automatic. A newer installer goes over the old one; sessions, settings and downloaded media are kept.
+7. **Logs, no Export diagnostics** (the user's choice; replaces §14's export): what the terminal prints today goes to a log file per day in `%USERPROFILE%\ResolveCollab\logs`, deleted after 14 days, never media. Whoever needs them takes them from there. M10's "diagnostics export works" is dropped.
+8. **An icon:** simple, previewed first.
+9. **Order, one step at a time,** each built, tested and committed before the next: (1) no terminal, one copy; (2) self-installing bridge; (3) logs; (4) version warning; (5) ffmpeg inside; (6) icon; (7) the installer; (8) security review and fixes; (9) the installed app on PC 2, then a two-PC run with the installed app on both.
+10. **The clean-PC test is PC 2** (Windows Sandbox can't run Resolve): the installed app doesn't use PC 2's own Node.
