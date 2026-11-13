@@ -68,8 +68,6 @@ export interface SessionOptions {
   onMedia?: () => void;
   // Where this PC keeps the proxies it makes for others (SPEC §25.3).
   proxiesDir?: string;
-  // This app's version: PCs on different versions are warned (SPEC §12.2).
-  version?: string;
   // Something only this PC should show in its history: the host unreachable or back (SPEC §24.5).
   onNote?: (text: string, tone?: "good" | "bad") => void;
   ask: (conflicts: Conflict[]) => Promise<Map<string, Answer>>;
@@ -653,19 +651,8 @@ export class Session {
   // --- peers ----------------------------------------------------------------------
 
   // The code says which opening of the session this PC was invited to (§22.1).
-  // Different versions may not understand each other fully: said once per person.
-  private readonly versionsTold = new Set<string>();
-  private versionCheck(theirs: unknown, who: string): void {
-    const mine = this.options.version;
-    if (!mine || typeof theirs !== "string" || theirs === mine || this.versionsTold.has(who)) return;
-    this.versionsTold.add(who);
-    const text = `${who} is on ResolveCollab ${theirs.slice(0, 20)} and you're on ${mine}: install the same version on both for everything to sync.`;
-    this.options.log(text);
-    this.options.onNote?.(text, "bad");
-  }
-
   private joinMessage(): Message {
-    return { type: "join", name: this.options.name, code: this.options.peers.code, ...(this.options.version ? { version: this.options.version } : {}) };
+    return { type: "join", name: this.options.name, code: this.options.peers.code };
   }
 
   private peerJoined(id: string): void {
@@ -726,10 +713,7 @@ export class Session {
 
   private async hostMessage(message: Message, from: string): Promise<void> {
     const host = this.host!;
-    if (message.type === "join") {
-      this.versionCheck(message.version, cleanName(message.name));
-      return this.joinRequest(cleanName(message.name), from, message.code);
-    }
+    if (message.type === "join") return this.joinRequest(cleanName(message.name), from, message.code);
     if (!this.admitted.has(from)) return; // nothing from PCs not let in
     switch (message.type) {
       case "chat":
@@ -737,19 +721,11 @@ export class Session {
         return;
       case "pointer":
         this.pointerArrived(from, message);
-        {
-          // Passed on checked, never as it came (SPEC §13).
-          const at = this.pointerOf.get(from);
-          const relay: Message = at ? { type: "pointer", id: from, x: at.x, y: at.y, ...(at.spot ? { spot: at.spot as unknown as JsonValue } : {}) } : { type: "pointer", id: from, off: true };
-          for (const id of this.admitted.keys()) if (id !== from) this.options.peers.sendTo(id, relay);
-        }
+        for (const id of this.admitted.keys()) if (id !== from) this.options.peers.sendTo(id, { ...message, id: from });
         return;
       case "media-have":
         this.media?.haveArrived(from, message as Record<string, unknown>);
-        {
-          const ids = (v: unknown) => (Array.isArray(v) ? v : []).slice(0, 50_000).filter((x): x is string => typeof x === "string" && x.length <= 64);
-          for (const id of this.admitted.keys()) if (id !== from) this.options.peers.sendTo(id, { type: "media-have", id: from, originals: ids(message.originals), proxies: ids(message.proxies) });
-        }
+        for (const id of this.admitted.keys()) if (id !== from) this.options.peers.sendTo(id, { type: "media-have", id: from, originals: message.originals ?? [], proxies: message.proxies ?? [] });
         return;
       case "follow-note":
         if (typeof message.target === "string" && typeof message.on === "boolean") this.followLine(from, message.target, message.on);
@@ -787,7 +763,6 @@ export class Session {
       lines: this.activity.lines as unknown as JsonValue,
       presence: [...this.presenceOf].map(([id, p]) => ({ id, ...p })) as unknown as JsonValue,
       media: (this.media?.haveList() ?? []) as unknown as JsonValue,
-      ...(this.options.version ? { version: this.options.version } : {}),
     };
   }
 
@@ -1228,7 +1203,6 @@ export class Session {
       const id = (raw as { id?: unknown })?.id;
       if (typeof id === "string" && id !== this.options.peers.id) this.media?.haveArrived(id, raw as Record<string, unknown>);
     }
-    this.versionCheck(message.version, this.record?.hostName ?? "The host");
     this.media?.peerJoined(); // what this PC has, now that someone hears
     this.options.onPeople?.();
     this.sharePresence(); // where this person is, now that someone hears

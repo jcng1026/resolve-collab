@@ -1683,9 +1683,7 @@ end
 F:SetPrefs(ACTIVE_PREF, bridgeId) -- a newer bridge run takes over from this one
 -- handled: this run counts inbox messages from 0 (a companion that wrote
 -- for an earlier run starts again from here).
--- Which Resolve this is, for Export diagnostics (SPEC §14); also in every heartbeat.
-local RESOLVE_INFO = { product = R:GetProductName(), version = R:GetVersionString(), studio = R:IsStudio() }
-emit("HELLO", { product = RESOLVE_INFO.product, version = RESOLVE_INFO.version, studio = RESOLVE_INFO.studio, inbox = INBOX, handled = 0, build = BUILD })
+emit("HELLO", { product = R:GetProductName(), version = R:GetVersionString(), studio = R:IsStudio(), inbox = INBOX, handled = 0, build = BUILD })
 snapshotMediaPool()
 
 local lastHandled, lastBeat, lastScan, lastPoolScan = 0, 0, 0, 0
@@ -1760,7 +1758,7 @@ while F:GetPrefs(ACTIVE_PREF) == bridgeId do
     lastBeat = now
     -- The page tells the companion whether Ctrl+Z is its undo (SPEC §23.2).
     local okPage, page = pcall(function() return R:GetCurrentPage() end)
-    emit("HB", { t = now, handled = lastHandled, build = BUILD, page = okPage and type(page) == "string" and page or "", resolve = RESOLVE_INFO })
+    emit("HB", { t = now, handled = lastHandled, build = BUILD, page = okPage and type(page) == "string" and page or "" })
   end
 end
 emit("ERR", { error = "bridge-stopped" })

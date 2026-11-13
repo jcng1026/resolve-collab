@@ -199,7 +199,6 @@ export class BridgeClient extends EventEmitter {
       this.flushWaiting();
       this.emit("hello", payload);
       this.emit("build", buildOf(payload));
-      this.emit("resolve", payload);
       return;
     }
     // A bridge already running when this client started: its heartbeat says
@@ -210,8 +209,6 @@ export class BridgeClient extends EventEmitter {
       this.flushWaiting();
       this.emit("attached");
       this.emit("build", buildOf(payload));
-      const info = (payload as Record<string, JsonValue> | null)?.resolve;
-      if (info && typeof info === "object") this.emit("resolve", info);
     }
     if (bridgeId !== this.bridgeId) return; // output of an older bridge run
     this.lastBeat = Date.now();

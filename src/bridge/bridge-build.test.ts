@@ -35,10 +35,10 @@ describe("the bridge's build", () => {
 
   it("warns only when the running bridge isn't this companion's", () => {
     expect(buildWarning("abc123abc123", "abc123abc123")).toBeNull();
-    expect(buildWarning("abc123abc123", "000000000000")).toMatch(/start Workspace > Scripts > ResolveCollab again/);
+    expect(buildWarning("abc123abc123", "000000000000")).toMatch(/install-bridge/);
     // Installed before builds were stamped.
-    expect(buildWarning("abc123abc123", undefined)).toMatch(/start Workspace > Scripts > ResolveCollab again/);
-    expect(buildWarning("abc123abc123", "__BUILD__")).toMatch(/start Workspace > Scripts > ResolveCollab again/);
+    expect(buildWarning("abc123abc123", undefined)).toMatch(/install-bridge/);
+    expect(buildWarning("abc123abc123", "__BUILD__")).toMatch(/install-bridge/);
   });
 
   it("is reported from HELLO", async () => {

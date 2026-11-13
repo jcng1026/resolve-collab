@@ -240,7 +240,6 @@ function settingsBody(rerender) {
     tick("sound", "Play a sound for items that need me"),
     tick("showCursors", "Show others' cursors"),
     tick("shareCursor", "Share my cursor"),
-    h("button", { class: "pill", style: { alignSelf: "flex-start" }, onclick: () => rc.send({ type: "diagnostics" }) }, "Export diagnostics"),
   ];
 }
 
