@@ -6,3 +6,6 @@ coverage/
 .env.*
 # Local feasibility/diagnostic dumps that may contain machine paths
 local/
+
+# Claude Code instructions, kept on this PC only
+CLAUDE.md
