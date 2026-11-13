@@ -1,6 +1,7 @@
 {
   "name": "resolve-collab",
   "version": "1.0.1",
+  "license": "MIT",
   "private": true,
   "description": "Real-time collaboration companion for DaVinci Resolve (see docs/SPEC.md)",
   "type": "module",

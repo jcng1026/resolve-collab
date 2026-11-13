@@ -86,4 +86,4 @@ DaVinci Resolve is a trademark of Blackmagic Design. ResolveCollab isn't made or
 
 ## Licence
 
-No licence has been chosen yet, so all rights are reserved.
+[MIT](LICENSE). The bundled FFmpeg keeps its own licence (LGPL v3, above).
