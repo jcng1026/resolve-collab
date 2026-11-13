@@ -1,6 +1,6 @@
 {
   "name": "resolve-collab",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "private": true,
   "description": "Real-time collaboration companion for DaVinci Resolve (see docs/SPEC.md)",
   "type": "module",

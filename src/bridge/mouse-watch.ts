@@ -45,8 +45,10 @@ public static class RcPointer {
       if (front) resolve = fg;
       // While our own window is in front (typing in the chat), Resolve's
       // window still counts, so the others' cursors stay; ours isn't shared.
-      // shortcut: our window is told apart by the process name "electron".
-      IntPtr target = front ? fg : (name == "electron" && IsWindow(resolve) ? resolve : IntPtr.Zero);
+      // Our window is told apart by its process name: "resolvecollab" when
+      // installed (SPEC §26.1), "electron" from the repo.
+      bool ours = name == "resolvecollab" || name == "electron";
+      IntPtr target = front ? fg : (ours && IsWindow(resolve) ? resolve : IntPtr.Zero);
       string win = "null";
       RECT r;
       // DWMWA_EXTENDED_FRAME_BOUNDS: the window as drawn, without its invisible borders.

@@ -105,7 +105,7 @@ while ($true) {
   try {
     $fg = [RcShot]::ForegroundPid()
     if ($fg -ne $lastPid) { $lastPid = $fg; $name = ''; try { $name = (Get-Process -Id $fg).ProcessName.ToLowerInvariant() } catch { } }
-    if ($name -ne 'resolve' -and $name -ne 'electron') { continue }
+    if ($name -ne 'resolve' -and $name -ne 'electron' -and $name -ne 'resolvecollab') { continue }
     if ($root -eq $null) {
       $p = Get-Process Resolve -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Select-Object -First 1
       if (-not $p) { continue }
