@@ -109,6 +109,9 @@ export class ProxyCache {
   private readonly dir: string;
   private readonly making = new Map<string, Promise<string>>();
   private readonly progress = new Map<string, ((p: number) => void)[]>();
+  // One proxy made at a time (security review): asked for many at once, a PC
+  // isn't swamped by as many ffmpegs.
+  private queue: Promise<unknown> = Promise.resolve();
 
   constructor(dir: string) {
     this.dir = dir;
@@ -123,9 +126,10 @@ export class ProxyCache {
     this.progress.set(hash, [...(this.progress.get(hash) ?? []), onProgress]);
     let job = this.making.get(hash);
     if (!job) {
-      job = makeProxy(src, path, duration, (p) => { for (const f of this.progress.get(hash) ?? []) f(p); })
+      job = this.queue.then(() => makeProxy(src, path, duration, (p) => { for (const f of this.progress.get(hash) ?? []) f(p); }))
         .then(() => path)
         .finally(() => { this.making.delete(hash); this.progress.delete(hash); });
+      this.queue = job.catch(() => {});
       this.making.set(hash, job);
     }
     return job;

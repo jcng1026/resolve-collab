@@ -96,6 +96,17 @@ export class MediaManager {
       allowed: (peer, clip) => options.isPerson(peer) && !!options.sync.sessionClip(clip),
       prepare: (clip, kind, progress) => this.prepare(clip, kind, progress),
       verify: (clip, as, path) => this.verify(clip, as, path),
+      // An original is exactly the session's size; a proxy at most twice its original (or 64 MB).
+      sizeLimit: (clip, as) => {
+        const size = options.sync.sessionClip(clip)?.file?.size;
+        if (size === undefined) return undefined;
+        return as === "original" ? { exact: size } : { max: Math.max(2 * size, 64 * 1024 ** 2) };
+      },
+      // Room for it, and 1 GB to spare (0: the free space couldn't be read, so it isn't held up).
+      room: async (bytes, dest) => {
+        const free = await freeSpace(dirname(dest));
+        return free === 0 || free >= bytes + 1024 ** 3;
+      },
       log: options.log,
       onChange: () => this.changed(),
     });
@@ -169,10 +180,13 @@ export class MediaManager {
 
   // --- who has what -----------------------------------------------------------------
 
-  haveArrived(peer: string, m: JsonObject): void {
+  // Returns the checked lists (the host passes on only these).
+  haveArrived(peer: string, m: JsonObject): { originals: string[]; proxies: string[] } {
     const list = (v: unknown) => new Set((Array.isArray(v) ? v : []).slice(0, HAVE_MAX).filter((x): x is string => typeof x === "string" && x.length <= 64));
-    this.haveOf.set(peer, { originals: list(m.originals), proxies: list(m.proxies) });
+    const have = { originals: list(m.originals), proxies: list(m.proxies) };
+    this.haveOf.set(peer, have);
     this.schedule();
+    return { originals: [...have.originals], proxies: [...have.proxies] };
   }
 
   // What everyone has, for a newcomer (the host sends it with the welcome).

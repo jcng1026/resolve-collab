@@ -39,6 +39,9 @@ export interface TransferOptions {
   prepare: (clip: string, kind: Kind, progress: (p: number) => void) => Promise<Prepared | { error: string }>;
   // Asker side: an original's fingerprint check, done after the SHA-256.
   verify?: (clip: string, as: Kind, path: string) => Promise<boolean>;
+  // Asker side: the size a file may be (an original: exactly; a proxy: at most), and whether there's room for it.
+  sizeLimit?: (clip: string, as: Kind) => { exact: number } | { exact?: undefined; max: number } | undefined;
+  room?: (bytes: number, dest: string) => Promise<boolean>;
   log: (message: string) => void;
   onChange?: () => void;
   now?: () => number;
@@ -199,7 +202,16 @@ export class MediaTransfer {
     const size = m.size;
     if (!Number.isSafeInteger(size) || (size as number) <= 0 || (size as number) > MAX_SIZE || !isHex64(m.sha256)) return this.fail(d, "a bad offer", true);
     d.as = m.as === "original" ? "original" : d.kind;
+    // No more than this clip can be (security review): a source can't fill the disk.
+    const limit = this.options.sizeLimit?.(d.clip, d.as);
+    if (limit && (limit.exact !== undefined ? size !== limit.exact : (size as number) > limit.max)) return this.fail(d, `${d.source} offered a file of the wrong size`, true);
     d.dest = d.destFor(d.as);
+    if (this.options.room && !(await this.options.room(size as number, d.dest))) {
+      d.state = "paused";
+      d.error = "not enough free space";
+      this.options.log(`not enough free space for ${d.dest}; paused`);
+      return this.changed();
+    }
     // The same file as a download already partly here? Then carry on from its chunks.
     const part = await this.loadPart(d.dest);
     d.have = part && part.size === size && part.sha256 === m.sha256 ? new Set(part.have) : new Set();
@@ -375,12 +387,18 @@ export class MediaTransfer {
     const serving: Serving = { peer: from, clip, at: this.now };
     this.serving.set(`${from}:${n}`, serving);
     let last = 0;
-    const result = await this.options.prepare(clip, kind, (p) => {
-      if (this.now - last < 1000) return;
+    let progress = 0;
+    const making = () => {
       last = this.now;
       serving.at = this.now;
-      this.options.sendLoose(from, { type: "media-offer", n, state: "making", progress: p });
-    });
+      this.options.sendLoose(from, { type: "media-offer", n, state: "making", progress });
+    };
+    // Also while waiting its turn (proxies are made one at a time): the asker keeps waiting.
+    const still = setInterval(making, 10_000);
+    const result = await this.options.prepare(clip, kind, (p) => {
+      progress = p;
+      if (this.now - last >= 1000) making();
+    }).finally(() => clearInterval(still));
     if ("error" in result) {
       this.serving.delete(`${from}:${n}`);
       this.options.send(from, { type: "media-offer", n, error: result.error });

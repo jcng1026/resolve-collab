@@ -491,3 +491,29 @@ describe("versions (SPEC §26.1)", () => {
     await close(host);
   }, 60_000);
 });
+
+describe("the host passes on only what it checked (security review)", () => {
+  it("drops extra fields from cursors and junk from have-lists", async () => {
+    const host = makePc("Pat");
+    const a = makePc("Ana");
+    const b = makePc("Ben");
+    const code = newInviteCode();
+    await connect(host, "host", code);
+    await connect(a, "member", code);
+    await connect(b, "member", code);
+    await waitFor("all in", () => b.session!.people().filter((p) => p.online).length === 3);
+    const seen: Record<string, unknown>[] = [];
+    b.peers!.on("message", (m: Record<string, unknown>) => { if (m.type === "pointer" || m.type === "media-have") seen.push(m); });
+    const hostId = host.peers!.id;
+    a.peers!.sendTo(hostId, { type: "pointer", x: 0.5, y: 0.25, junk: "x".repeat(50_000), spot: { panel: "viewer", u: 0.5, v: 0.5, evil: true } });
+    a.peers!.sendTo(hostId, { type: "media-have", originals: ["c1", 7, "z".repeat(500)], proxies: "nope", extra: "y".repeat(50_000) });
+    await waitFor("Ben got both", () => seen.some((m) => m.type === "pointer" && m.id === a.peers!.id) && seen.some((m) => m.type === "media-have" && m.id === a.peers!.id));
+    const pointer = seen.find((m) => m.type === "pointer" && m.id === a.peers!.id)!;
+    expect(pointer).toEqual({ type: "pointer", id: a.peers!.id, x: 0.5, y: 0.25, spot: { panel: "viewer", u: 0.5, v: 0.5 } });
+    const have = seen.find((m) => m.type === "media-have" && m.id === a.peers!.id)!;
+    expect(have).toEqual({ type: "media-have", id: a.peers!.id, originals: ["c1"], proxies: [] });
+    await close(a, false);
+    await close(b, false);
+    await close(host);
+  }, 60_000);
+});

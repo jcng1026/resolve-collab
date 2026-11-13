@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanName, inside, mediaPath } from "./paths.ts";
-import { CHUNK, type JsonObject, type Kind, MediaTransfer, type Prepared, sha256File } from "./transfer.ts";
+import { CHUNK, type JsonObject, type Kind, MediaTransfer, type Prepared, type TransferOptions, sha256File } from "./transfer.ts";
 
 const dirs: string[] = [];
 const tmp = () => { const d = mkdtempSync(join(tmpdir(), "rc-transfer-")); dirs.push(d); return d; };
@@ -27,7 +27,7 @@ function network(drop = 0, corrupt = false) {
     setImmediate(() => void nodes.get(to)?.message(from, copy));
     return true;
   };
-  const add = (id: string, files: Record<string, string> = {}, allowed = () => true, onChange?: () => void) => {
+  const add = (id: string, files: Record<string, string> = {}, allowed = () => true, onChange?: () => void, extra: Partial<TransferOptions> = {}) => {
     const t = new MediaTransfer({
       send: (to, m) => deliver(to, id, m, false),
       sendLoose: (to, m) => deliver(to, id, m, true),
@@ -41,6 +41,7 @@ function network(drop = 0, corrupt = false) {
       log: () => {},
       chunkTimeoutMs: 200,
       ...(onChange ? { onChange } : {}),
+      ...extra,
     });
     nodes.set(id, t);
     all.push(t);
@@ -115,6 +116,22 @@ describe("sending media between PCs (SPEC §25.3)", () => {
     const dest = join(tmp(), "c.mov");
     expect((await me.want("clip1", "original", () => dest, () => ["jo", "kim"]))?.path).toBe(dest);
     expect(await me.want("clip9", "original", () => join(tmp(), "d.mov"), () => ["kim"])).toBeUndefined();
+  });
+
+  it("refuses a file of the wrong size and one there's no room for (security review)", async () => {
+    const right = file(2 * CHUNK);
+    const huge = file(3 * CHUNK); // "the same clip", but bigger than the session says it is
+    const net = network();
+    net.add("jo", { clip1: huge });
+    net.add("kim", { clip1: right });
+    const me = net.add("sam", {}, () => true, undefined, { sizeLimit: () => ({ exact: 2 * CHUNK }) });
+    const dest = join(tmp(), "e.mov");
+    expect((await me.want("clip1", "original", () => dest, () => ["jo", "kim"]))?.path).toBe(dest);
+    expect(readFileSync(dest).equals(readFileSync(right))).toBe(true);
+    const full = net.add("ana", {}, () => true, undefined, { room: async () => false });
+    void full.want("clip1", "original", () => join(tmp(), "f.mov"), () => ["kim"]);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(full.list()[0]).toMatchObject({ state: "paused", error: "not enough free space" });
   });
 
   it("keeps every name inside the media folder", () => {

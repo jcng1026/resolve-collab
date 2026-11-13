@@ -725,14 +725,17 @@ export class Session {
       case "chat":
         if (typeof message.text === "string") this.addLine(this.activity.chat(from, this.admitted.get(from) ?? "someone", message.text));
         return;
-      case "pointer":
-        this.pointerArrived(from, message);
-        for (const id of this.admitted.keys()) if (id !== from) this.options.peers.sendTo(id, { ...message, id: from });
+      case "pointer": {
+        // Only the checked position goes on (security review, docs/security-review.md).
+        const kept = this.pointerArrived(from, message);
+        if (kept) for (const id of this.admitted.keys()) if (id !== from) this.options.peers.sendTo(id, { type: "pointer", id: from, ...kept });
         return;
-      case "media-have":
-        this.media?.haveArrived(from, message as Record<string, unknown>);
-        for (const id of this.admitted.keys()) if (id !== from) this.options.peers.sendTo(id, { type: "media-have", id: from, originals: message.originals ?? [], proxies: message.proxies ?? [] });
+      }
+      case "media-have": {
+        const have = this.media?.haveArrived(from, message as Record<string, unknown>);
+        if (have) for (const id of this.admitted.keys()) if (id !== from) this.options.peers.sendTo(id, { type: "media-have", id: from, ...have });
         return;
+      }
       case "follow-note":
         if (typeof message.target === "string" && typeof message.on === "boolean") this.followLine(from, message.target, message.on);
         return;
@@ -917,16 +920,21 @@ export class Session {
     return { fps: t.fps, tracks: Object.values(m.tracks).filter((k) => k.timeline === id).map((k) => ({ kind: k.kind, order: k.order, name: k.name })) };
   }
 
-  private pointerArrived(id: string, message: Message): void {
+  // Returns what was taken from the message, checked (only that is passed on), or undefined.
+  private pointerArrived(id: string, message: Message): Message | undefined {
     const x = message.x;
     const y = message.y;
-    if (message.off === true) this.pointerOf.delete(id);
-    else if (typeof x === "number" && typeof y === "number" && x >= 0 && x <= 1 && y >= 0 && y <= 1) {
+    let kept: Message;
+    if (message.off === true) {
+      this.pointerOf.delete(id);
+      kept = { off: true };
+    } else if (typeof x === "number" && typeof y === "number" && x >= 0 && x <= 1 && y >= 0 && y <= 1) {
       const spot = cleanSpot(message.spot);
       this.pointerOf.set(id, spot ? { x, y, spot } : { x, y });
-    }
-    else return;
+      kept = spot ? { x, y, spot: spot as unknown as JsonValue } : { x, y };
+    } else return undefined;
     this.options.onPointers?.();
+    return kept;
   }
 
   // Everyone sees who follows whom (SPEC §24.5); a member's note goes through the host.
