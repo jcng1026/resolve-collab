@@ -40,6 +40,7 @@ import { whereText } from "./presence.ts";
 import { type Approval, Session } from "./session.ts";
 import { findHostSession } from "./session-record.ts";
 import type { Answer, Conflict } from "./sync/reconcile.ts";
+import { claimOneCopy } from "./one-copy.ts";
 import { CompanionWindow } from "./window/window-host.ts";
 
 const RESOLVE_LOG = join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"),
@@ -56,6 +57,7 @@ const { positionals, values } = parseArgs({
     log: { type: "string" },
     fake: { type: "boolean", default: false },
     "force-tier": { type: "string" },
+    app: { type: "boolean", default: false }, // started by the installed app's launcher (SPEC §26.1)
   },
 });
 
@@ -90,11 +92,20 @@ if (values.fake) {
 const home = dirname(inboxDir);
 const sessionsDir = join(home, "sessions");
 
+// --- one companion at a time (SPEC §26.1) ------------------------------------------------
+
+let reveal = () => {};
+if (!(await claimOneCopy(() => reveal()))) {
+  console.log("ResolveCollab is already running; its window was brought forward.");
+  process.exit(0);
+}
+
 // --- the window (SPEC §24) --------------------------------------------------------
 
 const win = values["no-window"] ? undefined : new CompanionWindow(join(home, "window.json"));
 const windowOpen = win?.start() ?? false;
 if (win && !windowOpen) console.log("the window can't start here (is Electron installed?); the terminal keeps working");
+reveal = () => win?.reveal();
 let session: Session | undefined;
 let peers: PeerLink | undefined;
 let inviteCode = "";

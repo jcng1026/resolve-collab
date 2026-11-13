@@ -187,6 +187,12 @@ app.whenReady().then(() => {
     try {
       const message = JSON.parse(line);
       if (message && "$overlay" in message) return void showOverlay(message.$overlay);
+      if (message && message.$show === true) { // started again: come forward
+        if (win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+        return;
+      }
       latest = message;
       if (loaded) win.webContents.send("state", latest);
     } catch { /* a broken line is skipped */ }

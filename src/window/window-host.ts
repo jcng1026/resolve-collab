@@ -37,7 +37,8 @@ export class CompanionWindow extends EventEmitter {
   start(): boolean {
     let exe: string;
     try {
-      exe = createRequire(import.meta.url)("electron") as string; // the electron package's binary path
+      // The installed app runs on Electron's own Node; from the repo, the electron package's binary.
+      exe = process.versions.electron ? process.execPath : createRequire(import.meta.url)("electron") as string;
     } catch {
       return false;
     }
@@ -84,6 +85,11 @@ export class CompanionWindow extends EventEmitter {
     if (line === this.lastOverlay) return;
     this.lastOverlay = line;
     if (this.socket && !this.socket.destroyed) this.socket.write(`${line}\n`);
+  }
+
+  // Bring the window forward: ResolveCollab was started again (SPEC §26.1).
+  reveal(): void {
+    if (this.socket && !this.socket.destroyed) this.socket.write(`${JSON.stringify({ $show: true })}\n`);
   }
 
   private flush(): void {
